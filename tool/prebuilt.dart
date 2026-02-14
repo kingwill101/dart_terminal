@@ -75,9 +75,11 @@ Future<void> main(List<String> args) async {
 
   platform ??= _hostPlatform();
 
-  // Resolve the repo root (.prebuilt/ cache directory).
-  final repoRoot = _findRepoRoot(Directory.current);
-  final cacheDir = Directory('${repoRoot.path}/.prebuilt')
+  // Resolve the project root (.prebuilt/ cache directory).
+  // In the monorepo this finds the root with pubspec.yaml + pkgs/.
+  // For downstream consumers it falls back to the nearest pubspec.yaml.
+  final projectRoot = _findProjectRoot(Directory.current);
+  final cacheDir = Directory('${projectRoot.path}/.prebuilt')
     ..createSync(recursive: true);
 
   stdout.writeln('Cache directory: ${cacheDir.path}');
@@ -177,16 +179,35 @@ String _hostArch() {
   }
 }
 
-Directory _findRepoRoot(Directory start) {
+/// Find the project root to place `.prebuilt/` in.
+///
+/// First tries to find a monorepo root (has `pubspec.yaml` + `pkgs/`).
+/// Falls back to the nearest directory with `pubspec.yaml`, which works
+/// for downstream consumers who depend on these packages from pub.dev.
+Directory _findProjectRoot(Directory start) {
   var dir = start.absolute;
+
+  // First pass: look for monorepo root (pubspec.yaml + pkgs/).
+  var cursor = dir;
   while (true) {
-    if (File('${dir.path}/pubspec.yaml').existsSync() &&
-        Directory('${dir.path}/pkgs').existsSync()) {
-      return dir;
+    if (File('${cursor.path}/pubspec.yaml').existsSync() &&
+        Directory('${cursor.path}/pkgs').existsSync()) {
+      return cursor;
     }
-    final parent = dir.parent;
-    if (parent.path == dir.path) return start;
-    dir = parent;
+    final parent = cursor.parent;
+    if (parent.path == cursor.path) break;
+    cursor = parent;
+  }
+
+  // Second pass: fall back to nearest pubspec.yaml (any Dart project).
+  cursor = dir;
+  while (true) {
+    if (File('${cursor.path}/pubspec.yaml').existsSync()) {
+      return cursor;
+    }
+    final parent = cursor.parent;
+    if (parent.path == cursor.path) return start;
+    cursor = parent;
   }
 }
 

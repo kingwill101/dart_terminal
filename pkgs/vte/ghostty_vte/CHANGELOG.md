@@ -1,3 +1,12 @@
+## 0.0.2
+
+- Added `dart run ghostty_vte:setup` command to download prebuilt native
+  libraries for downstream consumers.
+- Build hook now finds prebuilt libraries at the consuming project's
+  `.prebuilt/<platform>/` directory, eliminating the need to modify the
+  pub cache.
+- Build hook search order: env var, monorepo `.prebuilt/`, project `.prebuilt/`.
+
 ## 0.0.1+1
 
 - Bumped package version to `0.0.1+1`.

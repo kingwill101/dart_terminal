@@ -3,7 +3,7 @@ description: >-
   Dart FFI bindings for Ghostty's virtual-terminal engine (libghostty-vt).
   Paste-safety checks, OSC parsing, SGR attribute parsing, and keyboard
   event encoding — on native platforms and on the web via WebAssembly.
-version: 0.0.1+1
+version: 0.0.2
 
 repository: https://github.com/kingwill101/dart_terminal/tree/master/pkgs/vte/ghostty_vte
 homepage: https://github.com/kingwill101/dart_terminal
@@ -18,6 +18,9 @@ topics:
 
 environment:
   sdk: ^3.10.4
+
+executables:
+  setup: setup
 
 resolution: workspace
 

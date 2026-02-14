@@ -41,7 +41,12 @@ void main(List<String> args) async {
 /// Checks several locations for a prebuilt library:
 ///
 /// 1. `$PORTABLE_PTY_PREBUILT` env var pointing directly to the file.
-/// 2. `.prebuilt/<platform>/<dylibName>` relative to the repo root.
+/// 2. `.prebuilt/<platform>/<dylibName>` relative to the monorepo root
+///    (found by walking up from `packageRoot` looking for `pubspec.yaml` + `pkgs/`).
+/// 3. `.prebuilt/<platform>/<dylibName>` relative to the consuming project root
+///    (derived from `outputDirectory` which lives inside `<project>/.dart_tool/`).
+///    This allows downstream consumers to place prebuilt libs in their own
+///    project without modifying the pub cache.
 File? _findPrebuiltPty(BuildInput input, CodeConfig code, String dylibName) {
   // Check env var.
   final envPath = Platform.environment['PORTABLE_PTY_PREBUILT'];
@@ -50,12 +55,22 @@ File? _findPrebuiltPty(BuildInput input, CodeConfig code, String dylibName) {
     if (f.existsSync()) return f;
   }
 
-  // Check .prebuilt/ cache at repo root.
   final platformLabel = _platformLabel(code.targetOS, code.targetArchitecture);
+
+  // Check .prebuilt/ cache at monorepo root.
   final repoRoot = _findRepoRoot(input.packageRoot);
   if (repoRoot != null) {
     final cached = File.fromUri(
       repoRoot.resolve('.prebuilt/$platformLabel/$dylibName'),
+    );
+    if (cached.existsSync()) return cached;
+  }
+
+  // Check .prebuilt/ at the consuming project root (derived from outputDirectory).
+  final projectRoot = _findProjectRoot(input.outputDirectory);
+  if (projectRoot != null) {
+    final cached = File.fromUri(
+      projectRoot.resolve('.prebuilt/$platformLabel/$dylibName'),
     );
     if (cached.existsSync()) return cached;
   }
@@ -89,6 +104,25 @@ Uri? _findRepoRoot(Uri packageRoot) {
   while (true) {
     if (File('${dir.path}/pubspec.yaml').existsSync() &&
         Directory('${dir.path}/pkgs').existsSync()) {
+      return dir.uri;
+    }
+    final parent = dir.parent;
+    if (parent.path == dir.path) return null;
+    dir = parent;
+  }
+}
+
+/// Derive the consuming project's root from [outputDirectory].
+///
+/// The build system places output in `<project>/.dart_tool/hooks_runner/...`,
+/// so we walk up until we find a directory containing `.dart_tool/` and
+/// `pubspec.yaml`. This lets downstream pub consumers place prebuilt libs
+/// in `<their_project>/.prebuilt/<platform>/` without touching the pub cache.
+Uri? _findProjectRoot(Uri outputDirectory) {
+  var dir = Directory.fromUri(outputDirectory).absolute;
+  while (true) {
+    if (Directory('${dir.path}/.dart_tool').existsSync() &&
+        File('${dir.path}/pubspec.yaml').existsSync()) {
       return dir.uri;
     }
     final parent = dir.parent;

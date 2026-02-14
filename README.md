@@ -63,8 +63,45 @@ flutter run
 > for your platform — the build hooks will use them automatically.
 >
 > ```bash
-> dart run tool/prebuilt.dart --tag v0.0.1
+> dart run tool/prebuilt.dart --tag v0.0.2
 > ```
+
+### Prebuilt assets for downstream consumers
+
+When `ghostty_vte` or `portable_pty` are consumed from **pub.dev**, you don't
+need Zig or Rust installed — each package ships a setup command that downloads
+the correct prebuilt library for your platform:
+
+```bash
+dart run ghostty_vte:setup
+dart run portable_pty:setup
+```
+
+This places the native libraries in `.prebuilt/<platform>/` at your project
+root, where the build hooks find them automatically.
+
+The build hooks search for prebuilt libraries in this order:
+
+1. **Environment variable** — `GHOSTTY_VTE_PREBUILT` / `PORTABLE_PTY_PREBUILT`
+   pointing directly to the `.so` / `.dylib` file.
+2. **Monorepo `.prebuilt/`** — `.prebuilt/<platform>/<lib>` at the monorepo
+   root (found by walking up looking for `pubspec.yaml` + `pkgs/`).
+3. **Project `.prebuilt/`** — `.prebuilt/<platform>/<lib>` at your project
+   root (derived from the build system's output directory). **This is the
+   recommended approach for downstream consumers.**
+
+You can also specify a release tag or target platform:
+
+```bash
+dart run ghostty_vte:setup --tag v0.0.2 --platform macos-arm64
+dart run portable_pty:setup --tag v0.0.2 --platform macos-arm64
+```
+
+Platform labels follow the pattern `{os}-{arch}`:
+`linux-x64`, `linux-arm64`, `macos-arm64`, `macos-x64`, `windows-x64`, etc.
+
+> **Tip:** Add `.prebuilt/` to your `.gitignore` — these are binary artifacts
+> that should be downloaded as needed, not committed.
 
 ## Architecture
 

@@ -32,7 +32,7 @@ on the **web** via WebAssembly.
 
 ```yaml
 dependencies:
-  ghostty_vte: ^0.0.1
+  ghostty_vte: ^0.0.2
 ```
 
 The native library is compiled automatically by a
@@ -109,19 +109,33 @@ export GHOSTTY_SRC_AUTO_FETCH=1
 
 Prebuilt binaries for every platform are attached to each
 [GitHub release](https://github.com/kingwill101/dart_terminal/releases).
-Download them into the `.prebuilt/` directory and the build hook will skip
-compilation entirely — **no Zig install required**.
+
+The easiest way to get them is the built-in setup command:
 
 ```bash
-# Download prebuilt libs for your host platform
-dart run tool/prebuilt.dart --tag v0.0.1
+dart run ghostty_vte:setup
+```
 
-# Or download for all platforms
-dart run tool/prebuilt.dart --tag v0.0.1 --all-platforms
+This downloads the correct library for your host platform into
+`.prebuilt/<platform>/` at your project root. The build hook will find it
+automatically — **no Zig install required**.
+
+You can also specify a release tag or target platform:
+
+```bash
+dart run ghostty_vte:setup --tag v0.0.2 --platform macos-arm64
+```
+
+**Monorepo users** can download all prebuilt libs at once:
+
+```bash
+dart run tool/prebuilt.dart --tag v0.0.2
 ```
 
 You can also set the `GHOSTTY_VTE_PREBUILT` environment variable to point
 directly at a prebuilt `libghostty-vt.so` / `.dylib` / `.dll` file.
+
+> **Tip:** Add `.prebuilt/` to your `.gitignore`.
 
 ## Web usage
 
