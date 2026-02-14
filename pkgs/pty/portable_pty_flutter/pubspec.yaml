@@ -1,0 +1,23 @@
+name: portable_pty_flutter
+description: Flutter bindings for portable PTY sessions, using `portable_pty` and
+  optional remote web transports.
+
+version: 0.0.1
+
+environment:
+  sdk: ^3.10.4
+  flutter: ">=1.17.0"
+
+publish_to: none
+resolution: workspace
+
+dependencies:
+  flutter:
+    sdk: flutter
+  portable_pty:
+    path: ../portable_pty
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0

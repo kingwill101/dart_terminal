@@ -1,0 +1,21 @@
+version: "3"
+
+tasks:
+  get:
+    cmds:
+      - dart pub get
+
+  ffigen:
+    dir: pkgs/vte/ghostty_vte
+    cmds:
+      - dart run tool/ffigen.dart
+
+  analyze:
+    cmds:
+      - dart analyze pkgs/vte/ghostty_vte
+      - flutter analyze pkgs/vte/ghostty_vte_flutter
+
+  test:
+    cmds:
+      - dart test pkgs/vte/ghostty_vte/test -r expanded
+      - flutter test pkgs/vte/ghostty_vte_flutter/test
