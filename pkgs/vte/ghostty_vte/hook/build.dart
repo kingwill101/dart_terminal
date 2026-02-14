@@ -54,6 +54,17 @@ void main(List<String> args) async {
     final bundledLibUri = input.outputDirectory.resolve(dylibName);
     await File.fromUri(builtLib).copy(File.fromUri(bundledLibUri).path);
 
+    // On macOS the Dart SDK rewrites install names after bundling via
+    // install_name_tool.  Zig-built dylibs have minimal Mach-O header
+    // padding so the rewrite fails with "larger updated load commands
+    // do not fit".  Work around this by stripping the ad-hoc code
+    // signature (which frees load-command space) so the Dart SDK's
+    // rewrite has room to set the absolute-path install name.
+    if (code.targetOS == OS.macOS) {
+      final dylibPath = File.fromUri(bundledLibUri).path;
+      await Process.run('codesign', ['--remove-signature', dylibPath]);
+    }
+
     output.assets.code.add(
       CodeAsset(
         package: input.packageName,

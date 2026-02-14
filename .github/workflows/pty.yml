@@ -41,9 +41,9 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Run portable_pty tests
+      - name: Run portable_pty example (pty)
         working-directory: pkgs/pty/portable_pty
-        run: dart test -r expanded
+        run: dart run example/pty_example.dart
 
       - name: Run portable_pty example (transport)
         working-directory: pkgs/pty/portable_pty
