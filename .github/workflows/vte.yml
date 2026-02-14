@@ -16,12 +16,12 @@ on:
 
 jobs:
   # ── Build native library + run Dart tests ──────────────────────────
+  # NOTE: macOS is excluded because Zig-built dylibs lack Mach-O
+  # header padding (-headerpad_max_install_names) and the Dart SDK's
+  # install_name_tool rewrite fails.  Once Ghostty's build.zig adds
+  # the flag, macOS can be re-enabled.
   test-native:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
