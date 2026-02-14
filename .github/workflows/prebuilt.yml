@@ -19,7 +19,7 @@ permissions:
 
 env:
   ZIG_VERSION: "0.15.2"
-  RUST_VERSION: "1.90.0"
+  RUST_VERSION: "1.92.0"
 
 jobs:
   # ════════════════════════════════════════════════════════════════════
@@ -90,9 +90,10 @@ jobs:
       - name: Locate artifact
         id: locate
         run: |
-          LIB=$(find ${{ github.workspace }}/build-prefix -name '${{ matrix.artifact }}' -type f | head -1)
+          # Zig produces versioned names like libghostty-vt.so.0.1.0
+          LIB=$(find ${{ github.workspace }}/build-prefix/lib -name '*ghostty-vt*' -type f | head -1)
           if [ -z "$LIB" ]; then
-            echo "::error::Could not find ${{ matrix.artifact }}"
+            echo "::error::Could not find any ghostty-vt library"
             find ${{ github.workspace }}/build-prefix -type f
             exit 1
           fi
@@ -102,6 +103,7 @@ jobs:
       - name: Package artifact
         run: |
           mkdir -p staging
+          # Rename to canonical unversioned name for consumers
           cp "${{ steps.locate.outputs.path }}" staging/${{ matrix.artifact }}
           cd staging
           tar czf ../vte-${{ matrix.os_label }}.tar.gz ${{ matrix.artifact }}
