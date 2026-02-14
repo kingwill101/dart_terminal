@@ -217,8 +217,7 @@ Future<void> _downloadAndExtract(
   String filename,
   Directory outDir,
 ) async {
-  final url =
-      'https://github.com/$_repo/releases/download/$tag/$filename';
+  final url = 'https://github.com/$_repo/releases/download/$tag/$filename';
 
   // Download with curl (available on all platforms).
   final tarPath = '${outDir.path}/$filename';
