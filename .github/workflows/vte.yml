@@ -14,9 +14,6 @@ on:
       - "pubspec.yaml"
       - ".github/workflows/vte.yml"
 
-env:
-  GHOSTTY_SRC_AUTO_FETCH: "1"
-
 jobs:
   # ── Build native library + run Dart tests ──────────────────────────
   test-native:
@@ -27,6 +24,8 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: dart-lang/setup-dart@v1
         with:
@@ -50,6 +49,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: dart-lang/setup-dart@v1
         with:
@@ -61,11 +62,6 @@ jobs:
 
       - name: Install dependencies
         run: dart pub get
-
-      - name: Clone Ghostty source
-        run: |
-          git clone https://github.com/ghostty-org/ghostty \
-            pkgs/vte/ghostty_vte/third_party/ghostty
 
       - name: Build WASM module
         working-directory: pkgs/vte/ghostty_vte
@@ -87,6 +83,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: subosito/flutter-action@v2
         with:

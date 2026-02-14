@@ -18,6 +18,3 @@ Thumbs.db
 
 # Native build outputs
 **/native_assets/
-
-# Third-party source (resolved at build time via GHOSTTY_SRC or auto-fetch)
-**/third_party/ghostty
