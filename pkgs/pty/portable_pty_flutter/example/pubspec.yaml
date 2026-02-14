@@ -1,0 +1,21 @@
+name: portable_pty_flutter_example
+publish_to: none
+
+environment:
+  sdk: ^3.10.4
+  flutter: ">=1.17.0"
+resolution: workspace
+
+dependencies:
+  flutter:
+    sdk: flutter
+  portable_pty_flutter:
+    path: ../
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

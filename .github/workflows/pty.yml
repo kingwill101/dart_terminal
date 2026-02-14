@@ -1,0 +1,70 @@
+name: PTY
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - "pkgs/pty/**"
+      - "pubspec.yaml"
+      - ".github/workflows/pty.yml"
+  pull_request:
+    branches: [master, main]
+    paths:
+      - "pkgs/pty/**"
+      - "pubspec.yaml"
+      - ".github/workflows/pty.yml"
+
+jobs:
+  # ── Build native library + run Dart tests ──────────────────────────
+  test-native:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.90.0"
+
+      - name: Verify Rust
+        run: |
+          rustc --version
+          cargo --version
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Run portable_pty example (pty)
+        working-directory: pkgs/pty/portable_pty
+        run: dart run example/pty_example.dart
+
+      - name: Run portable_pty example (transport)
+        working-directory: pkgs/pty/portable_pty
+        run: dart run example/transport_example.dart
+
+  # ── Flutter package tests ──────────────────────────────────────────
+  test-flutter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.90.0"
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Run portable_pty_flutter example test
+        run: flutter test pkgs/pty/portable_pty_flutter/example/test

@@ -1,0 +1,98 @@
+name: VTE
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - "pkgs/vte/**"
+      - "pubspec.yaml"
+      - ".github/workflows/vte.yml"
+  pull_request:
+    branches: [master, main]
+    paths:
+      - "pkgs/vte/**"
+      - "pubspec.yaml"
+      - ".github/workflows/vte.yml"
+
+jobs:
+  # ── Build native library + run Dart tests ──────────────────────────
+  # NOTE: macOS is excluded because Zig-built dylibs lack Mach-O
+  # header padding (-headerpad_max_install_names) and the Dart SDK's
+  # install_name_tool rewrite fails.  Once Ghostty's build.zig adds
+  # the flag, macOS can be re-enabled.
+  test-native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: "0.15.2"
+
+      - name: Verify Zig
+        run: zig version
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Run ghostty_vte tests
+        working-directory: pkgs/vte/ghostty_vte
+        run: dart test -r expanded
+
+  # ── Build WASM module ──────────────────────────────────────────────
+  build-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: "0.15.2"
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build WASM module
+        working-directory: pkgs/vte/ghostty_vte
+        run: dart run tool/build_wasm.dart
+
+      - name: Verify WASM artifact
+        run: |
+          ls -lh pkgs/vte/ghostty_vte_flutter/assets/ghostty-vt.wasm
+          file pkgs/vte/ghostty_vte_flutter/assets/ghostty-vt.wasm
+
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ghostty-vt-wasm
+          path: pkgs/vte/ghostty_vte_flutter/assets/ghostty-vt.wasm
+
+  # ── Flutter package tests ──────────────────────────────────────────
+  test-flutter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Run ghostty_vte_flutter tests
+        run: flutter test pkgs/vte/ghostty_vte_flutter/test

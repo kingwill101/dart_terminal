@@ -1,0 +1,43 @@
+name: ghostty_vte_flutter
+description: >-
+  Flutter terminal UI widgets powered by Ghostty's VT engine.
+  Provides GhosttyTerminalView, GhosttyTerminalController, and
+  automatic wasm initialisation for web targets.
+version: 0.0.1
+
+repository: https://github.com/kingwill101/dart_terminal/tree/master/pkgs/vte/ghostty_vte_flutter
+homepage: https://github.com/kingwill101/dart_terminal
+issue_tracker: https://github.com/kingwill101/dart_terminal/issues
+
+topics:
+  - terminal
+  - flutter
+  - widget
+  - ghostty
+
+environment:
+  sdk: ^3.10.4
+  flutter: ">=1.17.0"
+
+resolution: workspace
+
+dependencies:
+  flutter:
+    sdk: flutter
+  ghostty_vte: ^0.0.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  assets:
+    - assets/ghostty-vt.wasm
+  #     fonts:
+  #       - asset: fonts/TrajanPro.ttf
+  #       - asset: fonts/TrajanPro_Bold.ttf
+  #         weight: 700
+  #
+  # For details regarding fonts in packages, see
+  # https://flutter.dev/to/font-from-package

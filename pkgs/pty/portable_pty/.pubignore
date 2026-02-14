@@ -1,0 +1,10 @@
+# Rust build artifacts (can be hundreds of MB)
+rust/target/
+
+# Development tooling
+tool/
+doc/
+
+# Build artifacts
+build/
+.prebuilt/
