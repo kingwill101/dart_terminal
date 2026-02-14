@@ -41,9 +41,9 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Build native library (via Dart build hooks)
+      - name: Run portable_pty tests
         working-directory: pkgs/pty/portable_pty
-        run: dart run example/pty_example.dart 2>&1 || true
+        run: dart test -r expanded
 
       - name: Run portable_pty example (transport)
         working-directory: pkgs/pty/portable_pty

@@ -42,7 +42,8 @@ jobs:
         run: flutter pub get
 
       - name: Run ghostty_vte tests
-        run: dart test pkgs/vte/ghostty_vte/test -r expanded
+        working-directory: pkgs/vte/ghostty_vte
+        run: dart test -r expanded
 
   # ── Build WASM module ──────────────────────────────────────────────
   build-wasm:
