@@ -1,6 +1,10 @@
 # Exclude the full Ghostty source tree — it's only needed for building from source.
 # Users should set GHOSTTY_SRC or use prebuilt libraries.
 third_party/
+third_party/ghostty/
+third_party/ghostty/**
+/third_party/ghostty/
+/third_party/ghostty/**
 
 # Development tooling
 tool/

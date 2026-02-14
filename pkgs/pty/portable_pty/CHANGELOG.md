@@ -1,3 +1,7 @@
+## 0.0.1+1
+
+- Bumped package version to `0.0.1+1`.
+
 ## 0.0.1
 
 - Initial release.
