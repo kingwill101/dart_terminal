@@ -1,0 +1,99 @@
+name: VTE
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - "pkgs/vte/**"
+      - "pubspec.yaml"
+      - ".github/workflows/vte.yml"
+  pull_request:
+    branches: [master, main]
+    paths:
+      - "pkgs/vte/**"
+      - "pubspec.yaml"
+      - ".github/workflows/vte.yml"
+
+env:
+  GHOSTTY_SRC_AUTO_FETCH: "1"
+
+jobs:
+  # ── Build native library + run Dart tests ──────────────────────────
+  test-native:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: "3.10.4"
+
+      - uses: mlugg/setup-zig@v1
+        with:
+          version: "0.15.2"
+
+      - name: Verify Zig
+        run: zig version
+
+      - name: Install dependencies
+        run: dart pub get
+
+      - name: Run ghostty_vte tests
+        run: dart test pkgs/vte/ghostty_vte/test -r expanded
+
+  # ── Build WASM module ──────────────────────────────────────────────
+  build-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: "3.10.4"
+
+      - uses: mlugg/setup-zig@v1
+        with:
+          version: "0.15.2"
+
+      - name: Install dependencies
+        run: dart pub get
+
+      - name: Clone Ghostty source
+        run: |
+          git clone https://github.com/ghostty-org/ghostty \
+            pkgs/vte/ghostty_vte/third_party/ghostty
+
+      - name: Build WASM module
+        working-directory: pkgs/vte/ghostty_vte
+        run: dart run tool/build_wasm.dart
+
+      - name: Verify WASM artifact
+        run: |
+          ls -lh pkgs/vte/ghostty_vte_flutter/assets/ghostty-vt.wasm
+          file pkgs/vte/ghostty_vte_flutter/assets/ghostty-vt.wasm
+
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ghostty-vt-wasm
+          path: pkgs/vte/ghostty_vte_flutter/assets/ghostty-vt.wasm
+
+  # ── Flutter package tests ──────────────────────────────────────────
+  test-flutter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Install dependencies
+        run: dart pub get
+
+      - name: Run ghostty_vte_flutter tests
+        run: flutter test pkgs/vte/ghostty_vte_flutter/test
