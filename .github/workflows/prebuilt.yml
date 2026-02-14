@@ -1,0 +1,311 @@
+name: Prebuilt Libraries
+
+on:
+  # Manual trigger with optional version tag
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.0.1). If empty, artifacts are uploaded but no release is created."
+        required: false
+        type: string
+
+  # Also run on tags
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # needed for creating releases
+
+env:
+  ZIG_VERSION: "0.15.2"
+  RUST_VERSION: "1.90.0"
+
+jobs:
+  # ════════════════════════════════════════════════════════════════════
+  #  VTE — Zig cross-compiled shared libraries
+  # ════════════════════════════════════════════════════════════════════
+  vte-native:
+    name: "VTE ${{ matrix.target }}"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux
+          - target: x86_64-linux-gnu
+            artifact: libghostty-vt.so
+            os_label: linux-x64
+          - target: aarch64-linux-gnu
+            artifact: libghostty-vt.so
+            os_label: linux-arm64
+
+          # macOS (cross-compiled from Linux via Zig)
+          - target: aarch64-macos
+            artifact: libghostty-vt.dylib
+            os_label: macos-arm64
+          - target: x86_64-macos
+            artifact: libghostty-vt.dylib
+            os_label: macos-x64
+
+          # Windows
+          - target: x86_64-windows-gnu
+            artifact: ghostty-vt.dll
+            os_label: windows-x64
+          - target: aarch64-windows-gnu
+            artifact: ghostty-vt.dll
+            os_label: windows-arm64
+
+          # Android
+          - target: aarch64-linux-android
+            artifact: libghostty-vt.so
+            os_label: android-arm64
+          - target: arm-linux-androideabi
+            artifact: libghostty-vt.so
+            os_label: android-arm
+          - target: x86_64-linux-android
+            artifact: libghostty-vt.so
+            os_label: android-x64
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Build libghostty-vt (${{ matrix.target }})
+        working-directory: pkgs/vte/ghostty_vte/third_party/ghostty
+        run: |
+          mkdir -p ${{ github.workspace }}/build-prefix
+          zig build lib-vt \
+            -Dtarget=${{ matrix.target }} \
+            -Doptimize=ReleaseFast \
+            -Dsimd=false \
+            --prefix ${{ github.workspace }}/build-prefix \
+            --summary failures
+
+      - name: Locate artifact
+        id: locate
+        run: |
+          LIB=$(find ${{ github.workspace }}/build-prefix -name '${{ matrix.artifact }}' -type f | head -1)
+          if [ -z "$LIB" ]; then
+            echo "::error::Could not find ${{ matrix.artifact }}"
+            find ${{ github.workspace }}/build-prefix -type f
+            exit 1
+          fi
+          echo "path=$LIB" >> "$GITHUB_OUTPUT"
+          echo "Found: $LIB ($(wc -c < "$LIB") bytes)"
+
+      - name: Package artifact
+        run: |
+          mkdir -p staging
+          cp "${{ steps.locate.outputs.path }}" staging/${{ matrix.artifact }}
+          cd staging
+          tar czf ../vte-${{ matrix.os_label }}.tar.gz ${{ matrix.artifact }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vte-${{ matrix.os_label }}
+          path: vte-${{ matrix.os_label }}.tar.gz
+
+  # ── VTE WASM ───────────────────────────────────────────────────────
+  vte-wasm:
+    name: "VTE wasm"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Build ghostty-vt.wasm
+        working-directory: pkgs/vte/ghostty_vte/third_party/ghostty
+        run: |
+          mkdir -p ${{ github.workspace }}/build-prefix
+          zig build lib-vt \
+            -Dtarget=wasm32-freestanding \
+            -Doptimize=ReleaseFast \
+            -Dsimd=false \
+            --prefix ${{ github.workspace }}/build-prefix \
+            --summary failures
+
+      - name: Locate artifact
+        id: locate
+        run: |
+          WASM=$(find ${{ github.workspace }}/build-prefix -name '*.wasm' -type f | head -1)
+          if [ -z "$WASM" ]; then
+            echo "::error::Could not find wasm artifact"
+            find ${{ github.workspace }}/build-prefix -type f
+            exit 1
+          fi
+          echo "path=$WASM" >> "$GITHUB_OUTPUT"
+          echo "Found: $WASM ($(wc -c < "$WASM") bytes)"
+
+      - name: Package artifact
+        run: |
+          mkdir -p staging
+          cp "${{ steps.locate.outputs.path }}" staging/ghostty-vt.wasm
+          tar czf vte-wasm.tar.gz -C staging ghostty-vt.wasm
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vte-wasm
+          path: vte-wasm.tar.gz
+
+  # ════════════════════════════════════════════════════════════════════
+  #  PTY — Rust cross-compiled shared libraries
+  # ════════════════════════════════════════════════════════════════════
+  pty-native:
+    name: "PTY ${{ matrix.os_label }}"
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ── Linux ──
+          - runner: ubuntu-latest
+            rust_target: x86_64-unknown-linux-gnu
+            artifact: libportable_pty_rs.so
+            os_label: linux-x64
+          - runner: ubuntu-latest
+            rust_target: aarch64-unknown-linux-gnu
+            artifact: libportable_pty_rs.so
+            os_label: linux-arm64
+            cross: true
+
+          # ── macOS ──
+          - runner: macos-latest
+            rust_target: aarch64-apple-darwin
+            artifact: libportable_pty_rs.dylib
+            os_label: macos-arm64
+          - runner: macos-latest
+            rust_target: x86_64-apple-darwin
+            artifact: libportable_pty_rs.dylib
+            os_label: macos-x64
+
+          # ── Windows ──
+          - runner: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+            artifact: portable_pty_rs.dll
+            os_label: windows-x64
+
+          # ── Android (cross from Linux) ──
+          - runner: ubuntu-latest
+            rust_target: aarch64-linux-android
+            artifact: libportable_pty_rs.so
+            os_label: android-arm64
+            cross: true
+          - runner: ubuntu-latest
+            rust_target: armv7-linux-androideabi
+            artifact: libportable_pty_rs.so
+            os_label: android-arm
+            cross: true
+          - runner: ubuntu-latest
+            rust_target: x86_64-linux-android
+            artifact: libportable_pty_rs.so
+            os_label: android-x64
+            cross: true
+
+          # ── iOS (from macOS) ──
+          - runner: macos-latest
+            rust_target: aarch64-apple-ios
+            artifact: libportable_pty_rs.a
+            os_label: ios-arm64
+          - runner: macos-latest
+            rust_target: aarch64-apple-ios-sim
+            artifact: libportable_pty_rs.a
+            os_label: ios-sim-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: ${{ matrix.rust_target }}
+
+      - name: Install cross (for cross-compiled targets)
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Install Android NDK
+        if: startsWith(matrix.os_label, 'android-')
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27c
+
+      - name: Build PTY native library
+        working-directory: pkgs/pty/portable_pty/rust
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.rust_target }}
+          else
+            cargo build --release --target ${{ matrix.rust_target }}
+          fi
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        shell: bash
+
+      - name: Package artifact
+        run: |
+          mkdir -p staging
+          LIB=$(find pkgs/pty/portable_pty/rust/target/${{ matrix.rust_target }}/release -name '${{ matrix.artifact }}' -type f | head -1)
+          if [ -z "$LIB" ]; then
+            echo "::error::Could not find ${{ matrix.artifact }}"
+            find pkgs/pty/portable_pty/rust/target/${{ matrix.rust_target }}/release -type f -name '*.so' -o -name '*.dylib' -o -name '*.dll' -o -name '*.a'
+            exit 1
+          fi
+          cp "$LIB" staging/${{ matrix.artifact }}
+          cd staging
+          tar czf ../pty-${{ matrix.os_label }}.tar.gz ${{ matrix.artifact }}
+        shell: bash
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pty-${{ matrix.os_label }}
+          path: pty-${{ matrix.os_label }}.tar.gz
+
+  # ════════════════════════════════════════════════════════════════════
+  #  Release — collect all artifacts and publish a GitHub release
+  # ════════════════════════════════════════════════════════════════════
+  release:
+    name: Create Release
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.tag != ''
+    needs: [vte-native, vte-wasm, pty-native]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: find artifacts -type f | sort
+
+      - name: Determine tag
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: "${{ steps.tag.outputs.tag }}"
+          generate_release_notes: true
+          files: |
+            artifacts/**/*.tar.gz

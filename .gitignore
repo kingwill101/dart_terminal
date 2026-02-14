@@ -18,3 +18,6 @@ Thumbs.db
 
 # Native build outputs
 **/native_assets/
+
+# Prebuilt library cache
+.prebuilt/
