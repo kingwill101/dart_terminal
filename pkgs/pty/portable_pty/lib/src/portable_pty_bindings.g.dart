@@ -63,8 +63,9 @@ portable_pty_result_t portable_pty_spawn(
   ffi.Pointer<ffi.Char> cmd,
   ffi.Pointer<ffi.Pointer<ffi.Char>> argv,
   ffi.Pointer<ffi.Pointer<ffi.Char>> envp,
-) =>
-    portable_pty_result_t.fromValue(_portable_pty_spawn(handle, cmd, argv, envp));
+) => portable_pty_result_t.fromValue(
+  _portable_pty_spawn(handle, cmd, argv, envp),
+);
 
 /// Read bytes from the PTY master side (child's stdout).
 ///
@@ -186,11 +187,15 @@ external int _portable_pty_wait_blocking(
 portable_pty_result_t portable_pty_wait_blocking(
   ffi.Pointer<portable_pty_t> handle,
   ffi.Pointer<ffi.Int> out_status,
-) => portable_pty_result_t.fromValue(_portable_pty_wait_blocking(handle, out_status));
+) => portable_pty_result_t.fromValue(
+  _portable_pty_wait_blocking(handle, out_status),
+);
 
 /// Get the PTY process group leader id.
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<portable_pty_t>)>()
-external int portable_pty_process_group_leader(ffi.Pointer<portable_pty_t> handle);
+external int portable_pty_process_group_leader(
+  ffi.Pointer<portable_pty_t> handle,
+);
 
 /// Send a signal to the child process (POSIX signal number).
 @ffi.Native<ffi.UnsignedInt Function(ffi.Pointer<portable_pty_t>, ffi.Int)>(

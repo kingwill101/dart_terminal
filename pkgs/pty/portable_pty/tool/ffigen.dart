@@ -2,9 +2,7 @@ import 'dart:io';
 
 Future<void> main() async {
   final packageRoot = _packageRoot();
-  final ptyHeader = File.fromUri(
-    packageRoot.uri.resolve('rust/bindings.h'),
-  );
+  final ptyHeader = File.fromUri(packageRoot.uri.resolve('rust/bindings.h'));
   if (!ptyHeader.existsSync()) {
     throw StateError('Missing header: ${ptyHeader.path}');
   }
@@ -47,11 +45,9 @@ Directory _packageRoot() {
 }
 
 String? _clangIncludePath() {
-  final result = Process.runSync(
-    'clang',
-    const <String>['-print-resource-dir'],
-    runInShell: true,
-  );
+  final result = Process.runSync('clang', const <String>[
+    '-print-resource-dir',
+  ], runInShell: true);
   if (result.exitCode != 0) {
     return null;
   }

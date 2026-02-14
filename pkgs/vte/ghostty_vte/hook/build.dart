@@ -131,16 +131,17 @@ bool _envFlag(String name) {
 }
 
 void _cloneGhosttySource(Directory targetDir) {
-  final url = Platform.environment['GHOSTTY_SRC_URL'] ??
+  final url =
+      Platform.environment['GHOSTTY_SRC_URL'] ??
       'https://github.com/ghostty-org/ghostty';
   final parent = targetDir.parent;
   parent.createSync(recursive: true);
 
-  final cloneResult = Process.runSync(
-    'git',
-    ['clone', url, targetDir.path],
-    runInShell: true,
-  );
+  final cloneResult = Process.runSync('git', [
+    'clone',
+    url,
+    targetDir.path,
+  ], runInShell: true);
   if (cloneResult.exitCode != 0) {
     throw StateError(
       'Failed to clone Ghostty source.\n'
@@ -151,11 +152,12 @@ void _cloneGhosttySource(Directory targetDir) {
 
   final ref = Platform.environment['GHOSTTY_SRC_REF'];
   if (ref != null && ref.isNotEmpty) {
-    final checkoutResult = Process.runSync(
-      'git',
-      ['-C', targetDir.path, 'checkout', ref],
-      runInShell: true,
-    );
+    final checkoutResult = Process.runSync('git', [
+      '-C',
+      targetDir.path,
+      'checkout',
+      ref,
+    ], runInShell: true);
     if (checkoutResult.exitCode != 0) {
       throw StateError(
         'Failed to checkout Ghostty ref "$ref".\n'

@@ -32,7 +32,9 @@ final class PortablePty {
   }) {
     // webSocketUrl/webTransportUrl are web-only options; they are ignored on
     // native targets but kept for API parity with the web implementation.
-    return PortablePty._(transport ?? _NativePtyTransport.open(rows: rows, cols: cols));
+    return PortablePty._(
+      transport ?? _NativePtyTransport.open(rows: rows, cols: cols),
+    );
   }
 
   final PortablePtyTransport _transport;
@@ -150,10 +152,7 @@ final class PortablePty {
     _transport.close();
   }
 
-  static void _check(
-    bindings.PortablePtyResult result,
-    String operation,
-  ) {
+  static void _check(bindings.PortablePtyResult result, String operation) {
     if (result != bindings.PortablePtyResult.Ok) {
       throw PtyException(operation, result);
     }
@@ -164,11 +163,8 @@ final class PortablePty {
 final class _NativePtyTransport implements PortablePtyTransport {
   _NativePtyTransport._(this._handle);
 
-  factory _NativePtyTransport.open({
-    int rows = 24,
-    int cols = 80,
-  }) {
-      final out = calloc<ffi.Pointer<bindings.PortablePty>>();
+  factory _NativePtyTransport.open({int rows = 24, int cols = 80}) {
+    final out = calloc<ffi.Pointer<bindings.PortablePty>>();
     try {
       final result = bindings.portable_pty_open(rows, cols, out);
       PortablePty._check(result, 'portable_pty_open');

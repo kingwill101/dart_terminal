@@ -15,14 +15,12 @@ class PortablePtyApp extends StatefulWidget {
   State<PortablePtyApp> createState() => _PortablePtyAppState();
 }
 
-enum _RemoteTransportMode {
-  webSocket,
-  webTransport,
-}
+enum _RemoteTransportMode { webSocket, webTransport }
 
 class _PortablePtyAppState extends State<PortablePtyApp> {
   static const String _defaultWebSocketEndpoint = 'ws://localhost:8080/pty';
-  static const String _defaultWebTransportEndpoint = 'https://localhost:8080/pty';
+  static const String _defaultWebTransportEndpoint =
+      'https://localhost:8080/pty';
 
   late PortablePtyController _controller;
   Timer? _outputTicker;
@@ -63,10 +61,12 @@ class _PortablePtyAppState extends State<PortablePtyApp> {
     }
 
     return PortablePtyController(
-      webSocketUrl:
-          _transportMode == _RemoteTransportMode.webSocket ? _endpoint.text : null,
-      webTransportUrl:
-          _transportMode == _RemoteTransportMode.webTransport ? _endpoint.text : null,
+      webSocketUrl: _transportMode == _RemoteTransportMode.webSocket
+          ? _endpoint.text
+          : null,
+      webTransportUrl: _transportMode == _RemoteTransportMode.webTransport
+          ? _endpoint.text
+          : null,
     );
   }
 
@@ -120,8 +120,11 @@ class _PortablePtyAppState extends State<PortablePtyApp> {
       return;
     }
 
-    final parts =
-        _command.text.trim().split(RegExp(r'\s+')).where((x) => x.isNotEmpty).toList();
+    final parts = _command.text
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((x) => x.isNotEmpty)
+        .toList();
     if (parts.isEmpty) {
       return;
     }
@@ -141,7 +144,9 @@ class _PortablePtyAppState extends State<PortablePtyApp> {
     }
     final wrote = _controller.write('${_input.text}\n');
     if (!wrote) {
-      _controller.appendDebugOutput('[failed to send input: transport is closed]\n');
+      _controller.appendDebugOutput(
+        '[failed to send input: transport is closed]\n',
+      );
     }
   }
 
@@ -170,7 +175,10 @@ class _PortablePtyAppState extends State<PortablePtyApp> {
                   const SizedBox(width: 8),
                   ElevatedButton(onPressed: _stop, child: const Text('Stop')),
                   const SizedBox(width: 8),
-                  ElevatedButton(onPressed: _readOutput, child: const Text('Read once')),
+                  ElevatedButton(
+                    onPressed: _readOutput,
+                    child: const Text('Read once'),
+                  ),
                 ],
               ),
               const SizedBox(height: 8),
@@ -198,7 +206,9 @@ class _PortablePtyAppState extends State<PortablePtyApp> {
                         ],
                         selected: <_RemoteTransportMode>{_transportMode},
                         onSelectionChanged: (values) {
-                          final value = values.isNotEmpty ? values.first : _transportMode;
+                          final value = values.isNotEmpty
+                              ? values.first
+                              : _transportMode;
                           _onTransportModeChanged(value);
                         },
                       ),
@@ -221,7 +231,10 @@ class _PortablePtyAppState extends State<PortablePtyApp> {
                 decoration: const InputDecoration(labelText: 'Input to shell'),
               ),
               const SizedBox(height: 8),
-              ElevatedButton(onPressed: _sendInput, child: const Text('Write input')),
+              ElevatedButton(
+                onPressed: _sendInput,
+                child: const Text('Write input'),
+              ),
               const SizedBox(height: 12),
               Expanded(
                 child: SelectableText(

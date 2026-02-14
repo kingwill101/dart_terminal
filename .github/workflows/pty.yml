@@ -25,9 +25,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dart-lang/setup-dart@v1
+      - uses: subosito/flutter-action@v2
         with:
-          sdk: "3.10.4"
+          channel: stable
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -39,7 +39,7 @@ jobs:
           cargo --version
 
       - name: Install dependencies
-        run: dart pub get
+        run: flutter pub get
 
       - name: Build native library (via Dart build hooks)
         working-directory: pkgs/pty/portable_pty
@@ -64,7 +64,7 @@ jobs:
           toolchain: "1.90.0"
 
       - name: Install dependencies
-        run: dart pub get
+        run: flutter pub get
 
       - name: Run portable_pty_flutter example test
         run: flutter test pkgs/pty/portable_pty_flutter/example/test

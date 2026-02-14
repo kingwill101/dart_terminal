@@ -12,16 +12,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dart-lang/setup-dart@v1
-        with:
-          sdk: "3.10.4"
-
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
 
       - name: Install dependencies
-        run: dart pub get
+        run: flutter pub get
 
       - name: Dart analyze
         run: dart analyze

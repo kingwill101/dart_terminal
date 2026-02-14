@@ -7,7 +7,7 @@ import 'package:ghostty_vte/ghostty_vte.dart';
 /// spawn local processes. It is intended to be connected to a remote transport
 /// (WebSocket/SSH proxy) by feeding output via [appendDebugOutput] and sending
 /// input through [write]/[sendKey].
-/// 
+///
 /// The default implementation keeps an internal line buffer so widgets can render
 /// incremental output without a full terminal emulation dependency.
 class GhosttyTerminalController extends ChangeNotifier {
@@ -19,8 +19,10 @@ class GhosttyTerminalController extends ChangeNotifier {
   }) : assert(maxLines > 0);
 
   final int maxLines;
+
   /// Optional hard cap on the number of cached lines.
   final bool preferPty;
+
   /// Optional shell override when wiring remote endpoints.
   final String? defaultShell;
 

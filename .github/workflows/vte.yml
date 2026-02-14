@@ -27,11 +27,11 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: dart-lang/setup-dart@v1
+      - uses: subosito/flutter-action@v2
         with:
-          sdk: "3.10.4"
+          channel: stable
 
-      - uses: mlugg/setup-zig@v1
+      - uses: mlugg/setup-zig@v2
         with:
           version: "0.15.2"
 
@@ -39,7 +39,7 @@ jobs:
         run: zig version
 
       - name: Install dependencies
-        run: dart pub get
+        run: flutter pub get
 
       - name: Run ghostty_vte tests
         run: dart test pkgs/vte/ghostty_vte/test -r expanded
@@ -52,16 +52,16 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: dart-lang/setup-dart@v1
+      - uses: subosito/flutter-action@v2
         with:
-          sdk: "3.10.4"
+          channel: stable
 
-      - uses: mlugg/setup-zig@v1
+      - uses: mlugg/setup-zig@v2
         with:
           version: "0.15.2"
 
       - name: Install dependencies
-        run: dart pub get
+        run: flutter pub get
 
       - name: Build WASM module
         working-directory: pkgs/vte/ghostty_vte
@@ -91,7 +91,7 @@ jobs:
           channel: stable
 
       - name: Install dependencies
-        run: dart pub get
+        run: flutter pub get
 
       - name: Run ghostty_vte_flutter tests
         run: flutter test pkgs/vte/ghostty_vte_flutter/test

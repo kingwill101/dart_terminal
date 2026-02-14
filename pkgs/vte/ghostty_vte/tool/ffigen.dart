@@ -91,12 +91,9 @@ bool _isGhosttyRoot(Directory dir) {
 }
 
 String? _clangIncludePath() {
-  final result = Process.runSync(
-      'clang',
-      const <String>[
-        '-print-resource-dir',
-      ],
-      runInShell: true);
+  final result = Process.runSync('clang', const <String>[
+    '-print-resource-dir',
+  ], runInShell: true);
   if (result.exitCode != 0) {
     return null;
   }

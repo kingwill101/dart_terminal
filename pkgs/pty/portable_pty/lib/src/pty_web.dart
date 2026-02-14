@@ -44,7 +44,9 @@ final class PortablePty {
     final resolvedTransport =
         transport ??
         (webTransportUrl != null
-            ? PortablePtyWebTransportTransport(webTransportEndpoint: webTransportUrl)
+            ? PortablePtyWebTransportTransport(
+                webTransportEndpoint: webTransportUrl,
+              )
             : PortablePtyWebSocketTransport(webSocketEndpoint: webSocketUrl));
     return PortablePty._(resolvedTransport);
   }
@@ -120,7 +122,6 @@ final class PortablePty {
   void close() {
     _transport.close();
   }
-
 }
 
 /// Exception thrown when a PTY operation fails.
@@ -139,12 +140,12 @@ class PtyException implements Exception {
 /// This implementation is intentionally minimal and accepts a single websocket
 /// endpoint. Consumers can provide their own transport by passing one to
 /// [PortablePty.open].
-/// 
+///
 /// Message boundaries are preserved to a best-effort queue-backed model. This
 /// transport is intentionally simple and suitable for demos and tooling backends.
 final class PortablePtyWebSocketTransport implements PortablePtyTransport {
   PortablePtyWebSocketTransport({required String? webSocketEndpoint})
-      : _webSocketEndpoint = webSocketEndpoint;
+    : _webSocketEndpoint = webSocketEndpoint;
 
   static Never _unsupported() {
     throw UnsupportedError(
@@ -358,7 +359,7 @@ final class PortablePtyWebSocketTransport implements PortablePtyTransport {
 /// This transport is intended for environments that expose `window.WebTransport`.
 final class PortablePtyWebTransportTransport implements PortablePtyTransport {
   PortablePtyWebTransportTransport({required String webTransportEndpoint})
-      : _webTransportEndpoint = webTransportEndpoint;
+    : _webTransportEndpoint = webTransportEndpoint;
 
   static Never _unsupported() {
     throw UnsupportedError(
@@ -413,32 +414,33 @@ final class PortablePtyWebTransportTransport implements PortablePtyTransport {
         return;
       }
 
-      final readPromise =
-          reader.callMethod<JSPromise>('read'.toJS);
-      readPromise.toDart.then((JSAny? result) {
-        if (_closed || result == null) {
-          return;
-        }
+      final readPromise = reader.callMethod<JSPromise>('read'.toJS);
+      readPromise.toDart
+          .then((JSAny? result) {
+            if (_closed || result == null) {
+              return;
+            }
 
-        final resultObj = result as JSObject;
-        final done = (resultObj['done'] as JSBoolean?)?.toDart;
-        if (done == true) {
-          _connected = false;
-          return;
-        }
+            final resultObj = result as JSObject;
+            final done = (resultObj['done'] as JSBoolean?)?.toDart;
+            if (done == true) {
+              _connected = false;
+              return;
+            }
 
-        final value = resultObj['value'];
-        if (value.isA<JSString>()) {
-          _buffer.addAll(utf8.encode((value as JSString).toDart));
-        } else if (value != null) {
-          _appendDatagramChunk(value as JSObject);
-        }
+            final value = resultObj['value'];
+            if (value.isA<JSString>()) {
+              _buffer.addAll(utf8.encode((value as JSString).toDart));
+            } else if (value != null) {
+              _appendDatagramChunk(value as JSObject);
+            }
 
-        loop();
-      }).catchError((_) {
-        _connected = false;
-        return null;
-      });
+            loop();
+          })
+          .catchError((_) {
+            _connected = false;
+            return null;
+          });
     }
 
     loop();
@@ -450,8 +452,10 @@ final class PortablePtyWebTransportTransport implements PortablePtyTransport {
       throw StateError('PortablePty transport is not connected.');
     }
 
-    final writePromise =
-        writer.callMethod<JSPromise>('write'.toJS, message.toJS);
+    final writePromise = writer.callMethod<JSPromise>(
+      'write'.toJS,
+      message.toJS,
+    );
     writePromise.toDart.catchError((_) {
       _connected = false;
       return null;
@@ -491,18 +495,20 @@ final class PortablePtyWebTransportTransport implements PortablePtyTransport {
     }
 
     final ready = transport['ready'] as JSPromise;
-    return ready.toDart.then((_) {
-      if (_closed) {
-        return null;
-      }
-      _connected = true;
-      _initialize();
-      return null;
-    }).catchError((_) {
-      _connected = false;
-      _close();
-      return null;
-    });
+    return ready.toDart
+        .then((_) {
+          if (_closed) {
+            return null;
+          }
+          _connected = true;
+          _initialize();
+          return null;
+        })
+        .catchError((_) {
+          _connected = false;
+          _close();
+          return null;
+        });
   }
 
   @override
@@ -528,37 +534,42 @@ final class PortablePtyWebTransportTransport implements PortablePtyTransport {
       _unsupported();
     }
 
-    _transport =
-        (ctor as JSFunction).callAsConstructor<JSObject>(endpoint.toJS);
+    _transport = (ctor as JSFunction).callAsConstructor<JSObject>(
+      endpoint.toJS,
+    );
 
     final closed = _transport!['closed'] as JSPromise?;
     if (closed != null) {
-      closed.toDart.then((_) {
-        _connected = false;
-        return null;
-      }).catchError((_) {
-        _connected = false;
-        return null;
-      });
+      closed.toDart
+          .then((_) {
+            _connected = false;
+            return null;
+          })
+          .catchError((_) {
+            _connected = false;
+            return null;
+          });
     }
 
     final readyFuture = _waitForOpen();
-    readyFuture.then((_) {
-      if (!_connected) {
-        return null;
-      }
+    readyFuture
+        .then((_) {
+          if (!_connected) {
+            return null;
+          }
 
-      if (args != null && args.isNotEmpty) {
-        _sendText(jsonEncode({'args': args}));
-      }
-      if (environment != null && environment.isNotEmpty) {
-        _sendText(jsonEncode({'environment': environment}));
-      }
-      return null;
-    }).catchError((_) {
-      _connected = false;
-      return null;
-    });
+          if (args != null && args.isNotEmpty) {
+            _sendText(jsonEncode({'args': args}));
+          }
+          if (environment != null && environment.isNotEmpty) {
+            _sendText(jsonEncode({'environment': environment}));
+          }
+          return null;
+        })
+        .catchError((_) {
+          _connected = false;
+          return null;
+        });
 
     _spawned = true;
   }

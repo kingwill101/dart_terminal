@@ -97,10 +97,7 @@ class PortablePtyController with PtyListenable {
       transport: transport,
     );
     try {
-      _pty!.spawn(
-        target,
-        args: arguments.isNotEmpty ? arguments : null,
-      );
+      _pty!.spawn(target, args: arguments.isNotEmpty ? arguments : null);
       _running = true;
       _appendLine('[started $target]');
       _markDirty();
@@ -232,8 +229,10 @@ class PortablePtyController with PtyListenable {
         case 0x08:
           final current = _lines[_lines.length - 1];
           if (current.isNotEmpty) {
-            _lines[_lines.length - 1] =
-                current.substring(0, current.length - 1);
+            _lines[_lines.length - 1] = current.substring(
+              0,
+              current.length - 1,
+            );
           }
         default:
           _lines[_lines.length - 1] += String.fromCharCode(rune);

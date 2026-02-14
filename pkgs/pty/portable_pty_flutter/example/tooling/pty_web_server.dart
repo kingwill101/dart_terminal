@@ -6,14 +6,13 @@ const String _defaultHost = '0.0.0.0';
 int _nextClientId = 0;
 
 void main(List<String> args) async {
-  final port = args.isNotEmpty ? int.tryParse(args[0]) ?? _defaultPort : _defaultPort;
+  final port = args.isNotEmpty
+      ? int.tryParse(args[0]) ?? _defaultPort
+      : _defaultPort;
   final host = args.length > 1 ? args[1] : _defaultHost;
   final shell = Platform.isWindows ? 'cmd.exe' : '/bin/sh';
 
-  final server = await HttpServer.bind(
-    InternetAddress(host),
-    port,
-  );
+  final server = await HttpServer.bind(InternetAddress(host), port);
 
   _log('mock PTY websocket server on ws://$host:$port/pty');
   _log('open: flutter example endpoint should be ws://localhost:$port/pty');
@@ -41,7 +40,8 @@ void main(List<String> args) async {
       continue;
     }
 
-    final command = request.uri.queryParameters['command'] ??
+    final command =
+        request.uri.queryParameters['command'] ??
         request.uri.queryParameters['cmd'];
 
     final socket = await WebSocketTransformer.upgrade(request);
@@ -131,7 +131,9 @@ Future<void> _handleClient(
       } else if (message is List<dynamic>) {
         _log('[$requestId] <- dynamic list message (${message.length} items)');
       } else {
-        _log('[$requestId] <- message of unexpected type ${message.runtimeType}');
+        _log(
+          '[$requestId] <- message of unexpected type ${message.runtimeType}',
+        );
       }
 
       if (message is String) {
@@ -161,16 +163,18 @@ Future<void> _handleClient(
     },
   );
 
-  unawaited(process.exitCode.whenComplete(() async {
-    if (socket.readyState == WebSocket.open) {
-      socket.add('[remote process ended]\n');
-      await socket.close();
-    }
-    _log('[$requestId] process exitCode=${await process.exitCode}');
-    await stdoutSubscription?.cancel();
-    await stderrSubscription?.cancel();
-    await socketSubscription?.cancel();
-  }));
+  unawaited(
+    process.exitCode.whenComplete(() async {
+      if (socket.readyState == WebSocket.open) {
+        socket.add('[remote process ended]\n');
+        await socket.close();
+      }
+      _log('[$requestId] process exitCode=${await process.exitCode}');
+      await stdoutSubscription?.cancel();
+      await stderrSubscription?.cancel();
+      await socketSubscription?.cancel();
+    }),
+  );
 }
 
 Future<Process> _spawnProcess(String shell, String? commandLine) async {

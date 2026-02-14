@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:portable_pty/portable_pty.dart'
-    as base show PortablePtyController, PtyListenable, PortablePtyTransport;
+    as base
+    show PortablePtyController, PtyListenable, PortablePtyTransport;
 
 /// Flutter-friendly [ChangeNotifier] adapter around the pure-Dart
 /// [base.PortablePtyController].
@@ -24,14 +25,14 @@ class FlutterPtyController extends ChangeNotifier {
     String? webTransportUrl,
     base.PortablePtyTransport? transport,
   }) : _inner = base.PortablePtyController(
-          maxLines: maxLines,
-          defaultShell: defaultShell,
-          rows: rows,
-          cols: cols,
-          webSocketUrl: webSocketUrl,
-          webTransportUrl: webTransportUrl,
-          transport: transport,
-        ) {
+         maxLines: maxLines,
+         defaultShell: defaultShell,
+         rows: rows,
+         cols: cols,
+         webSocketUrl: webSocketUrl,
+         webTransportUrl: webTransportUrl,
+         transport: transport,
+       ) {
     _inner.addListener(_onInnerChanged);
   }
 
@@ -61,8 +62,7 @@ class FlutterPtyController extends ChangeNotifier {
   Future<void> start({
     String? shell,
     List<String> arguments = const <String>[],
-  }) =>
-      _inner.start(shell: shell, arguments: arguments);
+  }) => _inner.start(shell: shell, arguments: arguments);
 
   /// See [base.PortablePtyController.stop].
   Future<void> stop() => _inner.stop();

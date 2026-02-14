@@ -36,10 +36,7 @@ void main() {
 
     final command = parser.end();
 
-    expect(
-      command.type,
-      GhosttyOscCommandType.GHOSTTY_OSC_COMMAND_INVALID,
-    );
+    expect(command.type, GhosttyOscCommandType.GHOSTTY_OSC_COMMAND_INVALID);
     expect(command.windowTitle, isNull);
   });
 
@@ -48,10 +45,7 @@ void main() {
     addTearDown(parser.close);
 
     final command = parser.end();
-    expect(
-      command.type,
-      GhosttyOscCommandType.GHOSTTY_OSC_COMMAND_INVALID,
-    );
+    expect(command.type, GhosttyOscCommandType.GHOSTTY_OSC_COMMAND_INVALID);
   });
 
   test('SGR parser parses bold + red foreground', () {

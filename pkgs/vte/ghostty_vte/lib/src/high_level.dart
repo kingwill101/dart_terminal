@@ -206,9 +206,7 @@ final class VtOscParser {
     // Guard: if the native call returned a null pointer, treat as invalid.
     if (command == ffi.nullptr) {
       return const VtOscCommand(
-        type: bindings
-            .GhosttyOscCommandType
-            .GHOSTTY_OSC_COMMAND_INVALID,
+        type: bindings.GhosttyOscCommandType.GHOSTTY_OSC_COMMAND_INVALID,
       );
     }
 
@@ -217,8 +215,7 @@ final class VtOscParser {
     // Guard: don't attempt to extract data from invalid/unrecognised commands
     // — the native library may segfault if asked for data on a command that
     // doesn't carry it.
-    if (type ==
-        bindings.GhosttyOscCommandType.GHOSTTY_OSC_COMMAND_INVALID) {
+    if (type == bindings.GhosttyOscCommandType.GHOSTTY_OSC_COMMAND_INVALID) {
       return VtOscCommand(type: type);
     }
 

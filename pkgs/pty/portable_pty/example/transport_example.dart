@@ -16,7 +16,11 @@ final class _EchoTransport implements PortablePtyTransport {
   int _cols = 80;
 
   @override
-  void spawn(String command, {List<String>? args, Map<String, String>? environment}) {
+  void spawn(
+    String command, {
+    List<String>? args,
+    Map<String, String>? environment,
+  }) {
     if (_closed) {
       throw StateError('transport already closed');
     }
@@ -27,8 +31,7 @@ final class _EchoTransport implements PortablePtyTransport {
 
     final header = <int>[...utf8.encode('[session=$command]\n')];
     if (args != null && args.isNotEmpty) {
-      header
-        .addAll(utf8.encode('args=${args.join(' ')}\n'));
+      header.addAll(utf8.encode('args=${args.join(' ')}\n'));
     }
     _inputBuffer.insertAll(0, header);
   }
@@ -76,12 +79,7 @@ final class _EchoTransport implements PortablePtyTransport {
 
   @override
   ({int rows, int cols, int pixelWidth, int pixelHeight}) getSize() {
-    return (
-      rows: _rows,
-      cols: _cols,
-      pixelWidth: 0,
-      pixelHeight: 0,
-    );
+    return (rows: _rows, cols: _cols, pixelWidth: 0, pixelHeight: 0);
   }
 
   @override
@@ -118,11 +116,7 @@ final class _EchoTransport implements PortablePtyTransport {
 }
 
 void main() {
-  final pty = PortablePty.open(
-    transport: _EchoTransport(),
-    rows: 24,
-    cols: 80,
-  );
+  final pty = PortablePty.open(transport: _EchoTransport(), rows: 24, cols: 80);
 
   pty.spawn('mock-session');
   pty.writeString('hello');

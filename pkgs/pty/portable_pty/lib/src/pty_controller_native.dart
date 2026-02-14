@@ -72,19 +72,13 @@ class PortablePtyController with PtyListenable {
       return;
     }
 
-    final resolvedShell = shell ??
+    final resolvedShell =
+        shell ??
         defaultShell ??
         (Platform.isWindows ? 'C:\\Windows\\System32\\cmd.exe' : '/bin/sh');
 
-    _pty = PortablePty.open(
-      rows: rows,
-      cols: cols,
-      transport: transport,
-    );
-    _pty!.spawn(
-      resolvedShell,
-      args: arguments.isNotEmpty ? arguments : null,
-    );
+    _pty = PortablePty.open(rows: rows, cols: cols, transport: transport);
+    _pty!.spawn(resolvedShell, args: arguments.isNotEmpty ? arguments : null);
     _running = true;
     _appendLine('[started $resolvedShell]');
     _markDirty();
@@ -193,8 +187,10 @@ class PortablePtyController with PtyListenable {
         case 0x08:
           final current = _lines[_lines.length - 1];
           if (current.isNotEmpty) {
-            _lines[_lines.length - 1] =
-                current.substring(0, current.length - 1);
+            _lines[_lines.length - 1] = current.substring(
+              0,
+              current.length - 1,
+            );
           }
         default:
           _lines[_lines.length - 1] += String.fromCharCode(rune);
