@@ -15,16 +15,14 @@
 //! the previous handler (Dart's). Exit statuses are cached in a lock-free
 //! global registry using atomics (all operations are async-signal-safe).
 
-use portable_pty::{
-    native_pty_system, Child, CommandBuilder, MasterPty, PtySize, SlavePty,
-};
-use std::ffi::{CStr, c_char, c_int};
-use std::io::{Read, Write};
-use std::sync::Mutex;
 #[cfg(unix)]
 use libc;
+use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize, SlavePty};
+use std::ffi::{c_char, c_int, CStr};
+use std::io::{Read, Write};
 #[cfg(unix)]
 use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::Mutex;
 
 /// Helper to get the current errno value on Unix platforms.
 #[cfg(unix)]
@@ -97,7 +95,11 @@ fn register_pid(pid: i32) {
     ensure_sigchld_handler();
     for slot in PID_REGISTRY.iter() {
         // Try to claim an empty slot (pid == 0).
-        if slot.pid.compare_exchange(0, pid, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+        if slot
+            .pid
+            .compare_exchange(0, pid, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
             slot.status.store(SLOT_RUNNING, Ordering::Relaxed);
             return;
         }
@@ -110,7 +112,11 @@ fn register_pid(pid: i32) {
 #[cfg(unix)]
 fn unregister_pid(pid: i32) {
     for slot in PID_REGISTRY.iter() {
-        if slot.pid.compare_exchange(pid, 0, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+        if slot
+            .pid
+            .compare_exchange(pid, 0, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
             slot.status.swap(SLOT_EMPTY, Ordering::Relaxed);
             return;
         }
@@ -164,7 +170,11 @@ extern "C" fn sigchld_handler(sig: c_int, info: *mut libc::siginfo_t, ctx: *mut 
         let si_code = si.si_code;
         let si_status = unsafe { si.si_status() };
 
-        if si_pid > 0 && (si_code == libc::CLD_EXITED || si_code == libc::CLD_KILLED || si_code == libc::CLD_DUMPED) {
+        if si_pid > 0
+            && (si_code == libc::CLD_EXITED
+                || si_code == libc::CLD_KILLED
+                || si_code == libc::CLD_DUMPED)
+        {
             // Convert to a waitpid-style status word so lookup_cached_status
             // can decode it uniformly.
             let raw_status = if si_code == libc::CLD_EXITED {
@@ -487,11 +497,7 @@ pub extern "C" fn portable_pty_spawn(
 ///
 /// Returns number of bytes read, or -1 on error/EOF.
 #[unsafe(no_mangle)]
-pub extern "C" fn portable_pty_read(
-    handle: *mut PortablePty,
-    buf: *mut u8,
-    len: usize,
-) -> i64 {
+pub extern "C" fn portable_pty_read(handle: *mut PortablePty, buf: *mut u8, len: usize) -> i64 {
     let pty = match unsafe { handle.as_mut() } {
         Some(p) => p,
         None => return -1,
@@ -517,11 +523,7 @@ pub extern "C" fn portable_pty_read(
 ///
 /// Returns number of bytes written, or -1 on error.
 #[unsafe(no_mangle)]
-pub extern "C" fn portable_pty_write(
-    handle: *mut PortablePty,
-    buf: *const u8,
-    len: usize,
-) -> i64 {
+pub extern "C" fn portable_pty_write(handle: *mut PortablePty, buf: *const u8, len: usize) -> i64 {
     let pty = match unsafe { handle.as_mut() } {
         Some(p) => p,
         None => return -1,
@@ -603,7 +605,11 @@ pub extern "C" fn portable_pty_get_size(
         None => return PortablePtyResult::ErrNull,
     };
 
-    if out_rows.is_null() || out_cols.is_null() || out_pixel_width.is_null() || out_pixel_height.is_null() {
+    if out_rows.is_null()
+        || out_cols.is_null()
+        || out_pixel_width.is_null()
+        || out_pixel_height.is_null()
+    {
         return PortablePtyResult::ErrNull;
     }
 
@@ -653,7 +659,9 @@ pub extern "C" fn portable_pty_wait(
     // Return cached exit code if we already detected exit.
     if let Some(code) = pty.cached_exit_code {
         if !out_status.is_null() {
-            unsafe { *out_status = code; }
+            unsafe {
+                *out_status = code;
+            }
         }
         return PortablePtyResult::Ok;
     }
@@ -669,7 +677,9 @@ pub extern "C" fn portable_pty_wait(
         if let Some(code) = lookup_cached_status(pty.child_pid) {
             pty.cached_exit_code = Some(code);
             if !out_status.is_null() {
-                unsafe { *out_status = code; }
+                unsafe {
+                    *out_status = code;
+                }
             }
             return PortablePtyResult::Ok;
         }
@@ -689,7 +699,9 @@ pub extern "C" fn portable_pty_wait(
             };
             pty.cached_exit_code = Some(code);
             if !out_status.is_null() {
-                unsafe { *out_status = code; }
+                unsafe {
+                    *out_status = code;
+                }
             }
             return PortablePtyResult::Ok;
         }
@@ -708,7 +720,9 @@ pub extern "C" fn portable_pty_wait(
             let code: c_int = status.exit_code().try_into().unwrap_or(-1);
             pty.cached_exit_code = Some(code);
             if !out_status.is_null() {
-                unsafe { *out_status = code; }
+                unsafe {
+                    *out_status = code;
+                }
             }
             return PortablePtyResult::Ok;
         }
@@ -745,7 +759,9 @@ pub extern "C" fn portable_pty_wait(
             };
             pty.cached_exit_code = Some(code);
             if !out_status.is_null() {
-                unsafe { *out_status = code; }
+                unsafe {
+                    *out_status = code;
+                }
             }
             return PortablePtyResult::Ok;
         } else if ret == 0 {
@@ -758,7 +774,9 @@ pub extern "C" fn portable_pty_wait(
         if let Some(code) = lookup_cached_status(pid) {
             pty.cached_exit_code = Some(code);
             if !out_status.is_null() {
-                unsafe { *out_status = code; }
+                unsafe {
+                    *out_status = code;
+                }
             }
             return PortablePtyResult::Ok;
         }
@@ -770,7 +788,9 @@ pub extern "C" fn portable_pty_wait(
             let code = 0;
             pty.cached_exit_code = Some(code);
             if !out_status.is_null() {
-                unsafe { *out_status = code; }
+                unsafe {
+                    *out_status = code;
+                }
             }
             return PortablePtyResult::Ok;
         }
@@ -802,7 +822,9 @@ pub extern "C" fn portable_pty_wait_blocking(
     // Return cached exit code if we already detected exit.
     if let Some(code) = pty.cached_exit_code {
         if !out_status.is_null() {
-            unsafe { *out_status = code; }
+            unsafe {
+                *out_status = code;
+            }
         }
         return PortablePtyResult::Ok;
     }
@@ -817,7 +839,9 @@ pub extern "C" fn portable_pty_wait_blocking(
         if let Some(code) = lookup_cached_status(pty.child_pid) {
             pty.cached_exit_code = Some(code);
             if !out_status.is_null() {
-                unsafe { *out_status = code; }
+                unsafe {
+                    *out_status = code;
+                }
             }
             return PortablePtyResult::Ok;
         }
@@ -830,7 +854,9 @@ pub extern "C" fn portable_pty_wait_blocking(
             let code: c_int = status.exit_code().try_into().unwrap_or(-1);
             pty.cached_exit_code = Some(code);
             if !out_status.is_null() {
-                unsafe { *out_status = code; }
+                unsafe {
+                    *out_status = code;
+                }
             }
             return PortablePtyResult::Ok;
         }
@@ -860,7 +886,9 @@ pub extern "C" fn portable_pty_wait_blocking(
             };
             pty.cached_exit_code = Some(code);
             if !out_status.is_null() {
-                unsafe { *out_status = code; }
+                unsafe {
+                    *out_status = code;
+                }
             }
             return PortablePtyResult::Ok;
         }
@@ -868,7 +896,9 @@ pub extern "C" fn portable_pty_wait_blocking(
         if let Some(code) = lookup_cached_status(pid) {
             pty.cached_exit_code = Some(code);
             if !out_status.is_null() {
-                unsafe { *out_status = code; }
+                unsafe {
+                    *out_status = code;
+                }
             }
             return PortablePtyResult::Ok;
         }
@@ -878,7 +908,9 @@ pub extern "C" fn portable_pty_wait_blocking(
             let code = 0;
             pty.cached_exit_code = Some(code);
             if !out_status.is_null() {
-                unsafe { *out_status = code; }
+                unsafe {
+                    *out_status = code;
+                }
             }
             return PortablePtyResult::Ok;
         }
@@ -899,10 +931,7 @@ pub extern "C" fn portable_pty_wait_blocking(
 /// If the child has already exited (or been reaped), returns `Ok` rather
 /// than failing.
 #[unsafe(no_mangle)]
-pub extern "C" fn portable_pty_kill(
-    handle: *mut PortablePty,
-    signal: c_int,
-) -> PortablePtyResult {
+pub extern "C" fn portable_pty_kill(handle: *mut PortablePty, signal: c_int) -> PortablePtyResult {
     let pty = match unsafe { handle.as_mut() } {
         Some(p) => p,
         None => return PortablePtyResult::ErrNull,
@@ -1053,7 +1082,9 @@ pub extern "C" fn portable_pty_close(handle: *mut PortablePty) {
         if pty.child_pid > 0 {
             // Best-effort: try direct waitpid to clean up any remaining zombie.
             let mut status: c_int = 0;
-            unsafe { libc::waitpid(pty.child_pid, &mut status, libc::WNOHANG); }
+            unsafe {
+                libc::waitpid(pty.child_pid, &mut status, libc::WNOHANG);
+            }
         }
     }
 
@@ -1111,12 +1142,7 @@ mod tests {
         let arg1 = CString::new("hello").unwrap();
         let argv: [*const c_char; 3] = [arg0.as_ptr(), arg1.as_ptr(), ptr::null()];
 
-        let result = portable_pty_spawn(
-            handle,
-            cmd.as_ptr(),
-            argv.as_ptr(),
-            ptr::null(),
-        );
+        let result = portable_pty_spawn(handle, cmd.as_ptr(), argv.as_ptr(), ptr::null());
         assert!(
             matches!(result, PortablePtyResult::Ok),
             "portable_pty_spawn returned: {}",
@@ -1131,7 +1157,10 @@ mod tests {
         assert!(n > 0, "Expected to read some output, got {n}");
 
         let output = std::str::from_utf8(&buf[..n as usize]).unwrap();
-        assert!(output.contains("hello"), "Expected 'hello' in output: {output}");
+        assert!(
+            output.contains("hello"),
+            "Expected 'hello' in output: {output}"
+        );
 
         portable_pty_close(handle);
     }
