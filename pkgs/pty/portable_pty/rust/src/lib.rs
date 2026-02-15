@@ -2,6 +2,18 @@
 //!
 //! Exposes a C API wrapping the `portable-pty` crate from wezterm.
 //! Supports Linux, macOS, and Windows (ConPTY).
+//!
+//! ## SIGCHLD handling
+//!
+//! The Dart VM's test runner installs a global `SIGCHLD` handler that calls
+//! `waitpid(-1, …)`, reaping **all** child processes — including PTY children
+//! spawned by this library. This causes `child.try_wait()` and `child.wait()`
+//! to fail with `ECHILD` because the child has already been collected.
+//!
+//! To solve this, we install our own `SIGCHLD` handler that calls
+//! `waitpid(pid, WNOHANG)` for each tracked PTY child **before** chaining to
+//! the previous handler (Dart's). Exit statuses are cached in a lock-free
+//! global registry using atomics (all operations are async-signal-safe).
 
 use portable_pty::{
     native_pty_system, Child, CommandBuilder, MasterPty, PtySize, SlavePty,
@@ -11,6 +23,249 @@ use std::io::{Read, Write};
 use std::sync::Mutex;
 #[cfg(unix)]
 use libc;
+#[cfg(unix)]
+use std::sync::atomic::{AtomicI32, Ordering};
+
+/// Helper to get the current errno value on Unix platforms.
+#[cfg(unix)]
+fn get_errno() -> c_int {
+    std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+}
+
+// ---------------------------------------------------------------------------
+// SIGCHLD handler & PID registry (Unix only)
+// ---------------------------------------------------------------------------
+//
+// We track up to MAX_TRACKED_PIDS children. Each slot is a pair of atomics:
+//   - `pid`:    the child PID (0 = unused slot)
+//   - `status`: the raw waitpid status, or SLOT_EMPTY / SLOT_RUNNING
+//
+// The SIGCHLD handler iterates all slots and calls `waitpid(pid, WNOHANG)`
+// for each registered PID. If the child has exited, the status is stored
+// atomically. All operations use `Relaxed` ordering because signal handlers
+// run on the same thread and we only need atomicity, not cross-thread ordering.
+
+#[cfg(unix)]
+const MAX_TRACKED_PIDS: usize = 64;
+
+/// Sentinel: slot has no cached status yet (child still running or not checked).
+#[cfg(unix)]
+const SLOT_RUNNING: i32 = i32::MIN;
+
+/// Sentinel: slot is unused (pid == 0).
+#[cfg(unix)]
+const SLOT_EMPTY: i32 = i32::MIN + 1;
+
+#[cfg(unix)]
+struct PidSlot {
+    pid: AtomicI32,
+    /// Raw `waitpid` status word, or SLOT_RUNNING / SLOT_EMPTY.
+    status: AtomicI32,
+}
+
+#[cfg(unix)]
+impl PidSlot {
+    const fn new() -> Self {
+        PidSlot {
+            pid: AtomicI32::new(0),
+            status: AtomicI32::new(SLOT_EMPTY),
+        }
+    }
+}
+
+// We can't use Vec or HashMap in a signal handler. A fixed-size array of
+// atomics is async-signal-safe.
+#[cfg(unix)]
+static PID_REGISTRY: [PidSlot; MAX_TRACKED_PIDS] = {
+    // const array init
+    const EMPTY: PidSlot = PidSlot::new();
+    [EMPTY; MAX_TRACKED_PIDS]
+};
+
+/// Previous SIGCHLD handler action, saved so we can chain to it.
+#[cfg(unix)]
+static mut PREV_SIGCHLD_ACTION: libc::sigaction = unsafe { std::mem::zeroed() };
+
+/// Flag indicating whether we've installed our handler at least once.
+/// We use AtomicI32 instead of Once so we can re-install if Dart overwrites us.
+#[cfg(unix)]
+static SIGCHLD_INSTALLED: AtomicI32 = AtomicI32::new(0);
+
+/// Register a child PID for SIGCHLD tracking. Must be called after spawn.
+#[cfg(unix)]
+fn register_pid(pid: i32) {
+    ensure_sigchld_handler();
+    for slot in PID_REGISTRY.iter() {
+        // Try to claim an empty slot (pid == 0).
+        if slot.pid.compare_exchange(0, pid, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+            slot.status.store(SLOT_RUNNING, Ordering::Relaxed);
+            return;
+        }
+    }
+    // All slots full — this PID won't be tracked by SIGCHLD.
+    // The ECHILD fallback in portable_pty_wait will still handle it.
+}
+
+/// Unregister a child PID (called on close).
+#[cfg(unix)]
+fn unregister_pid(pid: i32) {
+    for slot in PID_REGISTRY.iter() {
+        if slot.pid.compare_exchange(pid, 0, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+            slot.status.swap(SLOT_EMPTY, Ordering::Relaxed);
+            return;
+        }
+    }
+}
+
+/// Look up a cached exit code from the SIGCHLD handler registry.
+///
+/// Returns `Some(exit_code)` if the handler already captured the child's exit,
+/// or `None` if the child is still running (or not tracked).
+#[cfg(unix)]
+fn lookup_cached_status(pid: i32) -> Option<c_int> {
+    for slot in PID_REGISTRY.iter() {
+        if slot.pid.load(Ordering::Relaxed) == pid {
+            let raw = slot.status.load(Ordering::Relaxed);
+            if raw == SLOT_RUNNING || raw == SLOT_EMPTY {
+                return None;
+            }
+            // Decode the raw waitpid status word.
+            let code = if libc::WIFEXITED(raw) {
+                libc::WEXITSTATUS(raw)
+            } else if libc::WIFSIGNALED(raw) {
+                128 + libc::WTERMSIG(raw)
+            } else {
+                -1
+            };
+            return Some(code);
+        }
+    }
+    None
+}
+
+/// The actual SIGCHLD handler. This runs in signal context so only
+/// async-signal-safe functions may be called (waitpid, atomic loads/stores).
+///
+/// The Dart VM has an internal thread that calls `waitpid(-1, 0)` (blocking)
+/// to reap ALL child processes. This thread races with our handler's
+/// `waitpid(pid, WNOHANG)` calls. To handle this, we FIRST extract the
+/// exit status from the `siginfo_t` structure (which is populated by the
+/// kernel regardless of whether another thread has already reaped the child),
+/// and THEN try `waitpid` for any other registered PIDs that might have
+/// exited due to signal coalescing.
+#[cfg(unix)]
+extern "C" fn sigchld_handler(sig: c_int, info: *mut libc::siginfo_t, ctx: *mut libc::c_void) {
+    // Step 1: Extract exit info from siginfo_t. This tells us which PID
+    // triggered THIS particular SIGCHLD delivery, and its exit status.
+    // This works even if Dart's waitpid thread has already reaped the child.
+    if !info.is_null() {
+        let si = unsafe { &*info };
+        let si_pid = unsafe { si.si_pid() };
+        let si_code = si.si_code;
+        let si_status = unsafe { si.si_status() };
+
+        if si_pid > 0 && (si_code == libc::CLD_EXITED || si_code == libc::CLD_KILLED || si_code == libc::CLD_DUMPED) {
+            // Convert to a waitpid-style status word so lookup_cached_status
+            // can decode it uniformly.
+            let raw_status = if si_code == libc::CLD_EXITED {
+                // Normal exit: encode as WIFEXITED status word
+                (si_status & 0xff) << 8
+            } else {
+                // Killed by signal: encode as WIFSIGNALED status word
+                // If core dumped (CLD_DUMPED), set bit 7
+                let core_bit = if si_code == libc::CLD_DUMPED { 0x80 } else { 0 };
+                (si_status & 0x7f) | core_bit
+            };
+
+            // Store in registry if this PID is tracked.
+            for slot in PID_REGISTRY.iter() {
+                let slot_pid = slot.pid.load(Ordering::Relaxed);
+                if slot_pid == si_pid {
+                    // Only store if still SLOT_RUNNING (don't overwrite).
+                    let _ = slot.status.compare_exchange(
+                        SLOT_RUNNING,
+                        raw_status,
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    );
+                    break;
+                }
+            }
+        }
+    }
+
+    // Step 2: Handle signal coalescing — multiple children may have exited
+    // but only one SIGCHLD was delivered. Try waitpid for all tracked PIDs
+    // that are still marked as SLOT_RUNNING.
+    for slot in PID_REGISTRY.iter() {
+        let pid = slot.pid.load(Ordering::Relaxed);
+        if pid <= 0 {
+            continue;
+        }
+        if slot.status.load(Ordering::Relaxed) != SLOT_RUNNING {
+            continue;
+        }
+        let mut status: c_int = 0;
+        let ret = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+        if ret == pid {
+            slot.status.store(status, Ordering::Relaxed);
+        }
+        // ret == 0: still running. ret == -1: ECHILD (Dart's thread reaped it,
+        // but we may have already captured status from siginfo_t above or in
+        // a previous signal delivery).
+    }
+
+    // Chain to the previous handler.
+    unsafe {
+        let prev = &*(&raw const PREV_SIGCHLD_ACTION);
+        let flags = prev.sa_flags;
+        if flags & libc::SA_SIGINFO != 0 {
+            // SA_SIGINFO handler: void (*)(int, siginfo_t*, void*)
+            let handler = prev.sa_sigaction;
+            if handler != libc::SIG_DFL && handler != libc::SIG_IGN {
+                let f: extern "C" fn(c_int, *mut libc::siginfo_t, *mut libc::c_void) =
+                    std::mem::transmute(handler);
+                f(sig, info, ctx);
+            }
+        } else {
+            // Traditional handler: void (*)(int)
+            let handler = prev.sa_sigaction;
+            if handler != libc::SIG_DFL && handler != libc::SIG_IGN {
+                let f: extern "C" fn(c_int) = std::mem::transmute(handler);
+                f(sig);
+            }
+        }
+    }
+}
+
+/// Install (or re-install) our SIGCHLD handler.
+///
+/// The Dart VM's test runner may install its own SIGCHLD handler after ours,
+/// overwriting it. We check whether the current handler is still ours; if not,
+/// we re-install and update the saved previous handler for chaining.
+#[cfg(unix)]
+fn ensure_sigchld_handler() {
+    unsafe {
+        // Check what the current handler is.
+        let mut current: libc::sigaction = std::mem::zeroed();
+        libc::sigaction(libc::SIGCHLD, std::ptr::null(), &mut current);
+
+        if current.sa_sigaction == sigchld_handler as usize {
+            // Our handler is still installed — nothing to do.
+            return;
+        }
+
+        // Either first install or someone overwrote us. (Re-)install.
+        let mut sa: libc::sigaction = std::mem::zeroed();
+        sa.sa_sigaction = sigchld_handler as usize;
+        sa.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_NOCLDSTOP;
+        libc::sigemptyset(&mut sa.sa_mask);
+
+        // Save the current handler (Dart's or whoever overwrote us) for chaining.
+        libc::sigaction(libc::SIGCHLD, &sa, &raw mut PREV_SIGCHLD_ACTION);
+        SIGCHLD_INSTALLED.store(1, Ordering::Relaxed);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Result enum
@@ -44,6 +299,10 @@ pub struct PortablePty {
     writer: Mutex<Box<dyn Write + Send>>,
     child: Option<Box<dyn Child + Send + Sync>>,
     child_pid: i32,
+    /// Cached exit code — once we detect the child has exited, we store the
+    /// result here so that repeated `tryWait` / `wait` calls return the same
+    /// value even after the process has been reaped.
+    cached_exit_code: Option<c_int>,
 }
 
 // ---------------------------------------------------------------------------
@@ -96,6 +355,7 @@ pub extern "C" fn portable_pty_open(
         writer: Mutex::new(writer),
         child: None,
         child_pid: -1,
+        cached_exit_code: None,
     });
 
     unsafe {
@@ -178,15 +438,48 @@ pub extern "C" fn portable_pty_spawn(
         }
     }
 
+    // Block SIGCHLD around spawn+register so the child can't be reaped
+    // before we've registered its PID in the SIGCHLD handler registry.
+    #[cfg(unix)]
+    let mut old_mask: libc::sigset_t = unsafe { std::mem::zeroed() };
+    #[cfg(unix)]
+    {
+        ensure_sigchld_handler();
+        let mut block_set: libc::sigset_t = unsafe { std::mem::zeroed() };
+        unsafe {
+            libc::sigemptyset(&mut block_set);
+            libc::sigaddset(&mut block_set, libc::SIGCHLD);
+            libc::sigprocmask(libc::SIG_BLOCK, &block_set, &mut old_mask);
+        }
+    }
+
     // Spawn the child on the slave side
     match pty.slave.as_ref().spawn_command(builder) {
         Ok(child) => {
             let pid = child.process_id().map(|p| p as i32).unwrap_or(-1);
             pty.child = Some(child);
             pty.child_pid = pid;
+            // Register this PID with the SIGCHLD handler so we capture
+            // exit status before the Dart VM's handler reaps the child.
+            #[cfg(unix)]
+            {
+                if pid > 0 {
+                    register_pid(pid);
+                }
+                unsafe {
+                    libc::sigprocmask(libc::SIG_SETMASK, &old_mask, std::ptr::null_mut());
+                }
+            }
             PortablePtyResult::Ok
         }
-        Err(_) => PortablePtyResult::ErrSpawn,
+        Err(_) => {
+            // Unblock SIGCHLD on error path too.
+            #[cfg(unix)]
+            unsafe {
+                libc::sigprocmask(libc::SIG_SETMASK, &old_mask, std::ptr::null_mut());
+            }
+            PortablePtyResult::ErrSpawn
+        }
     }
 }
 
@@ -341,6 +634,12 @@ pub extern "C" fn portable_pty_child_pid(handle: *const PortablePty) -> i32 {
 ///
 /// Returns `Ok` if child exited (writes exit code to `*out_status`).
 /// Returns `ErrWait` if child is still running.
+///
+/// Handles the case where the Dart VM (or another runtime) has already reaped
+/// the child via its own `SIGCHLD` / `waitpid(-1, …)` handler. When the
+/// upstream `try_wait()` fails with `ECHILD`, we fall back to
+/// `libc::waitpid(pid, WNOHANG)` and `kill(pid, 0)` to determine the true
+/// process state.
 #[unsafe(no_mangle)]
 pub extern "C" fn portable_pty_wait(
     handle: *mut PortablePty,
@@ -351,29 +650,145 @@ pub extern "C" fn portable_pty_wait(
         None => return PortablePtyResult::ErrNull,
     };
 
-    let child = match pty.child.as_mut() {
-        Some(c) => c,
-        None => return PortablePtyResult::ErrWait,
-    };
+    // Return cached exit code if we already detected exit.
+    if let Some(code) = pty.cached_exit_code {
+        if !out_status.is_null() {
+            unsafe { *out_status = code; }
+        }
+        return PortablePtyResult::Ok;
+    }
 
+    if pty.child.is_none() {
+        return PortablePtyResult::ErrWait;
+    }
+
+    // Check the SIGCHLD registry — our handler may have already captured
+    // the exit status before the Dart VM's handler could reap the child.
+    #[cfg(unix)]
+    if pty.child_pid > 0 {
+        if let Some(code) = lookup_cached_status(pty.child_pid) {
+            pty.cached_exit_code = Some(code);
+            if !out_status.is_null() {
+                unsafe { *out_status = code; }
+            }
+            return PortablePtyResult::Ok;
+        }
+
+        // Pre-emptive waitpid: try to reap the child directly before
+        // portable-pty's try_wait() which may fail with ECHILD if the
+        // Dart VM's SIGCHLD handler already reaped it.
+        let mut raw_status: c_int = 0;
+        let ret = unsafe { libc::waitpid(pty.child_pid, &mut raw_status, libc::WNOHANG) };
+        if ret == pty.child_pid {
+            let code = if libc::WIFEXITED(raw_status) {
+                libc::WEXITSTATUS(raw_status)
+            } else if libc::WIFSIGNALED(raw_status) {
+                128 + libc::WTERMSIG(raw_status)
+            } else {
+                -1
+            };
+            pty.cached_exit_code = Some(code);
+            if !out_status.is_null() {
+                unsafe { *out_status = code; }
+            }
+            return PortablePtyResult::Ok;
+        }
+        if ret == -1 {
+            // Already reaped by another thread
+        }
+        // ret == 0: still running, proceed to try_wait
+        // ret == -1: already reaped, proceed to try_wait (will get ECHILD)
+    }
+
+    // Try the upstream `try_wait()` first — works when the Dart VM hasn't
+    // reaped the child yet.
+    let child = pty.child.as_mut().unwrap();
     match child.try_wait() {
         Ok(Some(status)) => {
+            let code: c_int = status.exit_code().try_into().unwrap_or(-1);
+            pty.cached_exit_code = Some(code);
             if !out_status.is_null() {
-                unsafe {
-                    *out_status = status
-                        .exit_code()
-                        .try_into()
-                        .unwrap_or(-1);
-                }
+                unsafe { *out_status = code; }
             }
-            PortablePtyResult::Ok
+            return PortablePtyResult::Ok;
         }
-        Ok(None) => PortablePtyResult::ErrWait, // still running
-        Err(_) => PortablePtyResult::ErrWait,
+        Ok(None) => {
+            // Child is genuinely still running.
+            return PortablePtyResult::ErrWait;
+        }
+        Err(_) => {
+            // Likely ECHILD — Dart VM already reaped the child.
+            // Fall through to manual detection below.
+        }
+    }
+
+    // --- Fallback: manual detection for already-reaped children ---
+    #[cfg(unix)]
+    {
+        let pid = pty.child_pid;
+        if pid <= 0 {
+            return PortablePtyResult::ErrWait;
+        }
+
+        // Try waitpid directly — might succeed if there's still a zombie.
+        let mut status: c_int = 0;
+        let ret = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+        if ret == pid {
+            // We managed to reap it ourselves.
+            let code = if libc::WIFEXITED(status) {
+                libc::WEXITSTATUS(status)
+            } else if libc::WIFSIGNALED(status) {
+                // Convention: 128 + signal number
+                128 + libc::WTERMSIG(status)
+            } else {
+                -1
+            };
+            pty.cached_exit_code = Some(code);
+            if !out_status.is_null() {
+                unsafe { *out_status = code; }
+            }
+            return PortablePtyResult::Ok;
+        } else if ret == 0 {
+            // waitpid returned 0 with WNOHANG — child is still running.
+            return PortablePtyResult::ErrWait;
+        }
+        // ret == -1: waitpid failed (ECHILD = already reaped by someone else).
+        // Re-check the SIGCHLD registry — our handler may have reaped the
+        // child between the initial registry check and now.
+        if let Some(code) = lookup_cached_status(pid) {
+            pty.cached_exit_code = Some(code);
+            if !out_status.is_null() {
+                unsafe { *out_status = code; }
+            }
+            return PortablePtyResult::Ok;
+        }
+        // Check if the process still exists.
+        let kill_ret = unsafe { libc::kill(pid, 0) };
+        if kill_ret == -1 && get_errno() == libc::ESRCH {
+            // Process doesn't exist — it exited and was reaped but our
+            // handler didn't capture it. Report 0 as fallback.
+            let code = 0;
+            pty.cached_exit_code = Some(code);
+            if !out_status.is_null() {
+                unsafe { *out_status = code; }
+            }
+            return PortablePtyResult::Ok;
+        }
+        // Process exists but we can't wait on it (shouldn't happen, but be safe).
+        return PortablePtyResult::ErrWait;
+    }
+
+    #[cfg(not(unix))]
+    {
+        // On non-POSIX platforms we have no fallback.
+        return PortablePtyResult::ErrWait;
     }
 }
 
 /// Block until the child exits and return its exit code.
+///
+/// Like `portable_pty_wait`, handles the case where the child has already
+/// been reaped by the Dart VM's `SIGCHLD` handler.
 #[unsafe(no_mangle)]
 pub extern "C" fn portable_pty_wait_blocking(
     handle: *mut PortablePty,
@@ -384,21 +799,95 @@ pub extern "C" fn portable_pty_wait_blocking(
         None => return PortablePtyResult::ErrNull,
     };
 
-    let child = match pty.child.as_mut() {
-        Some(c) => c,
-        None => return PortablePtyResult::ErrWait,
-    };
+    // Return cached exit code if we already detected exit.
+    if let Some(code) = pty.cached_exit_code {
+        if !out_status.is_null() {
+            unsafe { *out_status = code; }
+        }
+        return PortablePtyResult::Ok;
+    }
 
+    if pty.child.is_none() {
+        return PortablePtyResult::ErrWait;
+    }
+
+    // Check the SIGCHLD registry first.
+    #[cfg(unix)]
+    if pty.child_pid > 0 {
+        if let Some(code) = lookup_cached_status(pty.child_pid) {
+            pty.cached_exit_code = Some(code);
+            if !out_status.is_null() {
+                unsafe { *out_status = code; }
+            }
+            return PortablePtyResult::Ok;
+        }
+    }
+
+    // Try the upstream blocking `wait()` first.
+    let child = pty.child.as_mut().unwrap();
     match child.wait() {
         Ok(status) => {
+            let code: c_int = status.exit_code().try_into().unwrap_or(-1);
+            pty.cached_exit_code = Some(code);
             if !out_status.is_null() {
-                unsafe {
-                    *out_status = status.exit_code().try_into().unwrap_or(-1);
-                }
+                unsafe { *out_status = code; }
             }
-            PortablePtyResult::Ok
+            return PortablePtyResult::Ok;
         }
-        Err(_) => PortablePtyResult::ErrWaitBlocking,
+        Err(_) => {
+            // Likely ECHILD — fall through to manual detection.
+        }
+    }
+
+    // --- Fallback: manual detection for already-reaped children ---
+    #[cfg(unix)]
+    {
+        let pid = pty.child_pid;
+        if pid <= 0 {
+            return PortablePtyResult::ErrWaitBlocking;
+        }
+
+        // Try waitpid (blocking) — will fail immediately with ECHILD if already reaped.
+        let mut status: c_int = 0;
+        let ret = unsafe { libc::waitpid(pid, &mut status, 0) };
+        if ret == pid {
+            let code = if libc::WIFEXITED(status) {
+                libc::WEXITSTATUS(status)
+            } else if libc::WIFSIGNALED(status) {
+                128 + libc::WTERMSIG(status)
+            } else {
+                -1
+            };
+            pty.cached_exit_code = Some(code);
+            if !out_status.is_null() {
+                unsafe { *out_status = code; }
+            }
+            return PortablePtyResult::Ok;
+        }
+        // ret == -1 (ECHILD): already reaped. Re-check registry.
+        if let Some(code) = lookup_cached_status(pid) {
+            pty.cached_exit_code = Some(code);
+            if !out_status.is_null() {
+                unsafe { *out_status = code; }
+            }
+            return PortablePtyResult::Ok;
+        }
+        // Check if process is gone.
+        let kill_ret = unsafe { libc::kill(pid, 0) };
+        if kill_ret == -1 && get_errno() == libc::ESRCH {
+            let code = 0;
+            pty.cached_exit_code = Some(code);
+            if !out_status.is_null() {
+                unsafe { *out_status = code; }
+            }
+            return PortablePtyResult::Ok;
+        }
+        return PortablePtyResult::ErrWaitBlocking;
+    }
+
+    #[cfg(not(unix))]
+    {
+        return PortablePtyResult::ErrWaitBlocking;
     }
 }
 
@@ -406,24 +895,65 @@ pub extern "C" fn portable_pty_wait_blocking(
 ///
 /// On POSIX, `signal` is the signal number (e.g. 15 for SIGTERM).
 /// On Windows, `signal` is ignored — the process is terminated.
+///
+/// If the child has already exited (or been reaped), returns `Ok` rather
+/// than failing.
 #[unsafe(no_mangle)]
 pub extern "C" fn portable_pty_kill(
     handle: *mut PortablePty,
-    _signal: c_int,
+    signal: c_int,
 ) -> PortablePtyResult {
     let pty = match unsafe { handle.as_mut() } {
         Some(p) => p,
         None => return PortablePtyResult::ErrNull,
     };
 
-    let child = match pty.child.as_mut() {
-        Some(c) => c,
-        None => return PortablePtyResult::ErrKill,
-    };
+    // If we already know the child exited, killing is a no-op.
+    if pty.cached_exit_code.is_some() {
+        return PortablePtyResult::Ok;
+    }
 
-    match child.kill() {
-        Ok(()) => PortablePtyResult::Ok,
-        Err(_) => PortablePtyResult::ErrKill,
+    // Check the SIGCHLD registry — child may have exited already.
+    #[cfg(unix)]
+    if pty.child_pid > 0 {
+        if let Some(code) = lookup_cached_status(pty.child_pid) {
+            pty.cached_exit_code = Some(code);
+            return PortablePtyResult::Ok;
+        }
+    }
+
+    if pty.child.is_none() {
+        return PortablePtyResult::ErrKill;
+    }
+
+    #[cfg(unix)]
+    {
+        let pid = pty.child_pid;
+        if pid <= 0 {
+            return PortablePtyResult::ErrKill;
+        }
+
+        let ret = unsafe { libc::kill(pid, signal) };
+        if ret == 0 {
+            return PortablePtyResult::Ok;
+        }
+        // kill failed — check if the process is already dead (ESRCH).
+        if get_errno() == libc::ESRCH {
+            // Process already exited — treat as success.
+            return PortablePtyResult::Ok;
+        }
+        return PortablePtyResult::ErrKill;
+    }
+
+    #[cfg(not(unix))]
+    {
+        // On Windows, fall back to the upstream `child.kill()` which calls
+        // TerminateProcess.
+        let child = pty.child.as_mut().unwrap();
+        match child.kill() {
+            Ok(()) => PortablePtyResult::Ok,
+            Err(_) => PortablePtyResult::ErrKill,
+        }
     }
 }
 
@@ -495,6 +1025,7 @@ pub extern "C" fn portable_pty_get_mode(
 /// Close the PTY and free all resources.
 ///
 /// Kills the child process if still running. Safe to call with NULL.
+/// Handles the case where the child was already reaped by the Dart VM.
 #[unsafe(no_mangle)]
 pub extern "C" fn portable_pty_close(handle: *mut PortablePty) {
     if handle.is_null() {
@@ -503,10 +1034,27 @@ pub extern "C" fn portable_pty_close(handle: *mut PortablePty) {
 
     let mut pty = unsafe { Box::from_raw(handle) };
 
+    // Unregister from the SIGCHLD registry before cleanup.
+    #[cfg(unix)]
+    if pty.child_pid > 0 {
+        unregister_pid(pty.child_pid);
+    }
+
     // Kill child if still running
     if let Some(ref mut child) = pty.child {
+        // Try to kill — ignore errors (child may already be dead/reaped).
         let _ = child.kill();
+        // Try to wait — ignore errors (child may already be reaped).
         let _ = child.wait();
+
+        // If the above failed because the Dart VM reaped the child,
+        // there's nothing more to do — the child is gone.
+        #[cfg(unix)]
+        if pty.child_pid > 0 {
+            // Best-effort: try direct waitpid to clean up any remaining zombie.
+            let mut status: c_int = 0;
+            unsafe { libc::waitpid(pty.child_pid, &mut status, libc::WNOHANG); }
+        }
     }
 
     // pty is dropped here, closing file descriptors

@@ -3,7 +3,7 @@ description: >-
   Flutter controller and widgets for portable PTY sessions.
   Wraps portable_pty behind a ChangeNotifier for reactive terminal UIs
   on native and web.
-version: 0.0.1+1
+version: 0.0.2
 
 repository: https://github.com/kingwill101/dart_terminal/tree/master/pkgs/pty/portable_pty_flutter
 homepage: https://github.com/kingwill101/dart_terminal
@@ -23,7 +23,7 @@ resolution: workspace
 dependencies:
   flutter:
     sdk: flutter
-  portable_pty: ^0.0.1
+  portable_pty: ^0.0.3
 
 dev_dependencies:
   flutter_test:

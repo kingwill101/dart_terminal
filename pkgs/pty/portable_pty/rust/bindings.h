@@ -95,11 +95,20 @@ int32_t portable_pty_child_pid(const struct PortablePty *handle);
  *
  * Returns `Ok` if child exited (writes exit code to `*out_status`).
  * Returns `ErrWait` if child is still running.
+ *
+ * Handles the case where the Dart VM (or another runtime) has already reaped
+ * the child via its own `SIGCHLD` / `waitpid(-1, …)` handler. When the
+ * upstream `try_wait()` fails with `ECHILD`, we fall back to
+ * `libc::waitpid(pid, WNOHANG)` and `kill(pid, 0)` to determine the true
+ * process state.
  */
 enum PortablePtyResult portable_pty_wait(struct PortablePty *handle, int *out_status);
 
 /**
  * Block until the child exits and return its exit code.
+ *
+ * Like `portable_pty_wait`, handles the case where the child has already
+ * been reaped by the Dart VM's `SIGCHLD` handler.
  */
 enum PortablePtyResult portable_pty_wait_blocking(struct PortablePty *handle, int *out_status);
 
@@ -108,8 +117,11 @@ enum PortablePtyResult portable_pty_wait_blocking(struct PortablePty *handle, in
  *
  * On POSIX, `signal` is the signal number (e.g. 15 for SIGTERM).
  * On Windows, `signal` is ignored — the process is terminated.
+ *
+ * If the child has already exited (or been reaped), returns `Ok` rather
+ * than failing.
  */
-enum PortablePtyResult portable_pty_kill(struct PortablePty *handle, int _signal);
+enum PortablePtyResult portable_pty_kill(struct PortablePty *handle, int signal);
 
 /**
  * Return the master process group ID (POSIX) or -1 when unsupported.
@@ -130,6 +142,7 @@ enum PortablePtyResult portable_pty_get_mode(struct PortablePty *handle,
  * Close the PTY and free all resources.
  *
  * Kills the child process if still running. Safe to call with NULL.
+ * Handles the case where the child was already reaped by the Dart VM.
  */
 void portable_pty_close(struct PortablePty *handle);
 

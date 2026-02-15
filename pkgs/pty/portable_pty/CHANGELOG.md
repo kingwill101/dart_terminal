@@ -1,3 +1,21 @@
+## 0.0.3
+
+- Fixed child process exit codes being incorrectly reported as 0 when
+  running under the Dart test runner. The Dart VM's internal
+  `waitpid(-1, 0)` thread was reaping PTY children before `tryWait()`
+  could capture their exit status.
+- SIGCHLD handler now extracts exit status from the `siginfo_t` structure
+  (populated by the kernel at signal delivery time), unaffected by
+  concurrent reaping from other threads.
+- Added lock-free PID registry (64 slots) with signal chaining and
+  automatic re-installation if overwritten.
+- SIGCHLD is blocked during `spawn` to prevent a race between child exit
+  and PID registration.
+- Cached exit code on the PTY handle so repeated `tryWait`/`wait` calls
+  return consistent results.
+- Pre-emptive `waitpid` and `kill(pid, 0)` fallback paths for robustness
+  when the SIGCHLD handler misses a coalesced signal.
+
 ## 0.0.2
 
 - Added `dart run portable_pty:setup` command to download prebuilt native
