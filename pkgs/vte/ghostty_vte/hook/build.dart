@@ -1,7 +1,13 @@
 import 'dart:io';
 
 import 'package:code_assets/code_assets.dart';
+import 'package:crypto/crypto.dart';
 import 'package:hooks/hooks.dart';
+import 'package:path/path.dart' as p;
+
+import 'package:ghostty_vte/src/hook/asset_hashes.dart';
+
+const _repo = 'kingwill101/dart_terminal';
 
 void main(List<String> args) async {
   await build(args, (input, output) async {
@@ -20,47 +26,230 @@ void main(List<String> args) async {
     final dylibName = code.targetOS.dylibFileName('ghostty-vt');
     final bundledLibUri = input.outputDirectory.resolve(dylibName);
 
-    // ── 1. Try to use a prebuilt library ──
-    final prebuilt = _findPrebuiltVte(input, code, dylibName);
+    // ── 1. Try env var ──
+    final envPath = Platform.environment['GHOSTTY_VTE_PREBUILT'];
+    if (envPath != null && envPath.isNotEmpty) {
+      final f = File(envPath);
+      if (f.existsSync()) {
+        stderr.writeln('Using prebuilt VTE library from env: ${f.path}');
+        await f.copy(File.fromUri(bundledLibUri).path);
+        _addAsset(output, input.packageName, bundledLibUri);
+        return;
+      }
+    }
+
+    final platformLabel = _platformLabel(
+      code.targetOS,
+      code.targetArchitecture,
+    );
+
+    // ── 2. Try .prebuilt/ directory (manual or setup script) ──
+    final prebuilt = _findLocalPrebuilt(input, platformLabel, dylibName);
     if (prebuilt != null) {
       stderr.writeln('Using prebuilt VTE library: ${prebuilt.path}');
       await prebuilt.copy(File.fromUri(bundledLibUri).path);
-    } else {
-      // ── 2. Fall back to building from source ──
-      stderr.writeln('No prebuilt VTE library found, building from source...');
-      await _buildFromSource(input, code, dylibName, bundledLibUri);
+      _addAsset(output, input.packageName, bundledLibUri);
+      return;
     }
 
-    output.assets.code.add(
-      CodeAsset(
-        package: input.packageName,
-        name: 'ghostty_vte_bindings_generated.dart',
-        linkMode: DynamicLoadingBundled(),
-        file: bundledLibUri,
-      ),
-    );
+    // ── 3. Auto-download from GitHub releases ──
+    final assetInfo = assetHashes[platformLabel];
+    if (assetInfo != null) {
+      stderr.writeln(
+        'Downloading prebuilt VTE library for $platformLabel '
+        '($releaseTag)...',
+      );
+      try {
+        final downloaded = await _downloadPrebuilt(
+          input,
+          platformLabel,
+          dylibName,
+          assetInfo,
+        );
+        stderr.writeln('Using downloaded VTE library: ${downloaded.path}');
+        await downloaded.copy(File.fromUri(bundledLibUri).path);
+        _addAsset(output, input.packageName, bundledLibUri);
+        return;
+      } on Exception catch (e) {
+        stderr.writeln('Download failed: $e');
+        stderr.writeln('Falling back to build from source...');
+      }
+    }
+
+    // ── 4. Build from source ──
+    stderr.writeln('Building VTE library from source...');
+    await _buildFromSource(input, code, dylibName, bundledLibUri);
+    _addAsset(output, input.packageName, bundledLibUri);
   });
 }
 
-/// Checks several locations for a prebuilt library:
+void _addAsset(BuildOutputBuilder output, String packageName, Uri file) {
+  output.assets.code.add(
+    CodeAsset(
+      package: packageName,
+      name: 'ghostty_vte_bindings_generated.dart',
+      linkMode: DynamicLoadingBundled(),
+      file: file,
+    ),
+  );
+}
+
+// ── Auto-download ────────────────────────────────────────────────────
+
+/// Downloads a prebuilt library from GitHub releases into
+/// [BuildInput.outputDirectoryShared], which persists across builds.
 ///
-/// 1. `$GHOSTTY_VTE_PREBUILT` env var pointing directly to the file.
-/// 2. `.prebuilt/<platform>/<dylibName>` relative to the monorepo root
-///    (found by walking up from `packageRoot` looking for `pubspec.yaml` + `pkgs/`).
-/// 3. `.prebuilt/<platform>/<dylibName>` relative to the consuming project root
-///    (derived from `outputDirectory` which lives inside `<project>/.dart_tool/`).
-///    This allows downstream consumers to run `dart run tool/prebuilt.dart`
-///    (or manually place libs) in their own project without modifying the pub cache.
-File? _findPrebuiltVte(BuildInput input, CodeConfig code, String dylibName) {
-  // Check env var.
-  final envPath = Platform.environment['GHOSTTY_VTE_PREBUILT'];
-  if (envPath != null && envPath.isNotEmpty) {
-    final f = File(envPath);
-    if (f.existsSync()) return f;
+/// Uses SHA256 verification and atomic writes (download to .tmp, then rename).
+Future<File> _downloadPrebuilt(
+  BuildInput input,
+  String platformLabel,
+  String dylibName,
+  AssetHash assetInfo,
+) async {
+  // Use a stable cache directory keyed by platform + release tag.
+  final cacheKey = '$platformLabel-$releaseTag';
+  final cacheDir = Directory(
+    input.outputDirectoryShared.resolve('vte-$cacheKey/').toFilePath(),
+  );
+  if (!cacheDir.existsSync()) {
+    cacheDir.createSync(recursive: true);
   }
 
-  final platformLabel = _platformLabel(code.targetOS, code.targetArchitecture);
+  final cachedFile = File(p.join(cacheDir.path, dylibName));
 
+  // Check cache: if file exists and hash matches, reuse it.
+  if (cachedFile.existsSync()) {
+    final actualHash = await cachedFile.openRead().transform(sha256).first;
+    if (actualHash.toString() == assetInfo.hash) {
+      return cachedFile;
+    }
+    stderr.writeln('Cached file hash mismatch, re-downloading...');
+  }
+
+  // Download the tarball.
+  final tarball = assetInfo.tarball;
+  final url = Uri.https(
+    'github.com',
+    '/$_repo/releases/download/$releaseTag/$tarball',
+  );
+
+  final client = HttpClient()..findProxy = HttpClient.findProxyFromEnvironment;
+
+  try {
+    final request = await client.getUrl(url);
+    final response = await request.close();
+
+    if (response.statusCode != 200) {
+      // Follow redirects for GitHub releases (302 → S3).
+      if (response.statusCode == 302 || response.statusCode == 301) {
+        final redirect = response.headers.value('location');
+        if (redirect != null) {
+          final redirectRequest = await client.getUrl(Uri.parse(redirect));
+          final redirectResponse = await redirectRequest.close();
+          if (redirectResponse.statusCode != 200) {
+            throw StateError(
+              'Download failed with status ${redirectResponse.statusCode} '
+              'from redirect: $redirect',
+            );
+          }
+          await _extractAndVerify(
+            redirectResponse,
+            cacheDir,
+            cachedFile,
+            dylibName,
+            assetInfo.hash,
+          );
+          return cachedFile;
+        }
+      }
+      throw StateError(
+        'Download failed with status ${response.statusCode}: $url',
+      );
+    }
+
+    await _extractAndVerify(
+      response,
+      cacheDir,
+      cachedFile,
+      dylibName,
+      assetInfo.hash,
+    );
+  } finally {
+    client.close();
+  }
+
+  return cachedFile;
+}
+
+/// Downloads the response as a tarball, extracts it, and verifies the hash
+/// of the extracted library.
+Future<void> _extractAndVerify(
+  HttpClientResponse response,
+  Directory cacheDir,
+  File targetFile,
+  String dylibName,
+  String expectedHash,
+) async {
+  // Save the tarball to a temp file.
+  final tarFile = File(p.join(cacheDir.path, 'download.tar.gz'));
+  final sink = tarFile.openWrite();
+  try {
+    await response.cast<List<int>>().pipe(sink);
+  } finally {
+    await sink.close();
+  }
+
+  // Extract the tarball.
+  final extractResult = await Process.run('tar', [
+    'xzf',
+    tarFile.path,
+    '-C',
+    cacheDir.path,
+  ]);
+  if (extractResult.exitCode != 0) {
+    throw StateError('tar extract failed: ${extractResult.stderr}');
+  }
+  tarFile.deleteSync();
+
+  // The extracted file should be the dylib. Find it.
+  if (!targetFile.existsSync()) {
+    // Look for any file matching ghostty-vt in the extracted contents.
+    final files = cacheDir
+        .listSync()
+        .whereType<File>()
+        .where((f) => p.basename(f.path).contains('ghostty-vt'))
+        .toList();
+    if (files.isEmpty) {
+      throw StateError(
+        'Archive extracted but no ghostty-vt library found in ${cacheDir.path}',
+      );
+    }
+    // Rename to the expected name.
+    files.first.renameSync(targetFile.path);
+  }
+
+  // Verify SHA256.
+  final actualHash = await targetFile.openRead().transform(sha256).first;
+  if (actualHash.toString() != expectedHash) {
+    targetFile.deleteSync();
+    throw StateError(
+      'SHA256 mismatch for $dylibName:\n'
+      '  expected: $expectedHash\n'
+      '  actual:   $actualHash',
+    );
+  }
+}
+
+// ── Local prebuilt search ────────────────────────────────────────────
+
+/// Search for a prebuilt library in local directories:
+/// 1. Monorepo root (.prebuilt/) — from packageRoot
+/// 2. Consuming project root (.prebuilt/) — from outputDirectory
+File? _findLocalPrebuilt(
+  BuildInput input,
+  String platformLabel,
+  String dylibName,
+) {
   // Check .prebuilt/ cache at monorepo root.
   final repoRoot = _findRepoRoot(input.packageRoot);
   if (repoRoot != null) {
@@ -70,17 +259,52 @@ File? _findPrebuiltVte(BuildInput input, CodeConfig code, String dylibName) {
     if (cached.existsSync()) return cached;
   }
 
-  // Check .prebuilt/ at the consuming project root (derived from outputDirectory).
-  final projectRoot = _findProjectRoot(input.outputDirectory);
-  if (projectRoot != null) {
-    final cached = File.fromUri(
-      projectRoot.resolve('.prebuilt/$platformLabel/$dylibName'),
-    );
-    if (cached.existsSync()) return cached;
-  }
-
-  return null;
+  // Check .prebuilt/ at consuming project roots.
+  return _findPrebuiltInProjectRoots(
+    input.outputDirectory,
+    platformLabel,
+    dylibName,
+  );
 }
+
+/// Walk up from a URI to find the repo root (has pubspec.yaml + pkgs/).
+Uri? _findRepoRoot(Uri packageRoot) {
+  var dir = Directory.fromUri(packageRoot).absolute;
+  while (true) {
+    if (File('${dir.path}/pubspec.yaml').existsSync() &&
+        Directory('${dir.path}/pkgs').existsSync()) {
+      return dir.uri;
+    }
+    final parent = dir.parent;
+    if (parent.path == dir.path) return null;
+    dir = parent;
+  }
+}
+
+/// Search for `.prebuilt/<platform>/<dylib>` by walking up from
+/// [outputDirectory].
+File? _findPrebuiltInProjectRoots(
+  Uri outputDirectory,
+  String platformLabel,
+  String dylibName,
+) {
+  var dir = Directory.fromUri(outputDirectory).absolute;
+  while (true) {
+    final hasPubspec = File('${dir.path}/pubspec.yaml').existsSync();
+    final hasDartTool = Directory('${dir.path}/.dart_tool').existsSync();
+    final hasPkgs = Directory('${dir.path}/pkgs').existsSync();
+
+    if (hasPubspec && (hasDartTool || hasPkgs)) {
+      final cached = File('${dir.path}/.prebuilt/$platformLabel/$dylibName');
+      if (cached.existsSync()) return cached;
+    }
+    final parent = dir.parent;
+    if (parent.path == dir.path) return null;
+    dir = parent;
+  }
+}
+
+// ── Build from source ────────────────────────────────────────────────
 
 /// Build the VTE library from Ghostty source using Zig.
 Future<void> _buildFromSource(
@@ -124,12 +348,6 @@ Future<void> _buildFromSource(
 
   final builtLib = _resolveBuiltLibrary(prefixDir, dylibName);
   await File.fromUri(builtLib).copy(File.fromUri(bundledLibUri).path);
-
-  // Track source dependencies for incremental rebuilds.
-  // (Only relevant when building from source.)
-  // output.dependencies would be set here, but we're inside a helper
-  // so we skip—dependencies are only needed for source builds, and the
-  // hook re-runs on any change anyway.
 }
 
 /// Returns a platform label like "linux-x64" or "macos-arm64".
@@ -150,39 +368,6 @@ String _platformLabel(OS os, Architecture arch) {
     _ => os.toString(),
   };
   return '$osLabel-$archLabel';
-}
-
-/// Walk up from a URI to find the repo root (has pubspec.yaml + pkgs/).
-Uri? _findRepoRoot(Uri packageRoot) {
-  var dir = Directory.fromUri(packageRoot).absolute;
-  while (true) {
-    if (File('${dir.path}/pubspec.yaml').existsSync() &&
-        Directory('${dir.path}/pkgs').existsSync()) {
-      return dir.uri;
-    }
-    final parent = dir.parent;
-    if (parent.path == dir.path) return null;
-    dir = parent;
-  }
-}
-
-/// Derive the consuming project's root from [outputDirectory].
-///
-/// The build system places output in `<project>/.dart_tool/hooks_runner/...`,
-/// so we walk up until we find a directory containing `.dart_tool/` and
-/// `pubspec.yaml`. This lets downstream pub consumers place prebuilt libs
-/// in `<their_project>/.prebuilt/<platform>/` without touching the pub cache.
-Uri? _findProjectRoot(Uri outputDirectory) {
-  var dir = Directory.fromUri(outputDirectory).absolute;
-  while (true) {
-    if (Directory('${dir.path}/.dart_tool').existsSync() &&
-        File('${dir.path}/pubspec.yaml').existsSync()) {
-      return dir.uri;
-    }
-    final parent = dir.parent;
-    if (parent.path == dir.path) return null;
-    dir = parent;
-  }
 }
 
 Directory _resolveGhosttySourceRoot(BuildInput input) {

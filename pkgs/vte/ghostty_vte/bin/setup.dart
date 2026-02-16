@@ -10,7 +10,7 @@ library;
 import 'dart:io';
 
 const _repo = 'kingwill101/dart_terminal';
-const _defaultTag = 'v0.0.2';
+const _defaultTag = 'v0.0.3';
 
 const _artifacts = <String, String>{
   'linux-x64': 'vte-linux-x64.tar.gz',

@@ -3,7 +3,7 @@ description: >-
   Flutter terminal UI widgets powered by Ghostty's VT engine.
   Provides GhosttyTerminalView, GhosttyTerminalController, and
   automatic wasm initialisation for web targets.
-version: 0.0.1+1
+version: 0.0.3
 
 repository: https://github.com/kingwill101/dart_terminal/tree/master/pkgs/vte/ghostty_vte_flutter
 homepage: https://github.com/kingwill101/dart_terminal
@@ -24,7 +24,7 @@ resolution: workspace
 dependencies:
   flutter:
     sdk: flutter
-  ghostty_vte: ^0.0.1
+  ghostty_vte: ^0.0.3
 
 dev_dependencies:
   flutter_test:
