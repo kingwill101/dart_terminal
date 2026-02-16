@@ -12,15 +12,15 @@ const String releaseTag = 'v0.0.3';
 const Map<String, AssetHash> assetHashes = {
   'linux-x64': AssetHash(
     tarball: 'vte-linux-x64.tar.gz',
-    hash: '11f3246188192668d469efb6014fdcb175da5d79448d70167c3b855928efefb6',
+    hash: '7c45562854e42660869a0c1829ceb3da7e98a03b951dec41ae7d5f8832f33b74',
   ),
   'linux-arm64': AssetHash(
     tarball: 'vte-linux-arm64.tar.gz',
-    hash: '362a71a7fdf7462d00d56c20f08334e8e33e3b3b0761c92971990bfd24fe29f0',
+    hash: '7b51abc1d982d1c6a964f8e50a24af4191bbd47fc9062005674f9a44a87dbaaa',
   ),
   'macos-arm64': AssetHash(
     tarball: 'vte-macos-arm64.tar.gz',
-    hash: '4b1a41bf837abc0fb833709d27f1413f2ccb3e02f7a73a661234bb7e219f6e7c',
+    hash: '044709fb74b9191182b827236999c4e0033a0d74792f1cbe3b13ac008f2bcec1',
   ),
   'macos-x64': AssetHash(
     tarball: 'vte-macos-x64.tar.gz',
@@ -36,15 +36,15 @@ const Map<String, AssetHash> assetHashes = {
   ),
   'android-arm64': AssetHash(
     tarball: 'vte-android-arm64.tar.gz',
-    hash: '98d0fa5c19edcf8a57a817da8a4999d3cf0af350511b77b2211475fa10c82a1c',
+    hash: 'ab9f2ef75cdd77df05063d0d406992956e36b1f95fb0c282291c3860a90118c2',
   ),
   'android-arm': AssetHash(
     tarball: 'vte-android-arm.tar.gz',
-    hash: '1d8449da046a120ab1f1404db5af14b1e46227d6c5f30bfe3fe8f12edf47df65',
+    hash: 'fe9c638f7c2eb6a1e431d8be52e4f97f6c04c41a7c412746f6378be3c58235d4',
   ),
   'android-x64': AssetHash(
     tarball: 'vte-android-x64.tar.gz',
-    hash: 'd6e1793356ece4d509e34c8867ad933c183fc145261bdb1ebfaff2616b74efa9',
+    hash: '595c9a5efdd807fd4b1652a23ce13306526e9da2edf36013feda8deedc3d8fdc',
   ),
 };
 

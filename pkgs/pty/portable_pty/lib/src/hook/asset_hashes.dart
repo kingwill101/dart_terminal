@@ -12,35 +12,35 @@ const String releaseTag = 'v0.0.3';
 const Map<String, AssetHash> assetHashes = {
   'linux-x64': AssetHash(
     tarball: 'pty-linux-x64.tar.gz',
-    hash: '11f3246188192668d469efb6014fdcb175da5d79448d70167c3b855928efefb6',
+    hash: '1f50dd808de16316ff1a9e0714da57d9b495a2b989735d1725799229e3680e57',
   ),
   'linux-arm64': AssetHash(
     tarball: 'pty-linux-arm64.tar.gz',
-    hash: '362a71a7fdf7462d00d56c20f08334e8e33e3b3b0761c92971990bfd24fe29f0',
+    hash: 'a17f5c81d342b8602a6e612dbf48358aee434fe8ddb035324fe0da8c46c5a3b1',
   ),
   'macos-arm64': AssetHash(
     tarball: 'pty-macos-arm64.tar.gz',
-    hash: '4b1a41bf837abc0fb833709d27f1413f2ccb3e02f7a73a661234bb7e219f6e7c',
+    hash: '43bf99c83016e97ba22154f41563dbb8b34eb030f2549bca45121b0387c1c8fb',
   ),
   'macos-x64': AssetHash(
     tarball: 'pty-macos-x64.tar.gz',
-    hash: '5a0162bb11c37acf8a9d4d0ff7d538349020db5e09173dc369aa831048261718',
+    hash: 'ed4c503ff2c90165f0217d420b0312829e281040552fadd002592331a0e79326',
   ),
   'windows-x64': AssetHash(
     tarball: 'pty-windows-x64.tar.gz',
-    hash: '05121b91b3e701ee64c1ccde3c7d3c34c8ce3ce705ba6f9fb4d6e24a59570c2e',
+    hash: 'a259c55c1e458254689e99bfe9d79839891276a821e4fde27d71fc962ddffb6c',
   ),
   'android-arm64': AssetHash(
     tarball: 'pty-android-arm64.tar.gz',
-    hash: '98d0fa5c19edcf8a57a817da8a4999d3cf0af350511b77b2211475fa10c82a1c',
+    hash: '286d260c59863fdb6559fef6dd64e97297c76f59a6efc3a7aa624b489574f9be',
   ),
   'android-arm': AssetHash(
     tarball: 'pty-android-arm.tar.gz',
-    hash: '1d8449da046a120ab1f1404db5af14b1e46227d6c5f30bfe3fe8f12edf47df65',
+    hash: '636cb13794b11b2730f5046134cf5a57f2167fde242245ac189b10e592db25ad',
   ),
   'android-x64': AssetHash(
     tarball: 'pty-android-x64.tar.gz',
-    hash: 'd6e1793356ece4d509e34c8867ad933c183fc145261bdb1ebfaff2616b74efa9',
+    hash: 'beb67af48ecd73b77b0993969af62325b5aa8b7d6705f594d62aea711ac744aa',
   ),
   'ios-arm64': AssetHash(
     tarball: 'pty-ios-arm64.tar.gz',
