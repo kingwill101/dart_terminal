@@ -77,11 +77,11 @@ Future<void> main(List<String> args) async {
   try {
     // Download and hash VTE artifacts.
     stdout.writeln('Processing VTE artifacts for $tag...');
-    final vteHashes = await _downloadAndHash(tag, _vteArtifacts, tmpDir);
+    final vteHashes = await _downloadAndHash(tag, _vteArtifacts, tmpDir, 'vte');
 
     // Download and hash PTY artifacts.
     stdout.writeln('Processing PTY artifacts for $tag...');
-    final ptyHashes = await _downloadAndHash(tag, _ptyArtifacts, tmpDir);
+    final ptyHashes = await _downloadAndHash(tag, _ptyArtifacts, tmpDir, 'pty');
 
     // Generate/verify VTE asset_hashes.dart.
     final vteContent = _generateDart(tag, vteHashes, 'vte');
@@ -118,6 +118,7 @@ Future<Map<String, String>> _downloadAndHash(
   String tag,
   Map<String, String> artifacts,
   Directory tmpDir,
+  String packagePrefix,
 ) async {
   final hashes = <String, String>{};
 
@@ -127,7 +128,7 @@ Future<Map<String, String>> _downloadAndHash(
 
     stdout.write('  $platform ($tarball)... ');
 
-    final artifactDir = Directory('${tmpDir.path}/$platform')
+    final artifactDir = Directory('${tmpDir.path}/$packagePrefix-$platform')
       ..createSync(recursive: true);
 
     // Download using gh CLI.
