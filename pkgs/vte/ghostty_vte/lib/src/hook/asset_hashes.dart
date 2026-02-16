@@ -8,22 +8,19 @@
 /// The GitHub release tag from which prebuilt binaries are downloaded.
 const String releaseTag = 'v0.0.3';
 
-/// Maps artifact tarball names to SHA256 hashes of the extracted library file.
-///
-/// The key is the platform label (e.g. "linux-x64"), the value contains the
-/// tarball filename and the SHA256 hash of the library inside.
+/// Maps platform labels to artifact info and SHA256 hashes.
 const Map<String, AssetHash> assetHashes = {
   'linux-x64': AssetHash(
     tarball: 'vte-linux-x64.tar.gz',
-    hash: 'c7a6a9f126306cc2956d2f62e693ac189d86f99fc44ab5a5f9736daca0ab8369',
+    hash: '11f3246188192668d469efb6014fdcb175da5d79448d70167c3b855928efefb6',
   ),
   'linux-arm64': AssetHash(
     tarball: 'vte-linux-arm64.tar.gz',
-    hash: '76fba680591b8dbd3da91eec20f6a2beb3967c349bb2015ef48999748fc27d06',
+    hash: '362a71a7fdf7462d00d56c20f08334e8e33e3b3b0761c92971990bfd24fe29f0',
   ),
   'macos-arm64': AssetHash(
     tarball: 'vte-macos-arm64.tar.gz',
-    hash: 'c43fc3b20b24ff34bc38cdec84c17b1d819db388d358e63cba52cf03de2a5d5d',
+    hash: '4b1a41bf837abc0fb833709d27f1413f2ccb3e02f7a73a661234bb7e219f6e7c',
   ),
   'macos-x64': AssetHash(
     tarball: 'vte-macos-x64.tar.gz',
@@ -39,15 +36,15 @@ const Map<String, AssetHash> assetHashes = {
   ),
   'android-arm64': AssetHash(
     tarball: 'vte-android-arm64.tar.gz',
-    hash: '03940115e19066a0c0bf7f936162db5be1f5fdde32e5bd1ed2ee98f61bfefb6d',
+    hash: '98d0fa5c19edcf8a57a817da8a4999d3cf0af350511b77b2211475fa10c82a1c',
   ),
   'android-arm': AssetHash(
     tarball: 'vte-android-arm.tar.gz',
-    hash: '62bafb746346233d7b6803be715520e44d0d6cba57bf1b501ca6ea1e1a6d1ffa',
+    hash: '1d8449da046a120ab1f1404db5af14b1e46227d6c5f30bfe3fe8f12edf47df65',
   ),
   'android-x64': AssetHash(
     tarball: 'vte-android-x64.tar.gz',
-    hash: '40ee8d3fe6bd325ba681c755b59806d6ff282106974bfc95c020851397a25b26',
+    hash: 'd6e1793356ece4d509e34c8867ad933c183fc145261bdb1ebfaff2616b74efa9',
   ),
 };
 
