@@ -239,6 +239,38 @@ void main() {
       },
     );
 
+    test('does not re-apply paint-time defaults after style resolution', () {
+      final style = GhosttyTerminalResolvedStyle.fromNativeStyle(
+        style: const VtStyle(
+          foreground: VtStyleColor.none(),
+          background: VtStyleColor.none(),
+          underlineColor: VtStyleColor.none(),
+          bold: false,
+          italic: false,
+          faint: false,
+          blink: false,
+          inverse: true,
+          invisible: true,
+          strikethrough: false,
+          overline: false,
+          underline: GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_NONE,
+        ),
+        palette: palette,
+        defaultForeground: const Color(0xFF111111),
+        defaultBackground: const Color(0xFF222222),
+      );
+
+      final resolved = GhosttyTerminalResolvedStyle.resolveNativeStyleColors(
+        style: style,
+        defaultForeground: const Color(0xFFAA0000),
+        defaultBackground: const Color(0xFF00AA00),
+        metadataColor: null,
+      );
+
+      expect(resolved.foreground, equals(style.foreground));
+      expect(resolved.background, equals(style.background));
+    });
+
     test('keeps explicit background when metadata color is provided', () {
       final style = GhosttyTerminalResolvedStyle.fromNativeStyle(
         style: const VtStyle(

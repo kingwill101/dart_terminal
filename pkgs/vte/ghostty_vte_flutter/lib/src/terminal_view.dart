@@ -939,15 +939,14 @@ class _GhosttyTerminalPainter extends CustomPainter {
         nativeRender != null &&
         scrollOffsetLines == 0 &&
         nativeRender.hasViewportData) {
-      // Keep the renderer's content area visually aligned with the formatter path
-      // by using the widget-provided theme defaults as the baseline.
+      // Keep the renderer paint path aligned with the resolved native defaults.
       canvas.drawRect(contentRect, Paint()..color = backgroundColor);
       _paintNativeRenderState(
         canvas,
         contentTop: contentTop,
         visibleStartLine: start,
-        defaultForeground: foregroundColor,
-        defaultBackground: backgroundColor,
+        defaultForeground: nativeRender.foregroundColor,
+        defaultBackground: nativeRender.backgroundColor,
         linePixels: linePixels,
         rowsData: nativeRender.rowsData,
       );

@@ -208,6 +208,9 @@ final class GhosttyTerminalResolvedStyle {
     if (style.faint) {
       foreground = foreground.withValues(alpha: 0.72);
     }
+    if (foreground == transparent) {
+      foreground = defaultForeground;
+    }
 
     return GhosttyTerminalResolvedStyle(
       foreground: foreground,
@@ -238,37 +241,11 @@ final class GhosttyTerminalResolvedStyle {
     required Color defaultBackground,
     Color? metadataColor,
   }) {
-    const transparent = Color(0x00000000);
-
     final resolvedBackground =
         metadataColor == null || style.hasExplicitBackground
         ? style.background
         : metadataColor;
-
-    var foreground = style.foreground;
-    var background = resolvedBackground;
-    if (style.inverse) {
-      final swappedForeground = background;
-      background = style.hasExplicitForeground
-          ? foreground
-          : (foreground == transparent ? defaultForeground : foreground);
-      foreground = style.hasExplicitBackground
-          ? swappedForeground
-          : (swappedForeground == transparent
-                ? defaultBackground
-                : swappedForeground);
-    }
-    if (style.invisible) {
-      foreground = background == transparent ? defaultBackground : background;
-    }
-    if (style.faint) {
-      foreground = foreground.withValues(alpha: 0.72);
-    }
-    if (foreground == transparent) {
-      foreground = defaultForeground;
-    }
-
-    return (foreground: foreground, background: background);
+    return (foreground: style.foreground, background: resolvedBackground);
   }
 }
 
