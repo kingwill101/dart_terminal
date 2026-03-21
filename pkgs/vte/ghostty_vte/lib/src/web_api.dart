@@ -9,7 +9,8 @@ import 'dart:typed_data';
 enum GhosttyResult {
   GHOSTTY_SUCCESS(0),
   GHOSTTY_OUT_OF_MEMORY(-1),
-  GHOSTTY_INVALID_VALUE(-2);
+  GHOSTTY_INVALID_VALUE(-2),
+  GHOSTTY_OUT_OF_SPACE(-3);
 
   const GhosttyResult(this.value);
   final int value;
@@ -18,6 +19,7 @@ enum GhosttyResult {
     0 => GHOSTTY_SUCCESS,
     -1 => GHOSTTY_OUT_OF_MEMORY,
     -2 => GHOSTTY_INVALID_VALUE,
+    -3 => GHOSTTY_OUT_OF_SPACE,
     _ => throw ArgumentError('Unknown value for GhosttyResult: $value'),
   };
 }
@@ -86,30 +88,29 @@ enum GhosttySgrAttributeTag {
   GHOSTTY_SGR_ATTR_RESET_ITALIC(5),
   GHOSTTY_SGR_ATTR_FAINT(6),
   GHOSTTY_SGR_ATTR_UNDERLINE(7),
-  GHOSTTY_SGR_ATTR_RESET_UNDERLINE(8),
-  GHOSTTY_SGR_ATTR_UNDERLINE_COLOR(9),
-  GHOSTTY_SGR_ATTR_UNDERLINE_COLOR_256(10),
-  GHOSTTY_SGR_ATTR_RESET_UNDERLINE_COLOR(11),
-  GHOSTTY_SGR_ATTR_OVERLINE(12),
-  GHOSTTY_SGR_ATTR_RESET_OVERLINE(13),
-  GHOSTTY_SGR_ATTR_BLINK(14),
-  GHOSTTY_SGR_ATTR_RESET_BLINK(15),
-  GHOSTTY_SGR_ATTR_INVERSE(16),
-  GHOSTTY_SGR_ATTR_RESET_INVERSE(17),
-  GHOSTTY_SGR_ATTR_INVISIBLE(18),
-  GHOSTTY_SGR_ATTR_RESET_INVISIBLE(19),
-  GHOSTTY_SGR_ATTR_STRIKETHROUGH(20),
-  GHOSTTY_SGR_ATTR_RESET_STRIKETHROUGH(21),
-  GHOSTTY_SGR_ATTR_DIRECT_COLOR_FG(22),
-  GHOSTTY_SGR_ATTR_DIRECT_COLOR_BG(23),
-  GHOSTTY_SGR_ATTR_BG_8(24),
-  GHOSTTY_SGR_ATTR_FG_8(25),
-  GHOSTTY_SGR_ATTR_RESET_FG(26),
-  GHOSTTY_SGR_ATTR_RESET_BG(27),
-  GHOSTTY_SGR_ATTR_BRIGHT_BG_8(28),
-  GHOSTTY_SGR_ATTR_BRIGHT_FG_8(29),
-  GHOSTTY_SGR_ATTR_BG_256(30),
-  GHOSTTY_SGR_ATTR_FG_256(31);
+  GHOSTTY_SGR_ATTR_UNDERLINE_COLOR(8),
+  GHOSTTY_SGR_ATTR_UNDERLINE_COLOR_256(9),
+  GHOSTTY_SGR_ATTR_RESET_UNDERLINE_COLOR(10),
+  GHOSTTY_SGR_ATTR_OVERLINE(11),
+  GHOSTTY_SGR_ATTR_RESET_OVERLINE(12),
+  GHOSTTY_SGR_ATTR_BLINK(13),
+  GHOSTTY_SGR_ATTR_RESET_BLINK(14),
+  GHOSTTY_SGR_ATTR_INVERSE(15),
+  GHOSTTY_SGR_ATTR_RESET_INVERSE(16),
+  GHOSTTY_SGR_ATTR_INVISIBLE(17),
+  GHOSTTY_SGR_ATTR_RESET_INVISIBLE(18),
+  GHOSTTY_SGR_ATTR_STRIKETHROUGH(19),
+  GHOSTTY_SGR_ATTR_RESET_STRIKETHROUGH(20),
+  GHOSTTY_SGR_ATTR_DIRECT_COLOR_FG(21),
+  GHOSTTY_SGR_ATTR_DIRECT_COLOR_BG(22),
+  GHOSTTY_SGR_ATTR_BG_8(23),
+  GHOSTTY_SGR_ATTR_FG_8(24),
+  GHOSTTY_SGR_ATTR_RESET_FG(25),
+  GHOSTTY_SGR_ATTR_RESET_BG(26),
+  GHOSTTY_SGR_ATTR_BRIGHT_BG_8(27),
+  GHOSTTY_SGR_ATTR_BRIGHT_FG_8(28),
+  GHOSTTY_SGR_ATTR_BG_256(29),
+  GHOSTTY_SGR_ATTR_FG_256(30);
 
   const GhosttySgrAttributeTag(this.value);
   final int value;
@@ -265,6 +266,16 @@ enum GhosttyOptionAsAlt {
   final int value;
 }
 
+/// Output format emitted by a terminal formatter.
+enum GhosttyFormatterFormat {
+  GHOSTTY_FORMATTER_FORMAT_PLAIN(0),
+  GHOSTTY_FORMATTER_FORMAT_VT(1),
+  GHOSTTY_FORMATTER_FORMAT_HTML(2);
+
+  const GhosttyFormatterFormat(this.value);
+  final int value;
+}
+
 /// Key encoder feature flags.
 enum GhosttyKeyEncoderOption {
   GHOSTTY_KEY_ENCODER_OPT_CURSOR_KEY_APPLICATION(0),
@@ -412,6 +423,10 @@ final class _GhosttyWasmRuntime {
     _data.setUint32(ptr, value, Endian.little);
   }
 
+  void writeI32(int ptr, int value) {
+    _data.setInt32(ptr, value, Endian.little);
+  }
+
   String readCString(int ptr) {
     if (ptr == 0) {
       return '';
@@ -504,6 +519,98 @@ void _checkResult(int result, String operation) {
   if (mapped != GhosttyResult.GHOSTTY_SUCCESS) {
     throw GhosttyVtError(operation, mapped);
   }
+}
+
+const int _ghosttyTerminalOptionsSize = 8;
+const int _ghosttyFormatterScreenExtraSize = 12;
+const int _ghosttyFormatterTerminalExtraSize = 24;
+const int _ghosttyFormatterTerminalOptionsSize = 36;
+const int _ghosttyTerminalScrollViewportSize = 24;
+
+int _checkPositiveUint16(int value, String name) {
+  if (value < 1 || value > 0xFFFF) {
+    throw RangeError.range(value, 1, 0xFFFF, name);
+  }
+  return value;
+}
+
+int _checkNonNegative(int value, String name) {
+  if (value < 0) {
+    throw RangeError.range(value, 0, null, name);
+  }
+  return value;
+}
+
+_GhosttyWasmRuntime _requireTerminalRuntime(String member) {
+  final rt = _runtime();
+  if (rt == null) {
+    throw StateError(
+      '$member requires GhosttyVtWasm.initializeFromBytes() on web.',
+    );
+  }
+  return rt;
+}
+
+int _allocU8ArrayOrThrow(_GhosttyWasmRuntime rt, int len, String operation) {
+  if (len == 0) {
+    return 0;
+  }
+  final ptr = rt.allocU8Array(len);
+  if (ptr == 0) {
+    throw GhosttyVtError(operation, GhosttyResult.GHOSTTY_OUT_OF_MEMORY);
+  }
+  rt.u8View(ptr, len).fillRange(0, len, 0);
+  return ptr;
+}
+
+int _allocOpaqueOrThrow(_GhosttyWasmRuntime rt, String operation) {
+  final ptr = rt.allocOpaque();
+  if (ptr == 0) {
+    throw GhosttyVtError(operation, GhosttyResult.GHOSTTY_OUT_OF_MEMORY);
+  }
+  return ptr;
+}
+
+void _writeBoolByte(_GhosttyWasmRuntime rt, int ptr, int offset, bool value) {
+  rt.writeU8(ptr + offset, value ? 1 : 0);
+}
+
+void _writeTerminalOptions(
+  _GhosttyWasmRuntime rt,
+  int ptr, {
+  required int cols,
+  required int rows,
+  required int maxScrollback,
+}) {
+  rt.writeU16(ptr, _checkPositiveUint16(cols, 'cols'));
+  rt.writeU16(ptr + 2, _checkPositiveUint16(rows, 'rows'));
+  rt.writeU32(ptr + 4, _checkNonNegative(maxScrollback, 'maxScrollback'));
+}
+
+void _writeFormatterTerminalOptions(
+  _GhosttyWasmRuntime rt,
+  int ptr,
+  VtFormatterTerminalOptions options,
+) {
+  final screen = options.extra.screen;
+  rt.writeU32(ptr, _ghosttyFormatterTerminalOptionsSize);
+  rt.writeU32(ptr + 4, options.emit.value);
+  _writeBoolByte(rt, ptr, 8, options.unwrap);
+  _writeBoolByte(rt, ptr, 9, options.trim);
+  rt.writeU32(ptr + 12, _ghosttyFormatterTerminalExtraSize);
+  _writeBoolByte(rt, ptr, 16, options.extra.palette);
+  _writeBoolByte(rt, ptr, 17, options.extra.modes);
+  _writeBoolByte(rt, ptr, 18, options.extra.scrollingRegion);
+  _writeBoolByte(rt, ptr, 19, options.extra.tabstops);
+  _writeBoolByte(rt, ptr, 20, options.extra.pwd);
+  _writeBoolByte(rt, ptr, 21, options.extra.keyboard);
+  rt.writeU32(ptr + 24, _ghosttyFormatterScreenExtraSize);
+  _writeBoolByte(rt, ptr, 28, screen.cursor);
+  _writeBoolByte(rt, ptr, 29, screen.style);
+  _writeBoolByte(rt, ptr, 30, screen.hyperlink);
+  _writeBoolByte(rt, ptr, 31, screen.protection);
+  _writeBoolByte(rt, ptr, 32, screen.kittyKeyboard);
+  _writeBoolByte(rt, ptr, 33, screen.charsets);
 }
 
 final class GhosttyModsMask {
@@ -995,7 +1102,8 @@ final class VtSgrParser {
         );
       case 24:
         return const VtSgrAttributeData(
-          tag: GhosttySgrAttributeTag.GHOSTTY_SGR_ATTR_RESET_UNDERLINE,
+          tag: GhosttySgrAttributeTag.GHOSTTY_SGR_ATTR_UNDERLINE,
+          underline: GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_NONE,
         );
       case 25:
         return const VtSgrAttributeData(
@@ -1621,6 +1729,22 @@ final class VtKeyEncoder {
     }
   }
 
+  void setOptionsFromTerminal(VtTerminal terminal) {
+    _ensureOpen();
+    terminal._ensureOpen();
+    final rt = _wasm;
+    if (rt == null || !identical(rt, terminal._wasm)) {
+      throw StateError(
+        'VtKeyEncoder.setOptionsFromTerminal requires the encoder and '
+        'terminal to use the same initialized wasm runtime.',
+      );
+    }
+    rt.callInt('ghostty_key_encoder_setopt_from_terminal', <Object>[
+      _handle,
+      terminal._handle,
+    ]);
+  }
+
   Uint8List encode(VtKeyEvent event) {
     _ensureOpen();
     final rt = _wasm;
@@ -1864,6 +1988,456 @@ final class VtKeyEncoder {
   }
 }
 
+Never _unsupportedTerminalApi(String member) {
+  throw UnsupportedError(
+    '$member is not available on web yet. '
+    'The wasm runtime supports VT terminals and formatters, but not the raw '
+    'allocator bridge that this member depends on.',
+  );
+}
+
+final class VtTerminalScrollViewport {
+  const VtTerminalScrollViewport._(this._tag, {this.delta = 0});
+
+  const VtTerminalScrollViewport.top() : this._(0);
+
+  const VtTerminalScrollViewport.bottom() : this._(1);
+
+  const VtTerminalScrollViewport.delta(int delta) : this._(2, delta: delta);
+
+  final int _tag;
+  final int delta;
+}
+
+final class VtFormatterScreenExtra {
+  const VtFormatterScreenExtra({
+    this.cursor = false,
+    this.style = false,
+    this.hyperlink = false,
+    this.protection = false,
+    this.kittyKeyboard = false,
+    this.charsets = false,
+  });
+
+  final bool cursor;
+  final bool style;
+  final bool hyperlink;
+  final bool protection;
+  final bool kittyKeyboard;
+  final bool charsets;
+}
+
+final class VtFormatterTerminalExtra {
+  const VtFormatterTerminalExtra({
+    this.palette = false,
+    this.modes = false,
+    this.scrollingRegion = false,
+    this.tabstops = false,
+    this.pwd = false,
+    this.keyboard = false,
+    this.screen = const VtFormatterScreenExtra(),
+  });
+
+  final bool palette;
+  final bool modes;
+  final bool scrollingRegion;
+  final bool tabstops;
+  final bool pwd;
+  final bool keyboard;
+  final VtFormatterScreenExtra screen;
+}
+
+final class VtFormatterTerminalOptions {
+  const VtFormatterTerminalOptions({
+    this.emit = GhosttyFormatterFormat.GHOSTTY_FORMATTER_FORMAT_PLAIN,
+    this.unwrap = false,
+    this.trim = true,
+    this.extra = const VtFormatterTerminalExtra(),
+  });
+
+  final GhosttyFormatterFormat emit;
+  final bool unwrap;
+  final bool trim;
+  final VtFormatterTerminalExtra extra;
+}
+
+final class VtAllocator {
+  VtAllocator._();
+
+  static final VtAllocator dartMalloc = VtAllocator._();
+
+  Never get pointer => _unsupportedTerminalApi('VtAllocator.pointer');
+
+  Uint8List copyBytesAndFree(Object ptr, int len) {
+    _unsupportedTerminalApi('VtAllocator.copyBytesAndFree');
+  }
+
+  void freePointer(Object ptr) {
+    _unsupportedTerminalApi('VtAllocator.freePointer');
+  }
+}
+
+final class VtTerminal {
+  VtTerminal({required int cols, required int rows, int maxScrollback = 10_000})
+    : _cols = _checkPositiveUint16(cols, 'cols'),
+      _rows = _checkPositiveUint16(rows, 'rows'),
+      _maxScrollback = _checkNonNegative(maxScrollback, 'maxScrollback'),
+      _wasm = _requireTerminalRuntime('VtTerminal') {
+    final out = _allocOpaqueOrThrow(_wasm, 'ghostty_wasm_alloc_opaque');
+    final optionsPtr = _allocU8ArrayOrThrow(
+      _wasm,
+      _ghosttyTerminalOptionsSize,
+      'ghostty_wasm_alloc_u8_array',
+    );
+    try {
+      _writeTerminalOptions(
+        _wasm,
+        optionsPtr,
+        cols: _cols,
+        rows: _rows,
+        maxScrollback: _maxScrollback,
+      );
+      final result = _wasm.callInt('ghostty_terminal_new', <Object>[
+        0,
+        out,
+        optionsPtr,
+      ]);
+      _checkResult(result, 'ghostty_terminal_new');
+      _handle = _wasm.readPtr(out);
+    } finally {
+      _wasm.freeU8Array(optionsPtr, _ghosttyTerminalOptionsSize);
+      _wasm.freeOpaque(out);
+    }
+  }
+
+  final _GhosttyWasmRuntime _wasm;
+  final Set<VtTerminalFormatter> _formatters = <VtTerminalFormatter>{};
+  int _handle = 0;
+  bool _closed = false;
+  int _cols;
+  int _rows;
+  final int _maxScrollback;
+
+  void _ensureOpen() {
+    if (_closed) {
+      throw StateError('VtTerminal is already closed.');
+    }
+  }
+
+  void _detachFormatter(VtTerminalFormatter formatter) {
+    _formatters.remove(formatter);
+  }
+
+  int get cols {
+    _ensureOpen();
+    return _cols;
+  }
+
+  int get rows {
+    _ensureOpen();
+    return _rows;
+  }
+
+  int get maxScrollback {
+    _ensureOpen();
+    return _maxScrollback;
+  }
+
+  void writeBytes(List<int> bytes) {
+    _ensureOpen();
+    if (bytes.isEmpty) {
+      return;
+    }
+    final dataPtr = _allocU8ArrayOrThrow(
+      _wasm,
+      bytes.length,
+      'ghostty_wasm_alloc_u8_array',
+    );
+    try {
+      _wasm.u8View(dataPtr, bytes.length).setAll(0, bytes);
+      _wasm.callInt('ghostty_terminal_vt_write', <Object>[
+        _handle,
+        dataPtr,
+        bytes.length,
+      ]);
+    } finally {
+      _wasm.freeU8Array(dataPtr, bytes.length);
+    }
+  }
+
+  void write(String text, {Encoding encoding = utf8}) {
+    writeBytes(encoding.encode(text));
+  }
+
+  void reset() {
+    _ensureOpen();
+    _wasm.callInt('ghostty_terminal_reset', <Object>[_handle]);
+  }
+
+  void resize({required int cols, required int rows}) {
+    _ensureOpen();
+    final checkedCols = _checkPositiveUint16(cols, 'cols');
+    final checkedRows = _checkPositiveUint16(rows, 'rows');
+    final result = _wasm.callInt('ghostty_terminal_resize', <Object>[
+      _handle,
+      checkedCols,
+      checkedRows,
+    ]);
+    _checkResult(result, 'ghostty_terminal_resize');
+    _cols = checkedCols;
+    _rows = checkedRows;
+  }
+
+  void scrollViewport(VtTerminalScrollViewport behavior) {
+    _ensureOpen();
+    final behaviorPtr = _allocU8ArrayOrThrow(
+      _wasm,
+      _ghosttyTerminalScrollViewportSize,
+      'ghostty_wasm_alloc_u8_array',
+    );
+    try {
+      _wasm.writeU32(behaviorPtr, behavior._tag);
+      if (behavior._tag == 2) {
+        _wasm.writeI32(behaviorPtr + 8, behavior.delta);
+      }
+      _wasm.callInt('ghostty_terminal_scroll_viewport', <Object>[
+        _handle,
+        behaviorPtr,
+      ]);
+    } finally {
+      _wasm.freeU8Array(behaviorPtr, _ghosttyTerminalScrollViewportSize);
+    }
+  }
+
+  void scrollToTop() {
+    scrollViewport(const VtTerminalScrollViewport.top());
+  }
+
+  void scrollToBottom() {
+    scrollViewport(const VtTerminalScrollViewport.bottom());
+  }
+
+  void scrollBy(int delta) {
+    scrollViewport(VtTerminalScrollViewport.delta(delta));
+  }
+
+  VtTerminalFormatter createFormatter([
+    VtFormatterTerminalOptions options = const VtFormatterTerminalOptions(),
+  ]) {
+    _ensureOpen();
+    final formatter = VtTerminalFormatter._(this, options);
+    _formatters.add(formatter);
+    return formatter;
+  }
+
+  void close() {
+    if (_closed) {
+      return;
+    }
+    for (final formatter in List<VtTerminalFormatter>.from(_formatters)) {
+      formatter.close();
+    }
+    _wasm.callInt('ghostty_terminal_free', <Object>[_handle]);
+    _handle = 0;
+    _closed = true;
+  }
+}
+
+final class VtTerminalFormatter {
+  VtTerminalFormatter._(VtTerminal terminal, VtFormatterTerminalOptions options)
+    : _terminal = terminal,
+      _wasm = terminal._wasm {
+    final out = _allocOpaqueOrThrow(_wasm, 'ghostty_wasm_alloc_opaque');
+    final optionsPtr = _allocU8ArrayOrThrow(
+      _wasm,
+      _ghosttyFormatterTerminalOptionsSize,
+      'ghostty_wasm_alloc_u8_array',
+    );
+    try {
+      _writeFormatterTerminalOptions(_wasm, optionsPtr, options);
+      final result = _wasm.callInt('ghostty_formatter_terminal_new', <Object>[
+        0,
+        out,
+        _terminal._handle,
+        optionsPtr,
+      ]);
+      _checkResult(result, 'ghostty_formatter_terminal_new');
+      _handle = _wasm.readPtr(out);
+    } finally {
+      _wasm.freeU8Array(optionsPtr, _ghosttyFormatterTerminalOptionsSize);
+      _wasm.freeOpaque(out);
+    }
+  }
+
+  final VtTerminal _terminal;
+  final _GhosttyWasmRuntime _wasm;
+  int _handle = 0;
+  bool _closed = false;
+
+  void _ensureOpen() {
+    if (_closed) {
+      throw StateError('VtTerminalFormatter is already closed.');
+    }
+  }
+
+  int _requiredSize() {
+    final outWritten = _wasm.allocUsize();
+    if (outWritten == 0) {
+      throw GhosttyVtError(
+        'ghostty_wasm_alloc_usize',
+        GhosttyResult.GHOSTTY_OUT_OF_MEMORY,
+      );
+    }
+    try {
+      final result = _wasm.callInt('ghostty_formatter_format_buf', <Object>[
+        _handle,
+        0,
+        0,
+        outWritten,
+      ]);
+      if (result == GhosttyResult.GHOSTTY_SUCCESS.value) {
+        return _wasm.readUsize(outWritten);
+      }
+      if (result != GhosttyResult.GHOSTTY_OUT_OF_SPACE.value) {
+        _checkResult(result, 'ghostty_formatter_format_buf(size_probe)');
+      }
+      return _wasm.readUsize(outWritten);
+    } finally {
+      _wasm.freeUsize(outWritten);
+    }
+  }
+
+  Uint8List formatBytes() {
+    _ensureOpen();
+    _terminal._ensureOpen();
+
+    var required = _requiredSize();
+    if (required == 0) {
+      return Uint8List(0);
+    }
+
+    for (var attempt = 0; attempt < 2; attempt++) {
+      final outWritten = _wasm.allocUsize();
+      if (outWritten == 0) {
+        throw GhosttyVtError(
+          'ghostty_wasm_alloc_usize',
+          GhosttyResult.GHOSTTY_OUT_OF_MEMORY,
+        );
+      }
+      final allocated = required;
+      final buffer = _allocU8ArrayOrThrow(
+        _wasm,
+        allocated,
+        'ghostty_wasm_alloc_u8_array',
+      );
+      try {
+        final result = _wasm.callInt('ghostty_formatter_format_buf', <Object>[
+          _handle,
+          buffer,
+          allocated,
+          outWritten,
+        ]);
+        if (result == GhosttyResult.GHOSTTY_SUCCESS.value) {
+          final written = _wasm.readUsize(outWritten);
+          return Uint8List.fromList(_wasm.u8View(buffer, written));
+        }
+        if (result != GhosttyResult.GHOSTTY_OUT_OF_SPACE.value) {
+          _checkResult(result, 'ghostty_formatter_format_buf');
+        }
+        required = _wasm.readUsize(outWritten);
+        if (required == 0) {
+          return Uint8List(0);
+        }
+      } finally {
+        _wasm.freeU8Array(buffer, allocated);
+        _wasm.freeUsize(outWritten);
+      }
+    }
+
+    throw StateError(
+      'VtTerminalFormatter output changed while formatting. Retry the call.',
+    );
+  }
+
+  Uint8List formatBytesAllocated() {
+    return formatBytesAllocatedWith(VtAllocator.dartMalloc);
+  }
+
+  Uint8List formatBytesAllocatedWith(VtAllocator allocator) {
+    allocator;
+    _ensureOpen();
+    _terminal._ensureOpen();
+
+    final outPtr = _allocOpaqueOrThrow(_wasm, 'ghostty_wasm_alloc_opaque');
+    final outLen = _wasm.allocUsize();
+    if (outLen == 0) {
+      _wasm.freeOpaque(outPtr);
+      throw GhosttyVtError(
+        'ghostty_wasm_alloc_usize',
+        GhosttyResult.GHOSTTY_OUT_OF_MEMORY,
+      );
+    }
+    try {
+      final result = _wasm.callInt('ghostty_formatter_format_alloc', <Object>[
+        _handle,
+        0,
+        outPtr,
+        outLen,
+      ]);
+      _checkResult(result, 'ghostty_formatter_format_alloc');
+
+      final ptr = _wasm.readPtr(outPtr);
+      final len = _wasm.readUsize(outLen);
+      if (ptr == 0 || len == 0) {
+        if (ptr != 0) {
+          _wasm.freeU8Array(ptr, len);
+        }
+        return Uint8List(0);
+      }
+
+      final bytes = Uint8List.fromList(_wasm.u8View(ptr, len));
+      _wasm.freeU8Array(ptr, len);
+      return bytes;
+    } finally {
+      _wasm.freeUsize(outLen);
+      _wasm.freeOpaque(outPtr);
+    }
+  }
+
+  String formatText({Encoding encoding = utf8}) {
+    final bytes = formatBytes();
+    if (encoding == utf8) {
+      return utf8.decode(bytes, allowMalformed: true);
+    }
+    return encoding.decode(bytes);
+  }
+
+  String formatTextAllocated({Encoding encoding = utf8}) {
+    return formatTextAllocatedWith(VtAllocator.dartMalloc, encoding: encoding);
+  }
+
+  String formatTextAllocatedWith(
+    VtAllocator allocator, {
+    Encoding encoding = utf8,
+  }) {
+    final bytes = formatBytesAllocatedWith(allocator);
+    if (encoding == utf8) {
+      return utf8.decode(bytes, allowMalformed: true);
+    }
+    return encoding.decode(bytes);
+  }
+
+  void close() {
+    if (_closed) {
+      return;
+    }
+    _wasm.callInt('ghostty_formatter_free', <Object>[_handle]);
+    _handle = 0;
+    _terminal._detachFormatter(this);
+    _closed = true;
+  }
+}
+
 final class GhosttyVt {
   const GhosttyVt._();
 
@@ -1917,4 +2491,10 @@ final class GhosttyVt {
   static VtSgrParser newSgrParser() => VtSgrParser();
   static VtKeyEvent newKeyEvent() => VtKeyEvent();
   static VtKeyEncoder newKeyEncoder() => VtKeyEncoder();
+
+  static VtTerminal newTerminal({
+    required int cols,
+    required int rows,
+    int maxScrollback = 10_000,
+  }) => VtTerminal(cols: cols, rows: rows, maxScrollback: maxScrollback);
 }

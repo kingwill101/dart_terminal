@@ -15,6 +15,8 @@ on the **web** via WebAssembly.
 | **Paste safety** | `GhosttyVt.isPasteSafe()` | Detect dangerous control sequences in pasted text |
 | **OSC parsing** | `VtOscParser` | Streaming parser for Operating System Command sequences |
 | **SGR parsing** | `VtSgrParser` | Parse Select Graphic Rendition attributes (colors, bold, etc.) |
+| **Terminal state** | `VtTerminal` | Feed VT bytes into a terminal emulator, resize it, reset it, and manage scrollback |
+| **Formatter output** | `VtTerminalFormatter` | Snapshot terminal state as plain text, VT sequences, or HTML with buffered or allocated output helpers |
 | **Key encoding** | `VtKeyEvent` / `VtKeyEncoder` | Encode keyboard events to terminal byte sequences |
 | **Web support** | `GhosttyVtWasm` | Load `libghostty-vt` compiled to WebAssembly |
 
@@ -32,7 +34,7 @@ on the **web** via WebAssembly.
 
 ```yaml
 dependencies:
-  ghostty_vte: ^0.0.2
+  ghostty_vte: ^0.0.3
 ```
 
 The native library is compiled automatically by a
@@ -81,6 +83,15 @@ void main() {
   print(bytes);  // [3] — ETX (Ctrl+C)
   event.close();
   encoder.close();
+
+  // Terminal + formatter
+  final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+  final formatter = terminal.createFormatter();
+  terminal.write('Hello\r\nWorld');
+  print(formatter.formatText());           // Hello\nWorld
+  print(formatter.formatTextAllocated());  // Hello\nWorld
+  formatter.close();
+  terminal.close();
 }
 ```
 
@@ -139,7 +150,8 @@ directly at a prebuilt `libghostty-vt.so` / `.dylib` / `.dll` file.
 
 ## Web usage
 
-On web, the same API surface works after loading the wasm module:
+On web, the VT terminal, formatter, parser, and key-encoding APIs work after
+loading the wasm module:
 
 ```dart
 import 'package:ghostty_vte/ghostty_vte.dart';
@@ -150,14 +162,27 @@ Future<void> main() async {
   final buffer = await response.arrayBuffer().toDart;
   await GhosttyVtWasm.initializeFromBytes(buffer.toDart.asUint8List());
 
-  // All APIs now work
+  final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+  final formatter = terminal.createFormatter();
+
+  terminal.write('hello\r\nweb');
   print(GhosttyVt.isPasteSafe('hello'));
+  print(formatter.formatText());
+
+  formatter.close();
+  terminal.close();
 }
 ```
 
 > **Flutter web?** Use the companion package
 > [`ghostty_vte_flutter`](https://pub.dev/packages/ghostty_vte_flutter) which
 > handles wasm loading from Flutter assets automatically.
+>
+> The high-level VT terminal APIs now work on web. The remaining web-only gap is
+> the raw allocator bridge (`VtAllocator.pointer`, `copyBytesAndFree`, and
+> `freePointer`). `formatBytesAllocated()` and `formatTextAllocated()` work on
+> web by using Ghostty's default wasm allocator and freeing the returned buffer
+> with the wasm convenience helpers.
 
 ## API overview
 
@@ -205,11 +230,16 @@ print(encoder.encode(event));  // [27, 91, 65] — ESC [ A
 encoder
   ..cursorKeyApplication = true   // DEC mode 1
   ..keypadKeyApplication = true   // DEC mode 66
-  ..altEscPrefix = true           // Alt sends ESC prefix
+  ..altEscPrefix = true           // Alt sends `ESC` prefix
   ..kittyFlags = GhosttyKittyFlags.all;
+
+final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+terminal.write('\x1b[?1h');
+encoder.setOptionsFromTerminal(terminal);
 
 event.close();
 encoder.close();
+terminal.close();
 ```
 
 | Option | Property | Description |
@@ -219,6 +249,66 @@ encoder.close();
 | Alt ESC prefix | `altEscPrefix` | Alt key sends `ESC` prefix |
 | modifyOtherKeys | `modifyOtherKeysState2` | xterm modifyOtherKeys mode 2 |
 | Kitty protocol | `kittyFlags` | Bit flags from `GhosttyKittyFlags` |
+
+### Terminal + formatter
+
+```dart
+final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+final formatter = terminal.createFormatter(
+  const VtFormatterTerminalOptions(
+    emit: GhosttyFormatterFormat.GHOSTTY_FORMATTER_FORMAT_PLAIN,
+    trim: true,
+  ),
+);
+
+terminal.write('Hello\r\n\x1b[31mWorld\x1b[0m');
+print(formatter.formatText());  // Hello\nWorld
+print(formatter.formatTextAllocated());  // Hello\nWorld
+
+formatter.close();
+terminal.close();
+```
+
+```dart
+final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+final formatter = terminal.createFormatter(
+  const VtFormatterTerminalOptions(
+    emit: GhosttyFormatterFormat.GHOSTTY_FORMATTER_FORMAT_VT,
+    extra: VtFormatterTerminalExtra(
+      screen: VtFormatterScreenExtra(style: true, cursor: true),
+    ),
+  ),
+);
+
+final snapshot = formatter.formatBytes();
+print(snapshot);
+
+formatter.close();
+terminal.close();
+```
+
+The high-level allocated-output helpers use a Dart-owned allocator internally so
+the returned buffer can be safely released from Dart. If you call the raw
+generated `ghostty_formatter_format_alloc` binding directly, you must free the
+result with the same allocator that created it.
+
+### Native allocator bridge
+
+```dart
+final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+final formatter = terminal.createFormatter();
+terminal.write('Hello');
+
+final text = formatter.formatTextAllocatedWith(VtAllocator.dartMalloc);
+print(text);
+
+formatter.close();
+terminal.close();
+```
+
+`VtAllocator.dartMalloc` exposes a `GhosttyAllocator*` backed by Dart's
+`malloc`/`free` and is intended for advanced native callers that need a safe
+allocator for raw generated bindings.
 
 ## Related packages
 

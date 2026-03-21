@@ -8,10 +8,23 @@ import '../ghostty_vte_bindings_generated.dart' as bindings;
 
 /// High-level helpers and wrappers on top of libghostty-vt FFI bindings.
 ///
-/// Provides factory methods for OSC/SGR parsers, key events, and key
-/// encoders, as well as paste-safety checks.
+/// Provides factory methods for OSC/SGR parsers, terminals, formatters,
+/// key events, and key encoders, as well as paste-safety checks.
 ///
 /// ```dart
+/// // Create a terminal and formatter
+/// final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+/// final formatter = terminal.createFormatter(
+///   const VtFormatterTerminalOptions(
+///     emit: GhosttyFormatterFormat.GHOSTTY_FORMATTER_FORMAT_PLAIN,
+///     trim: true,
+///   ),
+/// );
+/// terminal.write('Hello');
+/// print(formatter.formatText());
+/// formatter.close();
+/// terminal.close();
+///
 /// // Check paste safety
 /// if (GhosttyVt.isPasteSafe(clipboardText)) {
 ///   terminal.write(clipboardText);
@@ -64,6 +77,13 @@ final class GhosttyVt {
 
   /// Creates a key encoder object.
   static VtKeyEncoder newKeyEncoder() => VtKeyEncoder();
+
+  /// Creates a terminal emulator instance.
+  static VtTerminal newTerminal({
+    required int cols,
+    required int rows,
+    int maxScrollback = 10_000,
+  }) => VtTerminal(cols: cols, rows: rows, maxScrollback: maxScrollback);
 }
 
 /// Exception thrown for libghostty-vt operation failures.
@@ -84,6 +104,183 @@ final class GhosttyVtError implements Exception {
 void _checkResult(bindings.GhosttyResult result, String operation) {
   if (result != bindings.GhosttyResult.GHOSTTY_SUCCESS) {
     throw GhosttyVtError(operation, result);
+  }
+}
+
+int _checkPositiveUint16(int value, String name) {
+  if (value < 1 || value > 0xFFFF) {
+    throw RangeError.range(value, 1, 0xFFFF, name);
+  }
+  return value;
+}
+
+int _checkNonNegative(int value, String name) {
+  if (value < 0) {
+    throw RangeError.range(value, 0, null, name);
+  }
+  return value;
+}
+
+typedef _GhosttyAllocatorAllocNative =
+    ffi.Pointer<ffi.Void> Function(
+      ffi.Pointer<ffi.Void> ctx,
+      ffi.Size len,
+      ffi.Uint8 alignment,
+      ffi.UintPtr retAddr,
+    );
+
+typedef _GhosttyAllocatorResizeNative =
+    ffi.Bool Function(
+      ffi.Pointer<ffi.Void> ctx,
+      ffi.Pointer<ffi.Void> memory,
+      ffi.Size memoryLen,
+      ffi.Uint8 alignment,
+      ffi.Size newLen,
+      ffi.UintPtr retAddr,
+    );
+
+typedef _GhosttyAllocatorRemapNative =
+    ffi.Pointer<ffi.Void> Function(
+      ffi.Pointer<ffi.Void> ctx,
+      ffi.Pointer<ffi.Void> memory,
+      ffi.Size memoryLen,
+      ffi.Uint8 alignment,
+      ffi.Size newLen,
+      ffi.UintPtr retAddr,
+    );
+
+typedef _GhosttyAllocatorFreeNative =
+    ffi.Void Function(
+      ffi.Pointer<ffi.Void> ctx,
+      ffi.Pointer<ffi.Void> memory,
+      ffi.Size memoryLen,
+      ffi.Uint8 alignment,
+      ffi.UintPtr retAddr,
+    );
+
+/// Native allocator bridge for advanced libghostty-vt usage.
+///
+/// `VtAllocator.dartMalloc` uses Dart's `malloc`/`free` underneath and can be
+/// passed to raw generated bindings that accept a `GhosttyAllocator*`.
+///
+/// Most callers should use the higher-level helpers on [VtTerminalFormatter]
+/// instead of interacting with this directly.
+final class VtAllocator {
+  VtAllocator._(this.pointer);
+
+  /// Allocator backed by Dart's `malloc`/`free`.
+  static final VtAllocator dartMalloc = VtAllocator._(_create());
+
+  /// Native allocator pointer suitable for generated bindings.
+  final ffi.Pointer<bindings.GhosttyAllocator> pointer;
+
+  static ffi.Pointer<bindings.GhosttyAllocator> _create() {
+    final vtable = calloc<bindings.GhosttyAllocatorVtable>();
+    final allocator = calloc<bindings.GhosttyAllocator>();
+
+    vtable.ref
+      ..alloc = ffi.Pointer.fromFunction<_GhosttyAllocatorAllocNative>(_alloc)
+      ..resize = ffi.Pointer.fromFunction<_GhosttyAllocatorResizeNative>(
+        _resize,
+        false,
+      )
+      ..remap = ffi.Pointer.fromFunction<_GhosttyAllocatorRemapNative>(_remap)
+      ..free = ffi.Pointer.fromFunction<_GhosttyAllocatorFreeNative>(_free);
+
+    allocator.ref
+      ..ctx = ffi.nullptr
+      ..vtable = vtable;
+
+    return allocator;
+  }
+
+  static ffi.Pointer<ffi.Void> _alloc(
+    ffi.Pointer<ffi.Void> ctx,
+    int len,
+    int alignment,
+    int retAddr,
+  ) {
+    if (len <= 0) {
+      return ffi.nullptr;
+    }
+    try {
+      return malloc
+          .allocate<ffi.Uint8>(len, alignment: alignment)
+          .cast<ffi.Void>();
+    } catch (_) {
+      return ffi.nullptr;
+    }
+  }
+
+  static bool _resize(
+    ffi.Pointer<ffi.Void> ctx,
+    ffi.Pointer<ffi.Void> memory,
+    int memoryLen,
+    int alignment,
+    int newLen,
+    int retAddr,
+  ) {
+    return false;
+  }
+
+  static ffi.Pointer<ffi.Void> _remap(
+    ffi.Pointer<ffi.Void> ctx,
+    ffi.Pointer<ffi.Void> memory,
+    int memoryLen,
+    int alignment,
+    int newLen,
+    int retAddr,
+  ) {
+    final remapped = _alloc(ctx, newLen, alignment, retAddr);
+    if (remapped == ffi.nullptr) {
+      return ffi.nullptr;
+    }
+
+    if (memory != ffi.nullptr && memoryLen > 0) {
+      final copyLen = memoryLen < newLen ? memoryLen : newLen;
+      remapped
+          .cast<ffi.Uint8>()
+          .asTypedList(copyLen)
+          .setAll(0, memory.cast<ffi.Uint8>().asTypedList(copyLen));
+      _free(ctx, memory, memoryLen, alignment, retAddr);
+    }
+
+    return remapped;
+  }
+
+  static void _free(
+    ffi.Pointer<ffi.Void> ctx,
+    ffi.Pointer<ffi.Void> memory,
+    int memoryLen,
+    int alignment,
+    int retAddr,
+  ) {
+    if (memory == ffi.nullptr) {
+      return;
+    }
+    malloc.free(memory);
+  }
+
+  /// Copies [len] bytes from [ptr] into Dart-managed memory and frees [ptr].
+  Uint8List copyBytesAndFree(ffi.Pointer<ffi.Uint8> ptr, int len) {
+    if (ptr == ffi.nullptr || len == 0) {
+      if (ptr != ffi.nullptr) {
+        freePointer(ptr.cast());
+      }
+      return Uint8List(0);
+    }
+
+    final bytes = Uint8List.fromList(ptr.asTypedList(len));
+    freePointer(ptr.cast());
+    return bytes;
+  }
+
+  /// Frees a pointer allocated by this allocator.
+  void freePointer(ffi.Pointer<ffi.Void> ptr) {
+    if (ptr == ffi.nullptr) {
+      return;
+    }
+    malloc.free(ptr);
   }
 }
 
@@ -183,6 +380,444 @@ final class VtRgbColor {
 
   @override
   String toString() => 'VtRgbColor(r: $r, g: $g, b: $b)';
+}
+
+/// Scroll viewport behavior for [VtTerminal.scrollViewport].
+final class VtTerminalScrollViewport {
+  const VtTerminalScrollViewport._(this._tag, {this.delta = 0});
+
+  /// Scroll to the top of the scrollback.
+  const VtTerminalScrollViewport.top()
+    : this._(
+        bindings.GhosttyTerminalScrollViewportTag.GHOSTTY_SCROLL_VIEWPORT_TOP,
+      );
+
+  /// Scroll to the bottom of the active screen.
+  const VtTerminalScrollViewport.bottom()
+    : this._(
+        bindings
+            .GhosttyTerminalScrollViewportTag
+            .GHOSTTY_SCROLL_VIEWPORT_BOTTOM,
+      );
+
+  /// Scroll by [delta] rows. Negative values move up.
+  const VtTerminalScrollViewport.delta(int delta)
+    : this._(
+        bindings.GhosttyTerminalScrollViewportTag.GHOSTTY_SCROLL_VIEWPORT_DELTA,
+        delta: delta,
+      );
+
+  final bindings.GhosttyTerminalScrollViewportTag _tag;
+  final int delta;
+}
+
+/// Extra screen state to include in styled formatter output.
+final class VtFormatterScreenExtra {
+  const VtFormatterScreenExtra({
+    this.cursor = false,
+    this.style = false,
+    this.hyperlink = false,
+    this.protection = false,
+    this.kittyKeyboard = false,
+    this.charsets = false,
+  });
+
+  final bool cursor;
+  final bool style;
+  final bool hyperlink;
+  final bool protection;
+  final bool kittyKeyboard;
+  final bool charsets;
+}
+
+/// Extra terminal state to include in styled formatter output.
+final class VtFormatterTerminalExtra {
+  const VtFormatterTerminalExtra({
+    this.palette = false,
+    this.modes = false,
+    this.scrollingRegion = false,
+    this.tabstops = false,
+    this.pwd = false,
+    this.keyboard = false,
+    this.screen = const VtFormatterScreenExtra(),
+  });
+
+  final bool palette;
+  final bool modes;
+  final bool scrollingRegion;
+  final bool tabstops;
+  final bool pwd;
+  final bool keyboard;
+  final VtFormatterScreenExtra screen;
+}
+
+/// Options for [VtTerminal.createFormatter].
+final class VtFormatterTerminalOptions {
+  const VtFormatterTerminalOptions({
+    this.emit = bindings.GhosttyFormatterFormat.GHOSTTY_FORMATTER_FORMAT_PLAIN,
+    this.unwrap = false,
+    this.trim = true,
+    this.extra = const VtFormatterTerminalExtra(),
+  });
+
+  final bindings.GhosttyFormatterFormat emit;
+  final bool unwrap;
+  final bool trim;
+  final VtFormatterTerminalExtra extra;
+}
+
+/// Stateful VT terminal emulator instance.
+final class VtTerminal {
+  VtTerminal({required int cols, required int rows, int maxScrollback = 10_000})
+    : _cols = _checkPositiveUint16(cols, 'cols'),
+      _rows = _checkPositiveUint16(rows, 'rows'),
+      _maxScrollback = _checkNonNegative(maxScrollback, 'maxScrollback'),
+      _handle = _newTerminal(
+        cols: cols,
+        rows: rows,
+        maxScrollback: maxScrollback,
+      );
+
+  final bindings.GhosttyTerminal _handle;
+  final Set<VtTerminalFormatter> _formatters = <VtTerminalFormatter>{};
+  bool _closed = false;
+  int _cols;
+  int _rows;
+  final int _maxScrollback;
+
+  static bindings.GhosttyTerminal _newTerminal({
+    required int cols,
+    required int rows,
+    required int maxScrollback,
+  }) {
+    final optionsPtr = calloc<bindings.GhosttyTerminalOptions>();
+    final out = calloc<bindings.GhosttyTerminal>();
+    try {
+      optionsPtr.ref
+        ..cols = _checkPositiveUint16(cols, 'cols')
+        ..rows = _checkPositiveUint16(rows, 'rows')
+        ..max_scrollback = _checkNonNegative(maxScrollback, 'maxScrollback');
+      final result = bindings.ghostty_terminal_new(
+        ffi.nullptr,
+        out,
+        optionsPtr.ref,
+      );
+      _checkResult(result, 'ghostty_terminal_new');
+      return out.value;
+    } finally {
+      calloc.free(out);
+      calloc.free(optionsPtr);
+    }
+  }
+
+  void _ensureOpen() {
+    if (_closed) {
+      throw StateError('VtTerminal is already closed.');
+    }
+  }
+
+  void _detachFormatter(VtTerminalFormatter formatter) {
+    _formatters.remove(formatter);
+  }
+
+  int get cols {
+    _ensureOpen();
+    return _cols;
+  }
+
+  int get rows {
+    _ensureOpen();
+    return _rows;
+  }
+
+  int get maxScrollback {
+    _ensureOpen();
+    return _maxScrollback;
+  }
+
+  /// Writes raw VT-encoded bytes into the terminal stream.
+  void writeBytes(List<int> bytes) {
+    _ensureOpen();
+    if (bytes.isEmpty) {
+      return;
+    }
+    final ptr = calloc<ffi.Uint8>(bytes.length);
+    try {
+      ptr.asTypedList(bytes.length).setAll(0, bytes);
+      bindings.ghostty_terminal_vt_write(_handle, ptr, bytes.length);
+    } finally {
+      calloc.free(ptr);
+    }
+  }
+
+  /// Writes text bytes into the terminal stream.
+  void write(String text, {Encoding encoding = utf8}) {
+    writeBytes(encoding.encode(text));
+  }
+
+  /// Performs a full terminal reset while preserving dimensions.
+  void reset() {
+    _ensureOpen();
+    bindings.ghostty_terminal_reset(_handle);
+  }
+
+  /// Resizes the terminal to the given cell dimensions.
+  void resize({required int cols, required int rows}) {
+    _ensureOpen();
+    final checkedCols = _checkPositiveUint16(cols, 'cols');
+    final checkedRows = _checkPositiveUint16(rows, 'rows');
+    final result = bindings.ghostty_terminal_resize(
+      _handle,
+      checkedCols,
+      checkedRows,
+    );
+    _checkResult(result, 'ghostty_terminal_resize');
+    _cols = checkedCols;
+    _rows = checkedRows;
+  }
+
+  /// Scrolls the visible viewport within the terminal scrollback.
+  void scrollViewport(VtTerminalScrollViewport behavior) {
+    _ensureOpen();
+    final behaviorPtr = calloc<bindings.GhosttyTerminalScrollViewport>();
+    try {
+      behaviorPtr.ref.tagAsInt = behavior._tag.value;
+      if (behavior._tag ==
+          bindings
+              .GhosttyTerminalScrollViewportTag
+              .GHOSTTY_SCROLL_VIEWPORT_DELTA) {
+        behaviorPtr.ref.value.delta = behavior.delta;
+      }
+      bindings.ghostty_terminal_scroll_viewport(_handle, behaviorPtr.ref);
+    } finally {
+      calloc.free(behaviorPtr);
+    }
+  }
+
+  /// Scrolls to the top of the terminal scrollback.
+  void scrollToTop() {
+    scrollViewport(const VtTerminalScrollViewport.top());
+  }
+
+  /// Scrolls back to the active bottom of the terminal.
+  void scrollToBottom() {
+    scrollViewport(const VtTerminalScrollViewport.bottom());
+  }
+
+  /// Scrolls by [delta] rows. Negative values move up.
+  void scrollBy(int delta) {
+    scrollViewport(VtTerminalScrollViewport.delta(delta));
+  }
+
+  /// Creates a formatter that reflects the terminal state on each call.
+  VtTerminalFormatter createFormatter([
+    VtFormatterTerminalOptions options = const VtFormatterTerminalOptions(),
+  ]) {
+    _ensureOpen();
+    final formatter = VtTerminalFormatter._(this, options);
+    _formatters.add(formatter);
+    return formatter;
+  }
+
+  /// Releases terminal resources.
+  void close() {
+    if (_closed) {
+      return;
+    }
+    for (final formatter in List<VtTerminalFormatter>.from(_formatters)) {
+      formatter.close();
+    }
+    bindings.ghostty_terminal_free(_handle);
+    _closed = true;
+  }
+}
+
+/// Reusable formatter for a [VtTerminal].
+final class VtTerminalFormatter {
+  VtTerminalFormatter._(VtTerminal terminal, VtFormatterTerminalOptions options)
+    : _terminal = terminal,
+      _handle = _newFormatter(terminal, options);
+
+  final VtTerminal _terminal;
+  final bindings.GhosttyFormatter _handle;
+  bool _closed = false;
+
+  static bindings.GhosttyFormatter _newFormatter(
+    VtTerminal terminal,
+    VtFormatterTerminalOptions options,
+  ) {
+    final out = calloc<bindings.GhosttyFormatter>();
+    final nativeOptions = calloc<bindings.GhosttyFormatterTerminalOptions>();
+    try {
+      final screen = options.extra.screen;
+      nativeOptions.ref
+        ..size = ffi.sizeOf<bindings.GhosttyFormatterTerminalOptions>()
+        ..emitAsInt = options.emit.value
+        ..unwrap = options.unwrap
+        ..trim = options.trim
+        ..extra.size = ffi.sizeOf<bindings.GhosttyFormatterTerminalExtra>()
+        ..extra.palette = options.extra.palette
+        ..extra.modes = options.extra.modes
+        ..extra.scrolling_region = options.extra.scrollingRegion
+        ..extra.tabstops = options.extra.tabstops
+        ..extra.pwd = options.extra.pwd
+        ..extra.keyboard = options.extra.keyboard
+        ..extra.screen.size = ffi.sizeOf<bindings.GhosttyFormatterScreenExtra>()
+        ..extra.screen.cursor = screen.cursor
+        ..extra.screen.style = screen.style
+        ..extra.screen.hyperlink = screen.hyperlink
+        ..extra.screen.protection = screen.protection
+        ..extra.screen.kitty_keyboard = screen.kittyKeyboard
+        ..extra.screen.charsets = screen.charsets;
+
+      final result = bindings.ghostty_formatter_terminal_new(
+        ffi.nullptr,
+        out,
+        terminal._handle,
+        nativeOptions.ref,
+      );
+      _checkResult(result, 'ghostty_formatter_terminal_new');
+      return out.value;
+    } finally {
+      calloc.free(nativeOptions);
+      calloc.free(out);
+    }
+  }
+
+  void _ensureOpen() {
+    if (_closed) {
+      throw StateError('VtTerminalFormatter is already closed.');
+    }
+  }
+
+  int _requiredSize() {
+    final outWritten = calloc<ffi.Size>();
+    try {
+      final result = bindings.ghostty_formatter_format_buf(
+        _handle,
+        ffi.nullptr,
+        0,
+        outWritten,
+      );
+      if (result == bindings.GhosttyResult.GHOSTTY_SUCCESS) {
+        return outWritten.value;
+      }
+      if (result != bindings.GhosttyResult.GHOSTTY_OUT_OF_SPACE) {
+        _checkResult(result, 'ghostty_formatter_format_buf(size_probe)');
+      }
+      return outWritten.value;
+    } finally {
+      calloc.free(outWritten);
+    }
+  }
+
+  /// Formats the terminal into a byte buffer.
+  Uint8List formatBytes() {
+    _ensureOpen();
+    _terminal._ensureOpen();
+
+    var required = _requiredSize();
+    if (required == 0) {
+      return Uint8List(0);
+    }
+
+    for (var attempt = 0; attempt < 2; attempt++) {
+      final buffer = calloc<ffi.Uint8>(required);
+      final outWritten = calloc<ffi.Size>();
+      try {
+        final result = bindings.ghostty_formatter_format_buf(
+          _handle,
+          buffer,
+          required,
+          outWritten,
+        );
+        if (result == bindings.GhosttyResult.GHOSTTY_SUCCESS) {
+          return Uint8List.fromList(buffer.asTypedList(outWritten.value));
+        }
+        if (result != bindings.GhosttyResult.GHOSTTY_OUT_OF_SPACE) {
+          _checkResult(result, 'ghostty_formatter_format_buf');
+        }
+        required = outWritten.value;
+        if (required == 0) {
+          return Uint8List(0);
+        }
+      } finally {
+        calloc.free(outWritten);
+        calloc.free(buffer);
+      }
+    }
+
+    throw StateError(
+      'VtTerminalFormatter output changed while formatting. Retry the call.',
+    );
+  }
+
+  /// Formats the terminal using `ghostty_formatter_format_alloc`.
+  ///
+  /// This path uses a Dart-owned allocator so the returned buffer can be
+  /// safely released from Dart after copying it into a [Uint8List].
+  Uint8List formatBytesAllocated() {
+    return formatBytesAllocatedWith(VtAllocator.dartMalloc);
+  }
+
+  /// Formats the terminal using `ghostty_formatter_format_alloc` and [allocator].
+  Uint8List formatBytesAllocatedWith(VtAllocator allocator) {
+    _ensureOpen();
+    _terminal._ensureOpen();
+
+    final outPtr = calloc<ffi.Pointer<ffi.Uint8>>();
+    final outLen = calloc<ffi.Size>();
+    try {
+      final result = bindings.ghostty_formatter_format_alloc(
+        _handle,
+        allocator.pointer,
+        outPtr,
+        outLen,
+      );
+      _checkResult(result, 'ghostty_formatter_format_alloc');
+
+      return allocator.copyBytesAndFree(outPtr.value, outLen.value);
+    } finally {
+      calloc.free(outPtr);
+      calloc.free(outLen);
+    }
+  }
+
+  /// Formats the terminal and decodes the bytes into a Dart string.
+  String formatText({Encoding encoding = utf8}) {
+    final bytes = formatBytes();
+    if (encoding == utf8) {
+      return utf8.decode(bytes, allowMalformed: true);
+    }
+    return encoding.decode(bytes);
+  }
+
+  /// Formats via [formatBytesAllocated] and decodes the result.
+  String formatTextAllocated({Encoding encoding = utf8}) {
+    return formatTextAllocatedWith(VtAllocator.dartMalloc, encoding: encoding);
+  }
+
+  /// Formats via [formatBytesAllocatedWith] and decodes the result.
+  String formatTextAllocatedWith(
+    VtAllocator allocator, {
+    Encoding encoding = utf8,
+  }) {
+    final bytes = formatBytesAllocatedWith(allocator);
+    if (encoding == utf8) {
+      return utf8.decode(bytes, allowMalformed: true);
+    }
+    return encoding.decode(bytes);
+  }
+
+  /// Releases formatter resources.
+  void close() {
+    if (_closed) {
+      return;
+    }
+    bindings.ghostty_formatter_free(_handle);
+    _terminal._detachFormatter(this);
+    _closed = true;
+  }
 }
 
 /// Streaming OSC (Operating System Command) parser.
@@ -865,6 +1500,19 @@ final class VtKeyEncoder {
     } finally {
       calloc.free(ptr);
     }
+  }
+
+  /// Copies key encoder options from a terminal instance.
+  ///
+  /// This mirrors terminal modes such as cursor-key application mode and
+  /// keyboard protocol settings onto the encoder.
+  void setOptionsFromTerminal(VtTerminal terminal) {
+    _ensureOpen();
+    terminal._ensureOpen();
+    bindings.ghostty_key_encoder_setopt_from_terminal(
+      _handle,
+      terminal._handle,
+    );
   }
 
   /// Encodes a key event into terminal bytes.

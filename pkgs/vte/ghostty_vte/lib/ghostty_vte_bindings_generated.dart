@@ -9,6 +9,262 @@
 // ignore_for_file: type=lint, unused_import
 import 'dart:ffi' as ffi;
 
+/// Create a new terminal instance.
+///
+/// @param allocator Pointer to allocator, or NULL to use the default allocator
+/// @param terminal Pointer to store the created terminal handle
+/// @param options Terminal initialization options
+/// @return GHOSTTY_SUCCESS on success, or an error code on failure
+///
+/// @ingroup terminal
+@ffi.Native<
+  ffi.Int Function(
+    ffi.Pointer<GhosttyAllocator>,
+    ffi.Pointer<GhosttyTerminal>,
+    GhosttyTerminalOptions,
+  )
+>(symbol: 'ghostty_terminal_new')
+external int _ghostty_terminal_new(
+  ffi.Pointer<GhosttyAllocator> allocator,
+  ffi.Pointer<GhosttyTerminal> terminal,
+  GhosttyTerminalOptions options,
+);
+
+GhosttyResult ghostty_terminal_new(
+  ffi.Pointer<GhosttyAllocator> allocator,
+  ffi.Pointer<GhosttyTerminal> terminal,
+  GhosttyTerminalOptions options,
+) => GhosttyResult.fromValue(
+  _ghostty_terminal_new(allocator, terminal, options),
+);
+
+/// Free a terminal instance.
+///
+/// Releases all resources associated with the terminal. After this call,
+/// the terminal handle becomes invalid and must not be used.
+///
+/// @param terminal The terminal handle to free (may be NULL)
+///
+/// @ingroup terminal
+@ffi.Native<ffi.Void Function(GhosttyTerminal)>()
+external void ghostty_terminal_free(GhosttyTerminal terminal);
+
+/// Perform a full reset of the terminal (RIS).
+///
+/// Resets all terminal state back to its initial configuration, including
+/// modes, scrollback, scrolling region, and screen contents. The terminal
+/// dimensions are preserved.
+///
+/// @param terminal The terminal handle (may be NULL, in which case this is a no-op)
+///
+/// @ingroup terminal
+@ffi.Native<ffi.Void Function(GhosttyTerminal)>()
+external void ghostty_terminal_reset(GhosttyTerminal terminal);
+
+/// Resize the terminal to the given dimensions.
+///
+/// Changes the number of columns and rows in the terminal. The primary
+/// screen will reflow content if wraparound mode is enabled; the alternate
+/// screen does not reflow. If the dimensions are unchanged, this is a no-op.
+///
+/// @param terminal The terminal handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param cols New width in cells (must be greater than zero)
+/// @param rows New height in cells (must be greater than zero)
+/// @return GHOSTTY_SUCCESS on success, or an error code on failure
+///
+/// @ingroup terminal
+@ffi.Native<ffi.Int Function(GhosttyTerminal, ffi.Uint16, ffi.Uint16)>(
+  symbol: 'ghostty_terminal_resize',
+)
+external int _ghostty_terminal_resize(
+  GhosttyTerminal terminal,
+  int cols,
+  int rows,
+);
+
+GhosttyResult ghostty_terminal_resize(
+  GhosttyTerminal terminal,
+  int cols,
+  int rows,
+) => GhosttyResult.fromValue(_ghostty_terminal_resize(terminal, cols, rows));
+
+/// Write VT-encoded data to the terminal for processing.
+///
+/// Feeds raw bytes through the terminal's VT stream parser, updating
+/// terminal state accordingly. Only read-only sequences are processed;
+/// sequences that require output (queries) are ignored.
+///
+/// In the future, a callback-based API will be added to allow handling
+/// of output or side effect sequences.
+///
+/// This never fails. Any erroneous input or errors in processing the
+/// input are logged internally but do not cause this function to fail
+/// because this input is assumed to be untrusted and from an external
+/// source; so the primary goal is to keep the terminal state consistent and
+/// not allow malformed input to corrupt or crash.
+///
+/// @param terminal The terminal handle
+/// @param data Pointer to the data to write
+/// @param len Length of the data in bytes
+///
+/// @ingroup terminal
+@ffi.Native<
+  ffi.Void Function(GhosttyTerminal, ffi.Pointer<ffi.Uint8>, ffi.Size)
+>()
+external void ghostty_terminal_vt_write(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Uint8> data,
+  int len,
+);
+
+/// Scroll the terminal viewport.
+///
+/// Scrolls the terminal's viewport according to the given behavior.
+/// When using GHOSTTY_SCROLL_VIEWPORT_DELTA, set the delta field in
+/// the value union to specify the number of rows to scroll (negative
+/// for up, positive for down). For other behaviors, the value is ignored.
+///
+/// @param terminal The terminal handle (may be NULL, in which case this is a no-op)
+/// @param behavior The scroll behavior as a tagged union
+///
+/// @ingroup terminal
+@ffi.Native<ffi.Void Function(GhosttyTerminal, GhosttyTerminalScrollViewport)>()
+external void ghostty_terminal_scroll_viewport(
+  GhosttyTerminal terminal,
+  GhosttyTerminalScrollViewport behavior,
+);
+
+/// Create a formatter for a terminal's active screen.
+///
+/// The terminal must outlive the formatter. The formatter stores a borrowed
+/// reference to the terminal and reads its current state on each format call.
+///
+/// @param allocator Pointer to allocator, or NULL to use the default allocator
+/// @param formatter Pointer to store the created formatter handle
+/// @param terminal The terminal to format (must not be NULL)
+/// @param options Formatting options
+/// @return GHOSTTY_SUCCESS on success, or an error code on failure
+///
+/// @ingroup formatter
+@ffi.Native<
+  ffi.Int Function(
+    ffi.Pointer<GhosttyAllocator>,
+    ffi.Pointer<GhosttyFormatter>,
+    GhosttyTerminal,
+    GhosttyFormatterTerminalOptions,
+  )
+>(symbol: 'ghostty_formatter_terminal_new')
+external int _ghostty_formatter_terminal_new(
+  ffi.Pointer<GhosttyAllocator> allocator,
+  ffi.Pointer<GhosttyFormatter> formatter,
+  GhosttyTerminal terminal,
+  GhosttyFormatterTerminalOptions options,
+);
+
+GhosttyResult ghostty_formatter_terminal_new(
+  ffi.Pointer<GhosttyAllocator> allocator,
+  ffi.Pointer<GhosttyFormatter> formatter,
+  GhosttyTerminal terminal,
+  GhosttyFormatterTerminalOptions options,
+) => GhosttyResult.fromValue(
+  _ghostty_formatter_terminal_new(allocator, formatter, terminal, options),
+);
+
+/// Run the formatter and produce output into the caller-provided buffer.
+///
+/// Each call formats the current terminal state. Pass NULL for buf to
+/// query the required buffer size without writing any output; in that case
+/// out_written receives the required size and the return value is
+/// GHOSTTY_OUT_OF_SPACE.
+///
+/// If the buffer is too small, returns GHOSTTY_OUT_OF_SPACE and sets
+/// out_written to the required size. The caller can then retry with a
+/// larger buffer.
+///
+/// @param formatter The formatter handle (must not be NULL)
+/// @param buf Pointer to the output buffer, or NULL to query size
+/// @param buf_len Length of the output buffer in bytes
+/// @param out_written Pointer to receive the number of bytes written,
+/// or the required size on failure
+/// @return GHOSTTY_SUCCESS on success, or an error code on failure
+///
+/// @ingroup formatter
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyFormatter,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_formatter_format_buf')
+external int _ghostty_formatter_format_buf(
+  GhosttyFormatter formatter,
+  ffi.Pointer<ffi.Uint8> buf,
+  int buf_len,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_formatter_format_buf(
+  GhosttyFormatter formatter,
+  ffi.Pointer<ffi.Uint8> buf,
+  int buf_len,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_formatter_format_buf(formatter, buf, buf_len, out_written),
+);
+
+/// Run the formatter and return an allocated buffer with the output.
+///
+/// Each call formats the current terminal state. The buffer is allocated
+/// using the provided allocator (or the default allocator if NULL).
+/// The caller is responsible for freeing the returned buffer. When using
+/// the default allocator (NULL), the buffer can be freed with `free()`.
+/// When using a custom allocator, the buffer must be freed using the
+/// same allocator.
+///
+/// @param formatter The formatter handle (must not be NULL)
+/// @param allocator Pointer to allocator, or NULL to use the default allocator
+/// @param out_ptr Pointer to receive the allocated buffer
+/// @param out_len Pointer to receive the length of the output in bytes
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_OUT_OF_MEMORY on allocation
+/// failure
+///
+/// @ingroup formatter
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyFormatter,
+    ffi.Pointer<GhosttyAllocator>,
+    ffi.Pointer<ffi.Pointer<ffi.Uint8>>,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_formatter_format_alloc')
+external int _ghostty_formatter_format_alloc(
+  GhosttyFormatter formatter,
+  ffi.Pointer<GhosttyAllocator> allocator,
+  ffi.Pointer<ffi.Pointer<ffi.Uint8>> out_ptr,
+  ffi.Pointer<ffi.Size> out_len,
+);
+
+GhosttyResult ghostty_formatter_format_alloc(
+  GhosttyFormatter formatter,
+  ffi.Pointer<GhosttyAllocator> allocator,
+  ffi.Pointer<ffi.Pointer<ffi.Uint8>> out_ptr,
+  ffi.Pointer<ffi.Size> out_len,
+) => GhosttyResult.fromValue(
+  _ghostty_formatter_format_alloc(formatter, allocator, out_ptr, out_len),
+);
+
+/// Free a formatter instance.
+///
+/// Releases all resources associated with the formatter. After this call,
+/// the formatter handle becomes invalid.
+///
+/// @param formatter The formatter handle to free (may be NULL)
+///
+/// @ingroup formatter
+@ffi.Native<ffi.Void Function(GhosttyFormatter)>()
+external void ghostty_formatter_free(GhosttyFormatter formatter);
+
 /// Create a new OSC parser instance.
 ///
 /// Creates a new OSC (Operating System Command) parser using the provided
@@ -626,6 +882,10 @@ external void ghostty_key_encoder_free(GhosttyKeyEncoder encoder);
 /// protocol selection (Kitty keyboard protocol flags), and platform-specific
 /// behaviors (macOS option-as-alt).
 ///
+/// If you are using a terminal instance, you can set the key encoding
+/// options based on the active terminal state (e.g. legacy vs Kitty mode
+/// and associated flags) with ghostty_key_encoder_setopt_from_terminal().
+///
 /// A null pointer value does nothing. It does not reset the value to the
 /// default. The setopt call will do nothing.
 ///
@@ -648,6 +908,27 @@ void ghostty_key_encoder_setopt(
   GhosttyKeyEncoderOption option,
   ffi.Pointer<ffi.Void> value,
 ) => _ghostty_key_encoder_setopt(encoder, option.value, value);
+
+/// Set encoder options from a terminal's current state.
+///
+/// Reads the terminal's current modes and flags and applies them to the
+/// encoder's options. This sets cursor key application mode, keypad mode,
+/// alt escape prefix, modifyOtherKeys state, and Kitty keyboard protocol
+/// flags from the terminal state.
+///
+/// Note that the `macos_option_as_alt` option cannot be determined from
+/// terminal state and is reset to `GHOSTTY_OPTION_AS_ALT_FALSE` by this
+/// call. Use ghostty_key_encoder_setopt() to set it afterward if needed.
+///
+/// @param encoder The encoder handle, must not be NULL
+/// @param terminal The terminal handle, must not be NULL
+///
+/// @ingroup key
+@ffi.Native<ffi.Void Function(GhosttyKeyEncoder, GhosttyTerminal)>()
+external void ghostty_key_encoder_setopt_from_terminal(
+  GhosttyKeyEncoder encoder,
+  GhosttyTerminal terminal,
+);
 
 /// Encode a key event into a terminal escape sequence.
 ///
@@ -764,7 +1045,10 @@ enum GhosttyResult {
   GHOSTTY_OUT_OF_MEMORY(-1),
 
   /// Operation failed due to invalid value
-  GHOSTTY_INVALID_VALUE(-2);
+  GHOSTTY_INVALID_VALUE(-2),
+
+  /// Operation failed because the provided buffer was too small
+  GHOSTTY_OUT_OF_SPACE(-3);
 
   final int value;
   const GhosttyResult(this.value);
@@ -773,6 +1057,7 @@ enum GhosttyResult {
     0 => GHOSTTY_SUCCESS,
     -1 => GHOSTTY_OUT_OF_MEMORY,
     -2 => GHOSTTY_INVALID_VALUE,
+    -3 => GHOSTTY_OUT_OF_SPACE,
     _ => throw ArgumentError('Unknown value for GhosttyResult: $value'),
   };
 }
@@ -950,6 +1235,212 @@ final class GhosttyAllocator extends ffi.Struct {
   external ffi.Pointer<GhosttyAllocatorVtable> vtable;
 }
 
+final class GhosttyTerminal$1 extends ffi.Opaque {}
+
+/// Opaque handle to a terminal instance.
+///
+/// @ingroup terminal
+typedef GhosttyTerminal = ffi.Pointer<GhosttyTerminal$1>;
+
+/// Terminal initialization options.
+///
+/// @ingroup terminal
+final class GhosttyTerminalOptions extends ffi.Struct {
+  /// Terminal width in cells. Must be greater than zero.
+  @ffi.Uint16()
+  external int cols;
+
+  /// Terminal height in cells. Must be greater than zero.
+  @ffi.Uint16()
+  external int rows;
+
+  /// Maximum number of lines to keep in scrollback history.
+  @ffi.Size()
+  external int max_scrollback;
+}
+
+/// Scroll viewport behavior tag.
+///
+/// @ingroup terminal
+enum GhosttyTerminalScrollViewportTag {
+  /// Scroll to the top of the scrollback.
+  GHOSTTY_SCROLL_VIEWPORT_TOP(0),
+
+  /// Scroll to the bottom (active area).
+  GHOSTTY_SCROLL_VIEWPORT_BOTTOM(1),
+
+  /// Scroll by a delta amount (up is negative).
+  GHOSTTY_SCROLL_VIEWPORT_DELTA(2);
+
+  final int value;
+  const GhosttyTerminalScrollViewportTag(this.value);
+
+  static GhosttyTerminalScrollViewportTag fromValue(int value) =>
+      switch (value) {
+        0 => GHOSTTY_SCROLL_VIEWPORT_TOP,
+        1 => GHOSTTY_SCROLL_VIEWPORT_BOTTOM,
+        2 => GHOSTTY_SCROLL_VIEWPORT_DELTA,
+        _ => throw ArgumentError(
+          'Unknown value for GhosttyTerminalScrollViewportTag: $value',
+        ),
+      };
+}
+
+/// Scroll viewport value.
+///
+/// @ingroup terminal
+final class GhosttyTerminalScrollViewportValue extends ffi.Union {
+  /// Scroll delta (only used with GHOSTTY_SCROLL_VIEWPORT_DELTA). Up is negative.
+  @ffi.IntPtr()
+  external int delta;
+
+  /// Padding for ABI compatibility. Do not use.
+  @ffi.Array.multi([2])
+  external ffi.Array<ffi.Uint64> _padding;
+}
+
+/// Tagged union for scroll viewport behavior.
+///
+/// @ingroup terminal
+final class GhosttyTerminalScrollViewport extends ffi.Struct {
+  @ffi.UnsignedInt()
+  external int tagAsInt;
+
+  GhosttyTerminalScrollViewportTag get tag =>
+      GhosttyTerminalScrollViewportTag.fromValue(tagAsInt);
+
+  external GhosttyTerminalScrollViewportValue value;
+}
+
+/// Output format.
+///
+/// @ingroup formatter
+enum GhosttyFormatterFormat {
+  /// Plain text (no escape sequences).
+  GHOSTTY_FORMATTER_FORMAT_PLAIN(0),
+
+  /// VT sequences preserving colors, styles, URLs, etc.
+  GHOSTTY_FORMATTER_FORMAT_VT(1),
+
+  /// HTML with inline styles.
+  GHOSTTY_FORMATTER_FORMAT_HTML(2);
+
+  final int value;
+  const GhosttyFormatterFormat(this.value);
+
+  static GhosttyFormatterFormat fromValue(int value) => switch (value) {
+    0 => GHOSTTY_FORMATTER_FORMAT_PLAIN,
+    1 => GHOSTTY_FORMATTER_FORMAT_VT,
+    2 => GHOSTTY_FORMATTER_FORMAT_HTML,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyFormatterFormat: $value',
+    ),
+  };
+}
+
+/// Extra screen state to include in styled output.
+///
+/// @ingroup formatter
+final class GhosttyFormatterScreenExtra extends ffi.Struct {
+  /// Size of this struct in bytes. Must be set to sizeof(GhosttyFormatterScreenExtra).
+  @ffi.Size()
+  external int size;
+
+  /// Emit cursor position using CUP (CSI H).
+  @ffi.Bool()
+  external bool cursor;
+
+  /// Emit current SGR style state based on the cursor's active style_id.
+  @ffi.Bool()
+  external bool style;
+
+  /// Emit current hyperlink state using OSC 8 sequences.
+  @ffi.Bool()
+  external bool hyperlink;
+
+  /// Emit character protection mode using DECSCA.
+  @ffi.Bool()
+  external bool protection;
+
+  /// Emit Kitty keyboard protocol state using CSI > u and CSI = sequences.
+  @ffi.Bool()
+  external bool kitty_keyboard;
+
+  /// Emit character set designations and invocations.
+  @ffi.Bool()
+  external bool charsets;
+}
+
+/// Extra terminal state to include in styled output.
+///
+/// @ingroup formatter
+final class GhosttyFormatterTerminalExtra extends ffi.Struct {
+  /// Size of this struct in bytes. Must be set to sizeof(GhosttyFormatterTerminalExtra).
+  @ffi.Size()
+  external int size;
+
+  /// Emit the palette using OSC 4 sequences.
+  @ffi.Bool()
+  external bool palette;
+
+  /// Emit terminal modes that differ from their defaults using CSI h/l.
+  @ffi.Bool()
+  external bool modes;
+
+  /// Emit scrolling region state using DECSTBM and DECSLRM sequences.
+  @ffi.Bool()
+  external bool scrolling_region;
+
+  /// Emit tabstop positions by clearing all tabs and setting each one.
+  @ffi.Bool()
+  external bool tabstops;
+
+  /// Emit the present working directory using OSC 7.
+  @ffi.Bool()
+  external bool pwd;
+
+  /// Emit keyboard modes such as ModifyOtherKeys.
+  @ffi.Bool()
+  external bool keyboard;
+
+  /// Screen-level extras.
+  external GhosttyFormatterScreenExtra screen;
+}
+
+final class GhosttyFormatter$1 extends ffi.Opaque {}
+
+/// Opaque handle to a formatter instance.
+///
+/// @ingroup formatter
+typedef GhosttyFormatter = ffi.Pointer<GhosttyFormatter$1>;
+
+/// Options for creating a terminal formatter.
+///
+/// @ingroup formatter
+final class GhosttyFormatterTerminalOptions extends ffi.Struct {
+  /// Size of this struct in bytes. Must be set to sizeof(GhosttyFormatterTerminalOptions).
+  @ffi.Size()
+  external int size;
+
+  /// Output format to emit.
+  @ffi.UnsignedInt()
+  external int emitAsInt;
+
+  GhosttyFormatterFormat get emit =>
+      GhosttyFormatterFormat.fromValue(emitAsInt);
+
+  /// Whether to unwrap soft-wrapped lines.
+  @ffi.Bool()
+  external bool unwrap;
+
+  /// Whether to trim trailing whitespace on non-blank lines.
+  @ffi.Bool()
+  external bool trim;
+
+  /// Extra terminal state to include in styled output.
+  external GhosttyFormatterTerminalExtra extra;
+}
+
 final class GhosttyOscParser$1 extends ffi.Opaque {}
 
 /// Opaque handle to an OSC parser instance.
@@ -1107,30 +1598,29 @@ enum GhosttySgrAttributeTag {
   GHOSTTY_SGR_ATTR_RESET_ITALIC(5),
   GHOSTTY_SGR_ATTR_FAINT(6),
   GHOSTTY_SGR_ATTR_UNDERLINE(7),
-  GHOSTTY_SGR_ATTR_RESET_UNDERLINE(8),
-  GHOSTTY_SGR_ATTR_UNDERLINE_COLOR(9),
-  GHOSTTY_SGR_ATTR_UNDERLINE_COLOR_256(10),
-  GHOSTTY_SGR_ATTR_RESET_UNDERLINE_COLOR(11),
-  GHOSTTY_SGR_ATTR_OVERLINE(12),
-  GHOSTTY_SGR_ATTR_RESET_OVERLINE(13),
-  GHOSTTY_SGR_ATTR_BLINK(14),
-  GHOSTTY_SGR_ATTR_RESET_BLINK(15),
-  GHOSTTY_SGR_ATTR_INVERSE(16),
-  GHOSTTY_SGR_ATTR_RESET_INVERSE(17),
-  GHOSTTY_SGR_ATTR_INVISIBLE(18),
-  GHOSTTY_SGR_ATTR_RESET_INVISIBLE(19),
-  GHOSTTY_SGR_ATTR_STRIKETHROUGH(20),
-  GHOSTTY_SGR_ATTR_RESET_STRIKETHROUGH(21),
-  GHOSTTY_SGR_ATTR_DIRECT_COLOR_FG(22),
-  GHOSTTY_SGR_ATTR_DIRECT_COLOR_BG(23),
-  GHOSTTY_SGR_ATTR_BG_8(24),
-  GHOSTTY_SGR_ATTR_FG_8(25),
-  GHOSTTY_SGR_ATTR_RESET_FG(26),
-  GHOSTTY_SGR_ATTR_RESET_BG(27),
-  GHOSTTY_SGR_ATTR_BRIGHT_BG_8(28),
-  GHOSTTY_SGR_ATTR_BRIGHT_FG_8(29),
-  GHOSTTY_SGR_ATTR_BG_256(30),
-  GHOSTTY_SGR_ATTR_FG_256(31);
+  GHOSTTY_SGR_ATTR_UNDERLINE_COLOR(8),
+  GHOSTTY_SGR_ATTR_UNDERLINE_COLOR_256(9),
+  GHOSTTY_SGR_ATTR_RESET_UNDERLINE_COLOR(10),
+  GHOSTTY_SGR_ATTR_OVERLINE(11),
+  GHOSTTY_SGR_ATTR_RESET_OVERLINE(12),
+  GHOSTTY_SGR_ATTR_BLINK(13),
+  GHOSTTY_SGR_ATTR_RESET_BLINK(14),
+  GHOSTTY_SGR_ATTR_INVERSE(15),
+  GHOSTTY_SGR_ATTR_RESET_INVERSE(16),
+  GHOSTTY_SGR_ATTR_INVISIBLE(17),
+  GHOSTTY_SGR_ATTR_RESET_INVISIBLE(18),
+  GHOSTTY_SGR_ATTR_STRIKETHROUGH(19),
+  GHOSTTY_SGR_ATTR_RESET_STRIKETHROUGH(20),
+  GHOSTTY_SGR_ATTR_DIRECT_COLOR_FG(21),
+  GHOSTTY_SGR_ATTR_DIRECT_COLOR_BG(22),
+  GHOSTTY_SGR_ATTR_BG_8(23),
+  GHOSTTY_SGR_ATTR_FG_8(24),
+  GHOSTTY_SGR_ATTR_RESET_FG(25),
+  GHOSTTY_SGR_ATTR_RESET_BG(26),
+  GHOSTTY_SGR_ATTR_BRIGHT_BG_8(27),
+  GHOSTTY_SGR_ATTR_BRIGHT_FG_8(28),
+  GHOSTTY_SGR_ATTR_BG_256(29),
+  GHOSTTY_SGR_ATTR_FG_256(30);
 
   final int value;
   const GhosttySgrAttributeTag(this.value);
@@ -1144,30 +1634,29 @@ enum GhosttySgrAttributeTag {
     5 => GHOSTTY_SGR_ATTR_RESET_ITALIC,
     6 => GHOSTTY_SGR_ATTR_FAINT,
     7 => GHOSTTY_SGR_ATTR_UNDERLINE,
-    8 => GHOSTTY_SGR_ATTR_RESET_UNDERLINE,
-    9 => GHOSTTY_SGR_ATTR_UNDERLINE_COLOR,
-    10 => GHOSTTY_SGR_ATTR_UNDERLINE_COLOR_256,
-    11 => GHOSTTY_SGR_ATTR_RESET_UNDERLINE_COLOR,
-    12 => GHOSTTY_SGR_ATTR_OVERLINE,
-    13 => GHOSTTY_SGR_ATTR_RESET_OVERLINE,
-    14 => GHOSTTY_SGR_ATTR_BLINK,
-    15 => GHOSTTY_SGR_ATTR_RESET_BLINK,
-    16 => GHOSTTY_SGR_ATTR_INVERSE,
-    17 => GHOSTTY_SGR_ATTR_RESET_INVERSE,
-    18 => GHOSTTY_SGR_ATTR_INVISIBLE,
-    19 => GHOSTTY_SGR_ATTR_RESET_INVISIBLE,
-    20 => GHOSTTY_SGR_ATTR_STRIKETHROUGH,
-    21 => GHOSTTY_SGR_ATTR_RESET_STRIKETHROUGH,
-    22 => GHOSTTY_SGR_ATTR_DIRECT_COLOR_FG,
-    23 => GHOSTTY_SGR_ATTR_DIRECT_COLOR_BG,
-    24 => GHOSTTY_SGR_ATTR_BG_8,
-    25 => GHOSTTY_SGR_ATTR_FG_8,
-    26 => GHOSTTY_SGR_ATTR_RESET_FG,
-    27 => GHOSTTY_SGR_ATTR_RESET_BG,
-    28 => GHOSTTY_SGR_ATTR_BRIGHT_BG_8,
-    29 => GHOSTTY_SGR_ATTR_BRIGHT_FG_8,
-    30 => GHOSTTY_SGR_ATTR_BG_256,
-    31 => GHOSTTY_SGR_ATTR_FG_256,
+    8 => GHOSTTY_SGR_ATTR_UNDERLINE_COLOR,
+    9 => GHOSTTY_SGR_ATTR_UNDERLINE_COLOR_256,
+    10 => GHOSTTY_SGR_ATTR_RESET_UNDERLINE_COLOR,
+    11 => GHOSTTY_SGR_ATTR_OVERLINE,
+    12 => GHOSTTY_SGR_ATTR_RESET_OVERLINE,
+    13 => GHOSTTY_SGR_ATTR_BLINK,
+    14 => GHOSTTY_SGR_ATTR_RESET_BLINK,
+    15 => GHOSTTY_SGR_ATTR_INVERSE,
+    16 => GHOSTTY_SGR_ATTR_RESET_INVERSE,
+    17 => GHOSTTY_SGR_ATTR_INVISIBLE,
+    18 => GHOSTTY_SGR_ATTR_RESET_INVISIBLE,
+    19 => GHOSTTY_SGR_ATTR_STRIKETHROUGH,
+    20 => GHOSTTY_SGR_ATTR_RESET_STRIKETHROUGH,
+    21 => GHOSTTY_SGR_ATTR_DIRECT_COLOR_FG,
+    22 => GHOSTTY_SGR_ATTR_DIRECT_COLOR_BG,
+    23 => GHOSTTY_SGR_ATTR_BG_8,
+    24 => GHOSTTY_SGR_ATTR_FG_8,
+    25 => GHOSTTY_SGR_ATTR_RESET_FG,
+    26 => GHOSTTY_SGR_ATTR_RESET_BG,
+    27 => GHOSTTY_SGR_ATTR_BRIGHT_BG_8,
+    28 => GHOSTTY_SGR_ATTR_BRIGHT_FG_8,
+    29 => GHOSTTY_SGR_ATTR_BG_256,
+    30 => GHOSTTY_SGR_ATTR_FG_256,
     _ => throw ArgumentError(
       'Unknown value for GhosttySgrAttributeTag: $value',
     ),
