@@ -101,7 +101,6 @@ events through the Ghostty key encoder.
 GhosttyTerminalView(
   controller: myController,
   autofocus: true,
-  renderer: GhosttyTerminalRendererMode.ultraviolet,
   backgroundColor: const Color(0xFF0A0F14),
   foregroundColor: const Color(0xFFE6EDF3),
   fontSize: 14,
@@ -121,7 +120,6 @@ GhosttyTerminalView(
 | `foregroundColor` | `Color` | `#E6EDF3` | Text color |
 | `fontSize` | `double` | `14` | Monospace font size |
 | `lineHeight` | `double` | `1.35` | Line height multiplier |
-| `renderer` | `GhosttyTerminalRendererMode` | `formatter` | Paint backend: Ghostty text/run painter or UV-style per-cell painter |
 | `fontFamily` | `String?` | `null` | Override the terminal font family |
 | `fontFamilyFallback` | `List<String>?` | `null` | Fallback fonts for terminal glyphs |
 | `fontPackage` | `String?` | `null` | Package that provides `fontFamily` |
@@ -132,10 +130,6 @@ GhosttyTerminalView(
 `GhosttyTerminalView` now paints grapheme clusters instead of UTF-16 code
 units and exposes font-metric controls so shells with Nerd Font glyphs or
 heavier prompt redraw behavior can be tuned without forking the widget.
-
-`GhosttyTerminalRendererMode.ultraviolet` keeps Ghostty as the parser and
-terminal-state source of truth, but swaps the paint path to a UV-style
-per-cell renderer over the same `GhosttyTerminalSnapshot`.
 
 ### GhosttyTerminalController
 

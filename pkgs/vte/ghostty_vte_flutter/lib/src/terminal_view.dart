@@ -1,13 +1,11 @@
 import 'dart:async';
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:ghostty_vte/ghostty_vte.dart';
-import 'package:ultraviolet/ultraviolet.dart' as uv;
 
 import 'keyboard_input.dart';
 import 'terminal_auto_scroll_session.dart';
@@ -17,18 +15,6 @@ import 'terminal_interactions.dart';
 import 'terminal_pointer_flow.dart';
 import 'terminal_snapshot.dart';
 import 'terminal_selection_session.dart';
-
-/// Paint backend used by [GhosttyTerminalView].
-///
-/// Both modes use the same Ghostty-driven controller and snapshot state. The
-/// difference is only how the visible terminal cells are painted.
-enum GhosttyTerminalRendererMode {
-  /// Flutter text/run painting over Ghostty formatter snapshots.
-  formatter,
-
-  /// UV-style per-cell painting over the same Ghostty formatter snapshots.
-  ultraviolet,
-}
 
 /// Painter-based terminal widget that renders lines from [GhosttyTerminalController].
 ///
@@ -51,7 +37,6 @@ class GhosttyTerminalView extends StatefulWidget {
     this.fontPackage,
     this.letterSpacing = 0,
     this.cellWidthScale = 1,
-    this.renderer = GhosttyTerminalRendererMode.formatter,
     this.padding = const EdgeInsets.all(12),
     this.palette = GhosttyTerminalPalette.xterm,
     this.cursorColor = const Color(0xFF9AD1C0),
@@ -80,7 +65,6 @@ class GhosttyTerminalView extends StatefulWidget {
   final String? fontPackage;
   final double letterSpacing;
   final double cellWidthScale;
-  final GhosttyTerminalRendererMode renderer;
   final EdgeInsets padding;
   final GhosttyTerminalPalette palette;
   final Color cursorColor;
@@ -763,64 +747,33 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
                 onPanCancel: _stopAutoScroll,
                 child: RepaintBoundary(
                   child: CustomPaint(
-                    painter: switch (widget.renderer) {
-                      GhosttyTerminalRendererMode.formatter =>
-                        _GhosttyTerminalPainter(
-                          revision: widget.controller.revision,
-                          title: widget.controller.title,
-                          snapshot: widget.controller.snapshot,
-                          running: widget.controller.isRunning,
-                          focused: _focusNode.hasFocus,
-                          cols: widget.controller.cols,
-                          rows: widget.controller.rows,
-                          scrollOffsetLines: _scrollOffsetLines,
-                          visibleStartLine: viewport.startLine,
-                          charWidth: metrics.charWidth,
-                          linePixels: metrics.linePixels,
-                          backgroundColor: widget.backgroundColor,
-                          foregroundColor: widget.foregroundColor,
-                          chromeColor: widget.chromeColor,
-                          cursorColor: widget.cursorColor,
-                          selectionColor: widget.selectionColor,
-                          hyperlinkColor: widget.hyperlinkColor,
-                          palette: widget.palette,
-                          fontSize: widget.fontSize,
-                          fontFamily: widget.fontFamily ?? 'monospace',
-                          fontFamilyFallback: widget.fontFamilyFallback,
-                          fontPackage: widget.fontPackage,
-                          letterSpacing: widget.letterSpacing,
-                          padding: widget.padding,
-                          selection: _selection,
-                        ),
-                      GhosttyTerminalRendererMode.ultraviolet =>
-                        _GhosttyUvSnapshotPainter(
-                          revision: widget.controller.revision,
-                          title: widget.controller.title,
-                          snapshot: widget.controller.snapshot,
-                          running: widget.controller.isRunning,
-                          focused: _focusNode.hasFocus,
-                          cols: widget.controller.cols,
-                          rows: widget.controller.rows,
-                          scrollOffsetLines: _scrollOffsetLines,
-                          visibleStartLine: viewport.startLine,
-                          charWidth: metrics.charWidth,
-                          linePixels: metrics.linePixels,
-                          backgroundColor: widget.backgroundColor,
-                          foregroundColor: widget.foregroundColor,
-                          chromeColor: widget.chromeColor,
-                          cursorColor: widget.cursorColor,
-                          selectionColor: widget.selectionColor,
-                          hyperlinkColor: widget.hyperlinkColor,
-                          palette: widget.palette,
-                          fontSize: widget.fontSize,
-                          fontFamily: widget.fontFamily ?? 'monospace',
-                          fontFamilyFallback: widget.fontFamilyFallback,
-                          fontPackage: widget.fontPackage,
-                          letterSpacing: widget.letterSpacing,
-                          padding: widget.padding,
-                          selection: _selection,
-                        ),
-                    },
+                    painter: _GhosttyTerminalPainter(
+                      revision: widget.controller.revision,
+                      title: widget.controller.title,
+                      snapshot: widget.controller.snapshot,
+                      running: widget.controller.isRunning,
+                      focused: _focusNode.hasFocus,
+                      cols: widget.controller.cols,
+                      rows: widget.controller.rows,
+                      scrollOffsetLines: _scrollOffsetLines,
+                      visibleStartLine: viewport.startLine,
+                      charWidth: metrics.charWidth,
+                      linePixels: metrics.linePixels,
+                      backgroundColor: widget.backgroundColor,
+                      foregroundColor: widget.foregroundColor,
+                      chromeColor: widget.chromeColor,
+                      cursorColor: widget.cursorColor,
+                      selectionColor: widget.selectionColor,
+                      hyperlinkColor: widget.hyperlinkColor,
+                      palette: widget.palette,
+                      fontSize: widget.fontSize,
+                      fontFamily: widget.fontFamily ?? 'monospace',
+                      fontFamilyFallback: widget.fontFamilyFallback,
+                      fontPackage: widget.fontPackage,
+                      letterSpacing: widget.letterSpacing,
+                      padding: widget.padding,
+                      selection: _selection,
+                    ),
                     child: const SizedBox.expand(),
                   ),
                 ),
@@ -830,381 +783,6 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
         );
       },
     );
-  }
-}
-
-class _GhosttyUvSnapshotPainter extends CustomPainter {
-  const _GhosttyUvSnapshotPainter({
-    required this.revision,
-    required this.title,
-    required this.snapshot,
-    required this.running,
-    required this.focused,
-    required this.cols,
-    required this.rows,
-    required this.scrollOffsetLines,
-    required this.visibleStartLine,
-    required this.charWidth,
-    required this.linePixels,
-    required this.backgroundColor,
-    required this.foregroundColor,
-    required this.chromeColor,
-    required this.cursorColor,
-    required this.selectionColor,
-    required this.hyperlinkColor,
-    required this.palette,
-    required this.fontSize,
-    required this.fontFamily,
-    required this.fontFamilyFallback,
-    required this.fontPackage,
-    required this.letterSpacing,
-    required this.padding,
-    required this.selection,
-  });
-
-  final int revision;
-  final String title;
-  final GhosttyTerminalSnapshot snapshot;
-  final bool running;
-  final bool focused;
-  final int cols;
-  final int rows;
-  final int scrollOffsetLines;
-  final int visibleStartLine;
-  final double charWidth;
-  final double linePixels;
-  final Color backgroundColor;
-  final Color foregroundColor;
-  final Color chromeColor;
-  final Color cursorColor;
-  final Color selectionColor;
-  final Color hyperlinkColor;
-  final GhosttyTerminalPalette palette;
-  final double fontSize;
-  final String fontFamily;
-  final List<String>? fontFamilyFallback;
-  final String? fontPackage;
-  final double letterSpacing;
-  final EdgeInsets padding;
-  final GhosttyTerminalSelection? selection;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final fullRect = Offset.zero & size;
-    canvas.drawRect(fullRect, Paint()..color = backgroundColor);
-
-    const headerHeight = 28.0;
-    final headerRect = Rect.fromLTWH(0, 0, size.width, headerHeight);
-    canvas.drawRect(headerRect, Paint()..color = chromeColor);
-
-    final dotColor = running
-        ? const Color(0xFF2BD576)
-        : const Color(0xFFD65C5C);
-    canvas.drawCircle(const Offset(12, 14), 4, Paint()..color = dotColor);
-
-    final titlePainter = TextPainter(
-      text: TextSpan(
-        text: title,
-        style: TextStyle(
-          color: foregroundColor.withValues(alpha: 0.95),
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-      maxLines: 1,
-      ellipsis: '...',
-    )..layout(maxWidth: size.width - 140);
-    titlePainter.paint(canvas, const Offset(22, 7));
-
-    final status =
-        '${cols}x$rows${scrollOffsetLines > 0 ? '  +$scrollOffsetLines' : ''}';
-    final statusPainter = TextPainter(
-      text: TextSpan(
-        text: status,
-        style: TextStyle(
-          color: foregroundColor.withValues(alpha: 0.68),
-          fontSize: 11,
-          fontWeight: FontWeight.w500,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-      maxLines: 1,
-    )..layout(maxWidth: 100);
-    statusPainter.paint(
-      canvas,
-      Offset(size.width - statusPainter.width - 12, 8),
-    );
-
-    final contentTop = headerHeight + padding.top;
-    final contentHeight = size.height - contentTop - padding.bottom;
-    if (contentHeight <= 0) {
-      return;
-    }
-
-    final maxVisible = math.max(1, (contentHeight / linePixels).floor());
-    final maxOffset = math.max(0, snapshot.lines.length - maxVisible);
-    final offset = scrollOffsetLines.clamp(0, maxOffset);
-    final end = math.max(0, snapshot.lines.length - offset);
-    final start = math.max(0, end - maxVisible);
-    final visible = snapshot.lines.sublist(start, end);
-    final contentRect = Rect.fromLTWH(
-      padding.left,
-      contentTop,
-      size.width - padding.horizontal,
-      contentHeight,
-    );
-
-    canvas.save();
-    canvas.clipRect(contentRect);
-    for (var visibleIndex = 0; visibleIndex < visible.length; visibleIndex++) {
-      final line = visible[visibleIndex];
-      final row = start + visibleIndex;
-      final y = contentTop + (visibleIndex * linePixels);
-      if (y > size.height) {
-        break;
-      }
-
-      var x = padding.left;
-      for (final run in line.runs) {
-        final uvStyle = _ghosttyUvStyleFromRun(run.style);
-        final link = _ghosttyUvLinkFromRun(run.style);
-        final graphemes = _splitTerminalCells(run.text).toList(growable: false);
-        final cellWidths = _measureTerminalCellWidths(run.text, run.cells);
-        for (var index = 0; index < graphemes.length; index++) {
-          final cell = uv.Cell(
-            content: graphemes[index],
-            style: uvStyle,
-            link: link,
-            width: cellWidths[index],
-          );
-          final rect = Rect.fromLTWH(
-            x,
-            y,
-            charWidth * math.max(1, cell.width),
-            linePixels,
-          );
-          _paintUvCell(
-            canvas,
-            rect: rect,
-            cell: cell,
-            style: run.style,
-            row: row,
-            fontSize: fontSize,
-          );
-          x += rect.width;
-        }
-      }
-    }
-
-    final cursor = snapshot.cursor;
-    if (cursor != null) {
-      final cursorLine = cursor.row - start;
-      if (cursorLine >= 0 && cursorLine < visible.length) {
-        final cursorRect = Rect.fromLTWH(
-          padding.left + (cursor.col * charWidth),
-          contentTop + (cursorLine * linePixels),
-          charWidth,
-          linePixels,
-        );
-        if (focused) {
-          canvas.drawRect(
-            cursorRect,
-            Paint()..color = cursorColor.withValues(alpha: 0.78),
-          );
-        }
-        canvas.drawRect(
-          cursorRect.deflate(0.5),
-          Paint()
-            ..color = cursorColor.withValues(alpha: focused ? 1 : 0.88)
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1,
-        );
-      }
-    }
-    canvas.restore();
-
-    if (focused) {
-      final focusPaint = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1
-        ..color = const Color(0xFF2A83FF);
-      canvas.drawRect(fullRect.deflate(0.5), focusPaint);
-    }
-  }
-
-  void _paintUvCell(
-    Canvas canvas, {
-    required Rect rect,
-    required uv.Cell cell,
-    required GhosttyTerminalStyle style,
-    required int row,
-    required double fontSize,
-  }) {
-    final startCol = ((rect.left - padding.left) / charWidth).round();
-    final endCol = startCol + math.max<int>(1, cell.width) - 1;
-
-    final cellStyle = cell.style;
-    final baseForeground = _resolveUvColor(
-      cellStyle.fg,
-      fallback: foregroundColor,
-    );
-    final baseBackground = cellStyle.bg == null
-        ? Colors.transparent
-        : _resolveUvColor(cellStyle.bg, fallback: backgroundColor);
-    var foreground = baseForeground;
-    var background = baseBackground;
-
-    if ((cellStyle.attrs & uv.Attr.reverse) != 0) {
-      foreground = baseBackground == Colors.transparent
-          ? backgroundColor
-          : baseBackground;
-      background = cellStyle.fg == null ? foregroundColor : baseForeground;
-    }
-
-    if ((cellStyle.attrs & uv.Attr.conceal) != 0) {
-      foreground = background == Colors.transparent
-          ? backgroundColor
-          : background;
-    }
-    if ((cellStyle.attrs & uv.Attr.faint) != 0) {
-      foreground = foreground.withValues(alpha: 0.72);
-    }
-    if (cell.link.url.isNotEmpty && cellStyle.fg == null) {
-      foreground = hyperlinkColor;
-    }
-
-    if (background.a > 0) {
-      canvas.drawRect(rect, Paint()..color = background);
-    }
-    if (_selectionIntersectsSpan(row, startCol, endCol)) {
-      canvas.drawRect(rect, Paint()..color = selectionColor);
-    }
-    if (cell.content.isEmpty || cell.content == ' ') {
-      return;
-    }
-
-    final paragraphStyle = ui.ParagraphStyle(
-      textDirection: TextDirection.ltr,
-      maxLines: 1,
-    );
-    final paragraphBuilder = ui.ParagraphBuilder(paragraphStyle)
-      ..pushStyle(
-        TextStyle(
-          color: foreground,
-          fontFamily: fontFamily,
-          fontFamilyFallback: fontFamilyFallback,
-          package: fontPackage,
-          fontSize: fontSize,
-          height: linePixels / fontSize,
-          letterSpacing: letterSpacing,
-          fontWeight: (cellStyle.attrs & uv.Attr.bold) != 0
-              ? FontWeight.w700
-              : FontWeight.w400,
-          fontStyle: (cellStyle.attrs & uv.Attr.italic) != 0
-              ? FontStyle.italic
-              : FontStyle.normal,
-          decoration: _uvTextDecoration(cell, style),
-          decorationStyle: _uvDecorationStyle(cellStyle.underline),
-          decorationColor: _resolveUvColor(
-            cellStyle.underlineColor,
-            fallback: foreground,
-          ),
-        ).getTextStyle(),
-      )
-      ..addText(cell.content);
-    final paragraph = paragraphBuilder.build()
-      ..layout(ui.ParagraphConstraints(width: rect.width));
-    final dy = rect.top + (linePixels - paragraph.height) / 2;
-    canvas.drawParagraph(paragraph, Offset(rect.left, dy));
-  }
-
-  bool _selectionIntersectsSpan(int row, int startCol, int endCol) {
-    final selection = this.selection;
-    if (selection == null) {
-      return false;
-    }
-    final normalized = selection.normalized;
-    if (row < normalized.start.row || row > normalized.end.row) {
-      return false;
-    }
-
-    final selectionStart = row == normalized.start.row
-        ? normalized.start.col
-        : 0;
-    final selectionEnd = row == normalized.end.row
-        ? normalized.end.col
-        : cols - 1;
-    return startCol <= selectionEnd && endCol >= selectionStart;
-  }
-
-  Color _resolveUvColor(uv.UvColor? color, {required Color fallback}) {
-    return switch (color) {
-      null => fallback,
-      uv.UvRgb c => Color.fromARGB(c.a, c.r, c.g, c.b),
-      uv.UvBasic16 c => palette.ansi[c.index + (c.bright ? 8 : 0)],
-      uv.UvIndexed256 c => palette.resolve(
-        GhosttyTerminalColor.palette(c.index),
-        fallback: fallback,
-      ),
-    };
-  }
-
-  TextDecoration _uvTextDecoration(uv.Cell cell, GhosttyTerminalStyle style) {
-    final decorations = <TextDecoration>[];
-    if (cell.style.underline != uv.UnderlineStyle.none ||
-        cell.link.url.isNotEmpty) {
-      decorations.add(TextDecoration.underline);
-    }
-    if ((cell.style.attrs & uv.Attr.strikethrough) != 0) {
-      decorations.add(TextDecoration.lineThrough);
-    }
-    if (style.overline) {
-      decorations.add(TextDecoration.overline);
-    }
-    return decorations.isEmpty
-        ? TextDecoration.none
-        : TextDecoration.combine(decorations);
-  }
-
-  TextDecorationStyle _uvDecorationStyle(uv.UnderlineStyle underline) {
-    return switch (underline) {
-      uv.UnderlineStyle.double => TextDecorationStyle.double,
-      uv.UnderlineStyle.curly => TextDecorationStyle.wavy,
-      uv.UnderlineStyle.dotted => TextDecorationStyle.dotted,
-      uv.UnderlineStyle.dashed => TextDecorationStyle.dashed,
-      _ => TextDecorationStyle.solid,
-    };
-  }
-
-  @override
-  bool shouldRepaint(covariant _GhosttyUvSnapshotPainter oldDelegate) {
-    return revision != oldDelegate.revision ||
-        title != oldDelegate.title ||
-        running != oldDelegate.running ||
-        focused != oldDelegate.focused ||
-        cols != oldDelegate.cols ||
-        rows != oldDelegate.rows ||
-        scrollOffsetLines != oldDelegate.scrollOffsetLines ||
-        visibleStartLine != oldDelegate.visibleStartLine ||
-        charWidth != oldDelegate.charWidth ||
-        linePixels != oldDelegate.linePixels ||
-        fontSize != oldDelegate.fontSize ||
-        fontFamily != oldDelegate.fontFamily ||
-        !listEquals(fontFamilyFallback, oldDelegate.fontFamilyFallback) ||
-        fontPackage != oldDelegate.fontPackage ||
-        letterSpacing != oldDelegate.letterSpacing ||
-        padding != oldDelegate.padding ||
-        backgroundColor != oldDelegate.backgroundColor ||
-        foregroundColor != oldDelegate.foregroundColor ||
-        chromeColor != oldDelegate.chromeColor ||
-        cursorColor != oldDelegate.cursorColor ||
-        selectionColor != oldDelegate.selectionColor ||
-        hyperlinkColor != oldDelegate.hyperlinkColor ||
-        palette != oldDelegate.palette ||
-        selection != oldDelegate.selection ||
-        !listEquals(snapshot.lines, oldDelegate.snapshot.lines) ||
-        snapshot.cursor != oldDelegate.snapshot.cursor;
   }
 }
 
@@ -1647,7 +1225,7 @@ Iterable<String> _splitTerminalCells(String text) sync* {
   if (text.isEmpty) {
     return;
   }
-  yield* uv.graphemes(text);
+  yield* text.characters;
 }
 
 List<int> _measureTerminalCellWidths(String text, int totalCells) {
@@ -1656,19 +1234,14 @@ List<int> _measureTerminalCellWidths(String text, int totalCells) {
     return const <int>[];
   }
 
-  final widths = graphemes.map(uv.stringWidth).toList(growable: false);
   if (totalCells <= 0) {
     return List<int>.filled(graphemes.length, 1, growable: false);
   }
 
+  final widths = List<int>.filled(graphemes.length, 1, growable: false);
   var delta = totalCells - widths.fold(0, (sum, value) => sum + value);
   if (delta > 0) {
-    final growOrder = <int>[
-      for (var i = 0; i < widths.length; i++)
-        if (uv.stringWidth(graphemes[i]) > 1) i,
-      for (var i = widths.length - 1; i >= 0; i--)
-        if (uv.stringWidth(graphemes[i]) <= 1) i,
-    ];
+    final growOrder = <int>[for (var i = 0; i < widths.length; i++) i];
     var cursor = 0;
     while (delta > 0 && growOrder.isNotEmpty) {
       final index = growOrder[cursor % growOrder.length];
@@ -1698,72 +1271,4 @@ List<int> _measureTerminalCellWidths(String text, int totalCells) {
   }
 
   return widths;
-}
-
-uv.UvStyle _ghosttyUvStyleFromRun(GhosttyTerminalStyle style) {
-  var attrs = 0;
-  if (style.bold) {
-    attrs |= uv.Attr.bold;
-  }
-  if (style.faint) {
-    attrs |= uv.Attr.faint;
-  }
-  if (style.italic) {
-    attrs |= uv.Attr.italic;
-  }
-  if (style.blink) {
-    attrs |= uv.Attr.blink;
-  }
-  if (style.inverse) {
-    attrs |= uv.Attr.reverse;
-  }
-  if (style.invisible) {
-    attrs |= uv.Attr.conceal;
-  }
-  if (style.strikethrough) {
-    attrs |= uv.Attr.strikethrough;
-  }
-
-  return uv.UvStyle(
-    fg: _ghosttyUvColor(style.foreground),
-    bg: _ghosttyUvColor(style.background),
-    underlineColor: _ghosttyUvColor(style.underlineColor),
-    underline: switch (style.underline) {
-      GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_DOUBLE =>
-        uv.UnderlineStyle.double,
-      GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_CURLY =>
-        uv.UnderlineStyle.curly,
-      GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_DOTTED =>
-        uv.UnderlineStyle.dotted,
-      GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_DASHED =>
-        uv.UnderlineStyle.dashed,
-      GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_SINGLE =>
-        uv.UnderlineStyle.single,
-      _ => uv.UnderlineStyle.none,
-    },
-    attrs: attrs,
-  );
-}
-
-uv.UvColor? _ghosttyUvColor(GhosttyTerminalColor? color) {
-  if (color == null) {
-    return null;
-  }
-  if (!color.isPalette) {
-    return uv.UvColor.rgb(color.red, color.green, color.blue);
-  }
-
-  final index = color.paletteIndex!;
-  if (index >= 0 && index < 16) {
-    return uv.UvColor.basic16(index % 8, bright: index >= 8);
-  }
-  return uv.UvColor.indexed256(index);
-}
-
-uv.Link _ghosttyUvLinkFromRun(GhosttyTerminalStyle style) {
-  final hyperlink = style.hyperlink;
-  if (hyperlink == null || hyperlink.isEmpty) {
-    return const uv.Link();
-  }
-  return uv.Link(url: hyperlink);
 }

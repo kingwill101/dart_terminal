@@ -24,8 +24,6 @@ void main() {
       Color? foregroundColor,
       double? fontSize,
       double? lineHeight,
-      GhosttyTerminalRendererMode renderer =
-          GhosttyTerminalRendererMode.formatter,
       GhosttyTerminalCopyOptions copyOptions =
           const GhosttyTerminalCopyOptions(),
       GhosttyTerminalWordBoundaryPolicy wordBoundaryPolicy =
@@ -49,7 +47,6 @@ void main() {
               foregroundColor: foregroundColor ?? const Color(0xFFE6EDF3),
               fontSize: fontSize ?? 14,
               lineHeight: lineHeight ?? 1.35,
-              renderer: renderer,
               copyOptions: copyOptions,
               wordBoundaryPolicy: wordBoundaryPolicy,
               padding: padding ?? const EdgeInsets.all(12),
@@ -81,16 +78,15 @@ void main() {
       expect(controller.plainText, 'hello\nsecond line');
     });
 
-    testWidgets('renders controller output with the UV paint backend', (
+    testWidgets('exposes native render-state data while the view renders', (
       tester,
     ) async {
       controller.appendDebugOutput('\u001b[31mhello\u001b[0m\r\nsecond line');
-      await tester.pumpWidget(
-        buildView(renderer: GhosttyTerminalRendererMode.ultraviolet),
-      );
+      await tester.pumpWidget(buildView());
       await tester.pump();
 
       expect(find.byType(GhosttyTerminalView), findsOneWidget);
+      expect(controller.renderSnapshot, isNotNull);
       expect(controller.snapshot.lines, isNotEmpty);
       expect(controller.snapshot.lines.first.text, contains('hello'));
     });

@@ -120,7 +120,6 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
   String _htmlSnapshot = '';
   bool _pasteSafe = true;
   double _cellWidthScale = 1;
-  GhosttyTerminalRendererMode _renderer = GhosttyTerminalRendererMode.formatter;
   VtOscCommand? _oscCommand;
   String? _oscError;
   List<VtSgrAttributeData> _sgrAttributes = <VtSgrAttributeData>[];
@@ -611,27 +610,6 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
                 ],
               ),
             ),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: <Widget>[
-                ChoiceChip(
-                  label: const Text('Ghostty Paint'),
-                  selected: _renderer == GhosttyTerminalRendererMode.formatter,
-                  onSelected: (_) => setState(() {
-                    _renderer = GhosttyTerminalRendererMode.formatter;
-                  }),
-                ),
-                ChoiceChip(
-                  label: const Text('UV Paint'),
-                  selected:
-                      _renderer == GhosttyTerminalRendererMode.ultraviolet,
-                  onSelected: (_) => setState(() {
-                    _renderer = GhosttyTerminalRendererMode.ultraviolet;
-                  }),
-                ),
-              ],
-            ),
           ],
         ),
         const SizedBox(height: 12),
@@ -662,7 +640,6 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
                     ? null
                     : _fontFamilyController.text.trim(),
                 cellWidthScale: _cellWidthScale,
-                renderer: _renderer,
                 padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
               ),
             ),

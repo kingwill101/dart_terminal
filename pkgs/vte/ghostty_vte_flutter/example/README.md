@@ -5,7 +5,6 @@ A full-featured Flutter app that showcases every major API from `ghostty_vte` an
 
 The terminal pane now includes:
 - shell profile selection (`Auto`, `Bash`, `Zsh`, `User Shell`)
-- renderer selection (`Ghostty Paint`, `UV Paint`)
 - terminal font family override
 - cell width scale tuning for prompt glyph alignment
 - Session tab launch diagnostics and `Copy Environment`

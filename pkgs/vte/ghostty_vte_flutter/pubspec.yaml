@@ -22,11 +22,11 @@ environment:
 resolution: workspace
 
 dependencies:
+  characters: ^1.4.1
   flutter:
     sdk: flutter
   ghostty_vte: ^0.0.3+1
   portable_pty: ^0.0.3+1
-  ultraviolet: ^0.1.1+1
   url_launcher: ^6.3.2
 
 dev_dependencies:
