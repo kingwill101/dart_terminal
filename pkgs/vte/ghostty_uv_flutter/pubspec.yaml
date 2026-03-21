@@ -1,0 +1,35 @@
+name: ghostty_uv_flutter
+description: >-
+  A native-first Flutter terminal widget package built on the shared
+  ghostty_vte_flutter PTY layer, Ghostty key encoding, and Ultraviolet
+  cell rendering.
+version: 0.0.1
+
+repository: https://github.com/kingwill101/dart_terminal/tree/master/pkgs/vte/ghostty_uv_flutter
+homepage: https://github.com/kingwill101/dart_terminal
+issue_tracker: https://github.com/kingwill101/dart_terminal/issues
+
+topics:
+  - terminal
+  - flutter
+  - pty
+  - ghostty
+  - ultraviolet
+
+environment:
+  sdk: ^3.10.4
+  flutter: ">=1.17.0"
+
+resolution: workspace
+
+dependencies:
+  flutter:
+    sdk: flutter
+  ghostty_vte_flutter: ^0.0.3+1
+  ghostty_vte: ^0.0.3+1
+  ultraviolet: ^0.1.1+1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0

@@ -5,10 +5,13 @@ environment:
   sdk: ^3.10.4
 
 workspace:
+  - examples/ghostty_pty_terminal_suite
   - pkgs/vte/ghostty_vte
   - pkgs/vte/ghostty_vte/example
   - pkgs/vte/ghostty_vte_flutter
   - pkgs/vte/ghostty_vte_flutter/example
+  - pkgs/vte/ghostty_uv_flutter
+  - pkgs/vte/ghostty_uv_flutter/example
   - pkgs/pty/portable_pty
   - pkgs/pty/portable_pty_flutter
   - pkgs/pty/portable_pty_flutter/example
