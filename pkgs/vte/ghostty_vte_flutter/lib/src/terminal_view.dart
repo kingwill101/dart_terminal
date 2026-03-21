@@ -893,8 +893,10 @@ class _GhosttyTerminalPainter extends CustomPainter {
     )..layout(maxWidth: size.width - 140);
     titlePainter.paint(canvas, const Offset(22, 7));
 
-    final status =
-        '${cols}x$rows${scrollOffsetLines > 0 ? '  +$scrollOffsetLines' : ''}';
+    final status = [
+      '${cols}x$rows${scrollOffsetLines > 0 ? '  +$scrollOffsetLines' : ''}',
+      _widgetModeLabel(renderer, renderSnapshot, scrollOffsetLines),
+    ].join('  •  ');
     final statusPainter = TextPainter(
       text: TextSpan(
         text: status,
@@ -906,7 +908,7 @@ class _GhosttyTerminalPainter extends CustomPainter {
       ),
       textDirection: TextDirection.ltr,
       maxLines: 1,
-    )..layout(maxWidth: 100);
+    )..layout(maxWidth: size.width - 24);
     statusPainter.paint(
       canvas,
       Offset(size.width - statusPainter.width - 12, 8),
@@ -1422,6 +1424,24 @@ bool _renderSnapshotEquals(
       a.foregroundColor == b.foregroundColor &&
       a.cursor == b.cursor &&
       listEquals(a.rowsData, b.rowsData);
+}
+
+String _widgetModeLabel(
+  GhosttyTerminalRendererMode mode,
+  GhosttyTerminalRenderSnapshot? renderSnapshot,
+  int scrollOffsetLines,
+) {
+  if (mode == GhosttyTerminalRendererMode.renderState) {
+    if (scrollOffsetLines > 0) {
+      return 'renderState (scrollback fallback)';
+    }
+    if (renderSnapshot == null || !renderSnapshot.hasViewportData) {
+      return 'renderState (fmt fallback)';
+    }
+  }
+  return mode == GhosttyTerminalRendererMode.formatter
+      ? 'formatter'
+      : 'renderState';
 }
 
 class _TerminalMetrics {
