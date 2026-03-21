@@ -92,7 +92,7 @@ final Map<LogicalKeyboardKey, String> _shiftedPrintableFallbacks =
       LogicalKeyboardKey.digit8: '*',
       LogicalKeyboardKey.digit9: '(',
       LogicalKeyboardKey.digit0: ')',
-      LogicalKeyboardKey.minus: '-',
+      LogicalKeyboardKey.minus: '_',
       LogicalKeyboardKey.underscore: '_',
       LogicalKeyboardKey.equal: '+',
       LogicalKeyboardKey.braceLeft: '{',

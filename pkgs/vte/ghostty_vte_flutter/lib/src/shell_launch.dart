@@ -109,6 +109,9 @@ List<GhosttyTerminalShellLaunch> ghosttyTerminalShellLaunches({
       environment: shellEnvironment,
       setupCommand: includeSetupCommands
           ? "PROMPT='%# '\nRPROMPT=\nunsetopt TRANSIENT_RPROMPT\n"
+                "stty erase '^?'\n"
+                "bindkey '^?' backward-delete-char\n"
+                "bindkey '^H' backward-delete-char\n"
           : null,
     );
   }

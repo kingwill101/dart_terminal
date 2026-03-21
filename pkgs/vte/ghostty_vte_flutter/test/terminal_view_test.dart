@@ -1,9 +1,63 @@
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostty_vte_flutter/ghostty_vte_flutter.dart';
+
+Future<ui.Image> _pumpAndCapture(WidgetTester tester, Widget widget) async {
+  await tester.pumpWidget(widget);
+  await tester.pumpAndSettle();
+
+  final boundary = tester
+      .widgetList<RepaintBoundary>(find.byType(RepaintBoundary))
+      .singleWhere((_) => true);
+  final renderObject = tester.renderObject<RenderRepaintBoundary>(
+    find.byWidget(boundary),
+  );
+  return renderObject.toImage(pixelRatio: 1.0);
+}
+
+Future<Color> _readPixel(ui.Image image, int x, int y) async {
+  final byteData = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+  if (byteData == null) {
+    return const Color(0x00000000);
+  }
+
+  final data = byteData.buffer.asUint8List();
+  final index = ((y * image.width + x) * 4);
+  return Color.fromARGB(
+    data[index + 3],
+    data[index],
+    data[index + 1],
+    data[index + 2],
+  );
+}
+
+Offset _contentCellCenter({
+  required double charWidth,
+  required double linePixels,
+}) {
+  const headerHeight = 28.0;
+  const padding = 12.0;
+  return Offset(
+    padding + charWidth / 2,
+    headerHeight + padding + (linePixels / 2),
+  );
+}
+
+double _measureCharWidth(double fontSize) {
+  final painter = TextPainter(
+    text: const TextSpan(
+      text: 'W',
+      style: TextStyle(fontFamily: 'monospace'),
+    ),
+    textDirection: TextDirection.ltr,
+  )..layout();
+  return painter.width;
+}
 
 void main() {
   group('GhosttyTerminalView', () {
@@ -24,6 +78,8 @@ void main() {
       Color? foregroundColor,
       double? fontSize,
       double? lineHeight,
+      GhosttyTerminalRendererMode renderer =
+          GhosttyTerminalRendererMode.formatter,
       GhosttyTerminalCopyOptions copyOptions =
           const GhosttyTerminalCopyOptions(),
       GhosttyTerminalWordBoundaryPolicy wordBoundaryPolicy =
@@ -47,6 +103,7 @@ void main() {
               foregroundColor: foregroundColor ?? const Color(0xFFE6EDF3),
               fontSize: fontSize ?? 14,
               lineHeight: lineHeight ?? 1.35,
+              renderer: renderer,
               copyOptions: copyOptions,
               wordBoundaryPolicy: wordBoundaryPolicy,
               padding: padding ?? const EdgeInsets.all(12),
@@ -82,7 +139,9 @@ void main() {
       tester,
     ) async {
       controller.appendDebugOutput('\u001b[31mhello\u001b[0m\r\nsecond line');
-      await tester.pumpWidget(buildView());
+      await tester.pumpWidget(
+        buildView(renderer: GhosttyTerminalRendererMode.renderState),
+      );
       await tester.pump();
 
       expect(find.byType(GhosttyTerminalView), findsOneWidget);
@@ -90,6 +149,40 @@ void main() {
       expect(controller.snapshot.lines, isNotEmpty);
       expect(controller.snapshot.lines.first.text, contains('hello'));
     });
+
+    testWidgets(
+      'keeps painted color output consistent across formatter and renderState',
+      (tester) async {
+        controller.appendDebugOutput('\x1b[31;1mX\x1b[0m');
+
+        final formatterImage = await _pumpAndCapture(tester, buildView());
+        final renderImage = await _pumpAndCapture(
+          tester,
+          buildView(renderer: GhosttyTerminalRendererMode.renderState),
+        );
+
+        final charWidth = _measureCharWidth(14);
+        final linePixels = 14 * 1.35;
+        final sample = _contentCellCenter(
+          charWidth: charWidth,
+          linePixels: linePixels,
+        );
+        final formatterColor = await _readPixel(
+          formatterImage,
+          sample.dx.toInt(),
+          sample.dy.toInt(),
+        );
+        final renderColor = await _readPixel(
+          renderImage,
+          sample.dx.toInt(),
+          sample.dy.toInt(),
+        );
+
+        expect(formatterColor, isNot(const Color(0x00000000)));
+        expect(renderColor, isNot(const Color(0x00000000)));
+        expect(renderColor, formatterColor);
+      },
+    );
 
     testWidgets('updates when controller notifies', (tester) async {
       await tester.pumpWidget(buildView());
@@ -419,12 +512,10 @@ void main() {
       await tester.sendKeyEvent(
         LogicalKeyboardKey.minus,
         physicalKey: PhysicalKeyboardKey.minus,
-        character: '_',
       );
       await tester.sendKeyEvent(
         LogicalKeyboardKey.equal,
         physicalKey: PhysicalKeyboardKey.equal,
-        character: '+',
       );
       await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
       await tester.pump();
