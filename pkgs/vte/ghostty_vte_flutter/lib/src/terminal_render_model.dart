@@ -112,6 +112,9 @@ final class GhosttyTerminalResolvedStyle {
     if (style.faint) {
       foreground = foreground.withValues(alpha: 0.72);
     }
+    if (foreground == transparent) {
+      foreground = defaultForeground;
+    }
 
     return GhosttyTerminalResolvedStyle(
       foreground: foreground,
