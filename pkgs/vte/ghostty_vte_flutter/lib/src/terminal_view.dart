@@ -978,15 +978,21 @@ class _GhosttyTerminalPainter extends CustomPainter {
       }
 
       final row = start + visibleIndex;
+      final resolvedStyles = line.runs
+          .map(
+            (run) => _ResolvedTerminalStyle.fromRun(
+              run.style,
+              palette: palette,
+              defaultForeground: foregroundColor,
+              defaultBackground: backgroundColor,
+              hyperlinkColor: hyperlinkColor,
+            ),
+          )
+          .toList(growable: false);
       var x = padding.left;
-      for (final run in line.runs) {
-        final style = _ResolvedTerminalStyle.fromRun(
-          run.style,
-          palette: palette,
-          defaultForeground: foregroundColor,
-          defaultBackground: backgroundColor,
-          hyperlinkColor: hyperlinkColor,
-        );
+      for (var runIndex = 0; runIndex < line.runs.length; runIndex++) {
+        final run = line.runs[runIndex];
+        final style = resolvedStyles[runIndex];
         final width = run.cells * charWidth;
         if (style.background.a > 0) {
           canvas.drawRect(
@@ -1000,14 +1006,9 @@ class _GhosttyTerminalPainter extends CustomPainter {
       _paintSelection(canvas, line: line, row: row, y: y);
 
       x = padding.left;
-      for (final run in line.runs) {
-        final style = _ResolvedTerminalStyle.fromRun(
-          run.style,
-          palette: palette,
-          defaultForeground: foregroundColor,
-          defaultBackground: backgroundColor,
-          hyperlinkColor: hyperlinkColor,
-        );
+      for (var runIndex = 0; runIndex < line.runs.length; runIndex++) {
+        final run = line.runs[runIndex];
+        final style = resolvedStyles[runIndex];
         final textStyle = style.toTextStyle(
           fontSize: fontSize,
           lineHeight: linePixels / fontSize,
@@ -1408,33 +1409,12 @@ class _GhosttyTerminalPainter extends CustomPainter {
     required Color defaultBackground,
     Color? metadataColor,
   }) {
-    const transparent = Color(0x00000000);
-
-    var foreground = style.foreground;
-    var background = metadataColor == null || style.hasExplicitBackground
-        ? style.background
-        : metadataColor;
-    if (style.inverse) {
-      final swappedForeground = background;
-      background = style.hasExplicitForeground
-          ? foreground
-          : (foreground == transparent ? defaultForeground : foreground);
-      foreground = style.hasExplicitBackground
-          ? swappedForeground
-          : (swappedForeground == transparent
-                ? defaultBackground
-                : swappedForeground);
-    }
-    if (style.invisible) {
-      foreground = background == transparent ? defaultBackground : background;
-    }
-    if (style.faint) {
-      foreground = foreground.withValues(alpha: 0.72);
-    }
-    if (foreground == transparent) {
-      foreground = defaultForeground;
-    }
-    return (foreground: foreground, background: background);
+    return GhosttyTerminalResolvedStyle.resolveNativeStyleColors(
+      style: style,
+      defaultForeground: defaultForeground,
+      defaultBackground: defaultBackground,
+      metadataColor: metadataColor,
+    );
   }
 
   Color _resolvedNativeBackground({
@@ -1663,67 +1643,38 @@ final class _ResolvedTerminalStyle {
     required Color defaultBackground,
     required Color hyperlinkColor,
   }) {
-    const transparent = Color(0x00000000);
-    final hasExplicitForeground = style.foreground != null;
-    final hasExplicitBackground = style.background != null;
-    final hasExplicitUnderlineColor = style.underlineColor != null;
-    var foreground = hasExplicitForeground
-        ? palette.resolve(style.foreground, fallback: defaultForeground)
-        : transparent;
-    var background = hasExplicitBackground
-        ? palette.resolve(style.background, fallback: defaultBackground)
-        : transparent;
+    final resolved = GhosttyTerminalResolvedStyle.fromFormattedStyle(
+      style: style,
+      palette: palette.ansi,
+      defaultForeground: defaultForeground,
+      defaultBackground: defaultBackground,
+    );
+    final hasHyperlink = style.hyperlink != null;
+    final textForeground = hasHyperlink && !resolved.hasExplicitForeground
+        ? hyperlinkColor
+        : resolved.foreground;
+    final decorationColor = resolved.hasExplicitUnderlineColor
+        ? resolved.underlineColor
+        : textForeground;
 
-    if (style.inverse) {
-      final swappedForeground = background;
-      background = hasExplicitForeground
-          ? foreground
-          : (foreground == transparent ? defaultForeground : foreground);
-      foreground = hasExplicitBackground
-          ? swappedForeground
-          : (swappedForeground == transparent
-                ? defaultBackground
-                : swappedForeground);
-    }
-
-    if (style.invisible) {
-      foreground = background == transparent ? defaultBackground : background;
-    }
-    if (style.faint) {
-      foreground = foreground.withValues(alpha: 0.72);
-    }
-    if (style.hyperlink != null && !hasExplicitForeground) {
-      foreground = hyperlinkColor;
-    }
-    if (foreground == transparent) {
-      foreground = defaultForeground;
-    }
-
-    final decorations = <TextDecoration>[];
-    final underline = style.underline;
-    if (underline != null &&
-        underline != GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_NONE) {
-      decorations.add(TextDecoration.underline);
-    }
-    if (style.hyperlink != null &&
-        (underline == null ||
-            underline == GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_NONE)) {
-      decorations.add(TextDecoration.underline);
-    }
-    if (style.overline) {
-      decorations.add(TextDecoration.overline);
-    }
-    if (style.strikethrough) {
-      decorations.add(TextDecoration.lineThrough);
-    }
+    final decoration = <TextDecoration>[
+      if (resolved.underline != GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_NONE)
+        TextDecoration.underline,
+      if (hasHyperlink &&
+          (resolved.underline ==
+              GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_NONE))
+        TextDecoration.underline,
+      if (resolved.overline) TextDecoration.overline,
+      if (resolved.strikethrough) TextDecoration.lineThrough,
+    ];
 
     return _ResolvedTerminalStyle(
-      foreground: foreground,
-      background: background,
-      decoration: decorations.isEmpty
+      foreground: textForeground,
+      background: resolved.background,
+      decoration: decoration.isEmpty
           ? TextDecoration.none
-          : TextDecoration.combine(decorations),
-      decorationStyle: switch (underline) {
+          : TextDecoration.combine(decoration),
+      decorationStyle: switch (resolved.underline) {
         GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_DOUBLE =>
           TextDecorationStyle.double,
         GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_CURLY =>
@@ -1734,12 +1685,9 @@ final class _ResolvedTerminalStyle {
           TextDecorationStyle.dashed,
         _ => TextDecorationStyle.solid,
       },
-      decorationColor: palette.resolve(
-        style.underlineColor,
-        fallback: hasExplicitUnderlineColor ? defaultForeground : foreground,
-      ),
-      fontWeight: style.bold ? FontWeight.w700 : FontWeight.w400,
-      fontStyle: style.italic ? FontStyle.italic : FontStyle.normal,
+      decorationColor: decorationColor,
+      fontWeight: resolved.bold ? FontWeight.w700 : FontWeight.w400,
+      fontStyle: resolved.italic ? FontStyle.italic : FontStyle.normal,
     );
   }
 
