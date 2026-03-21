@@ -106,6 +106,7 @@ final Map<LogicalKeyboardKey, String> _shiftedPrintableFallbacks =
       LogicalKeyboardKey.comma: '<',
       LogicalKeyboardKey.period: '>',
       LogicalKeyboardKey.slash: '?',
+      LogicalKeyboardKey.numpadAdd: '+',
     };
 
 final Map<PhysicalKeyboardKey, String> _shiftedPhysicalPrintableFallbacks =
@@ -131,6 +132,7 @@ final Map<PhysicalKeyboardKey, String> _shiftedPhysicalPrintableFallbacks =
       PhysicalKeyboardKey.comma: '<',
       PhysicalKeyboardKey.period: '>',
       PhysicalKeyboardKey.slash: '?',
+      PhysicalKeyboardKey.numpadAdd: '+',
     };
 
 /// Resolves a Flutter logical key to a Ghostty key enum when it should be

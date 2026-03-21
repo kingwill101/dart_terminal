@@ -62,6 +62,22 @@ void main() {
     },
   );
 
+  test(
+    'printable helper infers shifted numpad add without character metadata',
+    () {
+      final text = ghosttyTerminalPrintableText(
+        const KeyDownEvent(
+          physicalKey: PhysicalKeyboardKey.numpadAdd,
+          logicalKey: LogicalKeyboardKey.numpadAdd,
+          timeStamp: Duration.zero,
+        ),
+        modifiers: const GhosttyTerminalModifierState(shiftPressed: true),
+      );
+
+      expect(text, '+');
+    },
+  );
+
   test('printable helper respects direct printable logical labels', () {
     final text = ghosttyTerminalPrintableText(
       const KeyDownEvent(
