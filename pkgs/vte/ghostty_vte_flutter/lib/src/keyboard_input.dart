@@ -109,6 +109,15 @@ final Map<LogicalKeyboardKey, String> _shiftedPrintableFallbacks =
       LogicalKeyboardKey.numpadAdd: '+',
     };
 
+final Map<LogicalKeyboardKey, String> _printableFallbacks =
+    <LogicalKeyboardKey, String>{
+      LogicalKeyboardKey.numpadAdd: '+',
+      LogicalKeyboardKey.numpadSubtract: '-',
+      LogicalKeyboardKey.numpadMultiply: '*',
+      LogicalKeyboardKey.numpadDivide: '/',
+      LogicalKeyboardKey.numpadDecimal: '.',
+    };
+
 final Map<PhysicalKeyboardKey, String> _shiftedPhysicalPrintableFallbacks =
     <PhysicalKeyboardKey, String>{
       PhysicalKeyboardKey.digit1: '!',
@@ -133,6 +142,15 @@ final Map<PhysicalKeyboardKey, String> _shiftedPhysicalPrintableFallbacks =
       PhysicalKeyboardKey.period: '>',
       PhysicalKeyboardKey.slash: '?',
       PhysicalKeyboardKey.numpadAdd: '+',
+    };
+
+final Map<PhysicalKeyboardKey, String> _printablePhysicalFallbacks =
+    <PhysicalKeyboardKey, String>{
+      PhysicalKeyboardKey.numpadAdd: '+',
+      PhysicalKeyboardKey.numpadSubtract: '-',
+      PhysicalKeyboardKey.numpadMultiply: '*',
+      PhysicalKeyboardKey.numpadDivide: '/',
+      PhysicalKeyboardKey.numpadDecimal: '.',
     };
 
 /// Resolves a Flutter logical key to a Ghostty key enum when it should be
@@ -224,6 +242,12 @@ String ghosttyTerminalPrintableText(
   }
   if (modifiers.blocksPrintableText) {
     return '';
+  }
+  final fallback =
+      _printablePhysicalFallbacks[event.physicalKey] ??
+      _printableFallbacks[event.logicalKey];
+  if (fallback != null) {
+    return fallback;
   }
   if (modifiers.shiftPressed) {
     final shifted =

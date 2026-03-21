@@ -78,6 +78,38 @@ void main() {
     },
   );
 
+  test(
+    'printable helper infers unshifted numpad add without character metadata',
+    () {
+      final text = ghosttyTerminalPrintableText(
+        const KeyDownEvent(
+          physicalKey: PhysicalKeyboardKey.numpadAdd,
+          logicalKey: LogicalKeyboardKey.numpadAdd,
+          timeStamp: Duration.zero,
+        ),
+        modifiers: const GhosttyTerminalModifierState(),
+      );
+
+      expect(text, '+');
+    },
+  );
+
+  test(
+    'printable helper infers unshifted numpad subtract without character metadata',
+    () {
+      final text = ghosttyTerminalPrintableText(
+        const KeyDownEvent(
+          physicalKey: PhysicalKeyboardKey.numpadSubtract,
+          logicalKey: LogicalKeyboardKey.numpadSubtract,
+          timeStamp: Duration.zero,
+        ),
+        modifiers: const GhosttyTerminalModifierState(),
+      );
+
+      expect(text, '-');
+    },
+  );
+
   test('printable helper respects direct printable logical labels', () {
     final text = ghosttyTerminalPrintableText(
       const KeyDownEvent(
