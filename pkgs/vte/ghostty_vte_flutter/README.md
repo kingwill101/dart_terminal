@@ -101,10 +101,13 @@ events through the Ghostty key encoder.
 GhosttyTerminalView(
   controller: myController,
   autofocus: true,
+  renderer: GhosttyTerminalRendererMode.ultraviolet,
   backgroundColor: const Color(0xFF0A0F14),
   foregroundColor: const Color(0xFFE6EDF3),
   fontSize: 14,
   lineHeight: 1.35,
+  fontFamily: 'JetBrainsMono Nerd Font',
+  cellWidthScale: 1.0,
   padding: const EdgeInsets.all(12),
 )
 ```
@@ -118,14 +121,28 @@ GhosttyTerminalView(
 | `foregroundColor` | `Color` | `#E6EDF3` | Text color |
 | `fontSize` | `double` | `14` | Monospace font size |
 | `lineHeight` | `double` | `1.35` | Line height multiplier |
+| `renderer` | `GhosttyTerminalRendererMode` | `formatter` | Paint backend: Ghostty text/run painter or UV-style per-cell painter |
+| `fontFamily` | `String?` | `null` | Override the terminal font family |
+| `fontFamilyFallback` | `List<String>?` | `null` | Fallback fonts for terminal glyphs |
+| `fontPackage` | `String?` | `null` | Package that provides `fontFamily` |
+| `letterSpacing` | `double` | `0` | Additional character spacing |
+| `cellWidthScale` | `double` | `1` | Manual terminal cell width tuning for prompt glyph alignment |
 | `padding` | `EdgeInsets` | `all(12)` | Content padding |
+
+`GhosttyTerminalView` now paints grapheme clusters instead of UTF-16 code
+units and exposes font-metric controls so shells with Nerd Font glyphs or
+heavier prompt redraw behavior can be tuned without forking the widget.
+
+`GhosttyTerminalRendererMode.ultraviolet` keeps Ghostty as the parser and
+terminal-state source of truth, but swaps the paint path to a UV-style
+per-cell renderer over the same `GhosttyTerminalSnapshot`.
 
 ### GhosttyTerminalController
 
 A `ChangeNotifier` managing a terminal session.
 
-- **Native:** spawns a real shell subprocess via `script` (for PTY behavior)
-  with fallback to `Process.start`.
+- **Native:** prefers a shared PTY session through `GhosttyTerminalPtySession`
+  with fallback to `Process.start` when PTY startup is disabled or fails.
 - **Web:** same API surface — feed output through `appendDebugOutput()` and
   read input via `write()` / `sendKey()` to connect a remote backend.
 
@@ -135,7 +152,12 @@ final controller = GhosttyTerminalController(
   defaultShell: '/bin/bash',
 );
 
-await controller.start();
+await controller.start(
+  environment: ghosttyTerminalShellEnvironment(
+    platformEnvironment: ghosttyTerminalPlatformEnvironment(),
+    overrides: const {'TERM': 'xterm-256color'},
+  ),
+);
 controller.write('ls -la\n', sanitizePaste: true);
 
 controller.sendKey(
@@ -155,7 +177,10 @@ controller.dispose();
 
 | Property / Method | Description |
 |-------------------|-------------|
-| `start({shell, arguments})` | Start a shell subprocess |
+| `start({shell, arguments, environment})` | Start a shell subprocess |
+| `startLaunch(launch)` | Start a resolved shared shell launch plan |
+| `restartLaunch(launch)` | Restart using a resolved launch plan |
+| `startShellProfile(...)` | Start a shared shell profile such as `cleanBash` or `cleanZsh` |
 | `stop()` | Kill the subprocess |
 | `write(text, {sanitizePaste})` | Write text to stdin |
 | `writeBytes(bytes)` | Write raw bytes to stdin |
@@ -164,6 +189,30 @@ controller.dispose();
 | `title` | Current terminal title (from OSC 0/2) |
 | `lines` | Buffered output lines |
 | `isRunning` | Whether the subprocess is active |
+| `activeShellLaunch` | Last resolved launch metadata, including shell args and normalized env |
+| `ptySession` | Active shared PTY session when the native PTY backend is in use |
+
+`ghosttyTerminalShellEnvironment(...)` is the shared helper for building a
+usable native shell environment. It preserves the caller's base environment,
+sets `TERM`, fills `HOME`-derived `XDG_*` paths, and ensures a UTF-8 locale
+when the input environment omitted one.
+
+`ghosttyTerminalShellLaunches(...)` is the shared preset resolver. It returns
+normalized launch plans for `GhosttyTerminalShellProfile.auto`,
+`GhosttyTerminalShellProfile.cleanBash`,
+`GhosttyTerminalShellProfile.cleanZsh`, and
+`GhosttyTerminalShellProfile.userShell`.
+
+```dart
+final controller = GhosttyTerminalController();
+final launch = await controller.startShellProfile(
+  profile: GhosttyTerminalShellProfile.cleanBash,
+  platformEnvironment: ghosttyTerminalPlatformEnvironment(),
+);
+
+print(controller.activeShellLaunch?.commandLine);
+print(controller.activeShellLaunch?.environment?['TERM']);
+```
 
 ## Web setup
 

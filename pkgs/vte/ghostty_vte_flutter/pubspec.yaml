@@ -24,7 +24,10 @@ resolution: workspace
 dependencies:
   flutter:
     sdk: flutter
-  ghostty_vte: ^0.0.3
+  ghostty_vte: ^0.0.3+1
+  portable_pty: ^0.0.3+1
+  ultraviolet: ^0.1.1+1
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:

@@ -3,6 +3,13 @@
 A full-featured Flutter app that showcases every major API from `ghostty_vte` and
 `ghostty_vte_flutter`. Use it as a reference or playground.
 
+The terminal pane now includes:
+- shell profile selection (`Auto`, `Bash`, `Zsh`, `User Shell`)
+- renderer selection (`Ghostty Paint`, `UV Paint`)
+- terminal font family override
+- cell width scale tuning for prompt glyph alignment
+- Session tab launch diagnostics and `Copy Environment`
+
 ## What's included
 
 | Tab | Description |
@@ -11,6 +18,7 @@ A full-featured Flutter app that showcases every major API from `ghostty_vte` an
 | **OSC** | Parse Operating System Command payloads and inspect command type / window title. |
 | **SGR** | Parse SGR parameters (bold, colors, underline, etc.) and see structured attribute data. |
 | **Key Encoder** | Configure key events (action, key, modifiers, Kitty flags) and inspect the exact encoded byte sequence. |
+| **Session** | Inspect launch profile, command line, effective environment, and recent activity. |
 
 All tabs include presets, live updating, and an activity log.
 
@@ -71,9 +79,13 @@ await initializeGhosttyVteWeb();
 
 // Terminal controller
 final controller = GhosttyTerminalController();
-await controller.start();
+await controller.startShellProfile(
+  profile: GhosttyTerminalShellProfile.cleanBash,
+  platformEnvironment: ghosttyTerminalPlatformEnvironment(),
+);
 controller.write('echo hello\n', sanitizePaste: true);
 controller.sendKey(key: GhosttyKey.GHOSTTY_KEY_C, mods: GhosttyModsMask.ctrl, ...);
+print(controller.activeShellLaunch?.commandLine);
 
 // OSC parsing
 final osc = VtOscParser();

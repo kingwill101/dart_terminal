@@ -21,6 +21,39 @@ import 'package:ghostty_vte/ghostty_vte.dart';
 /// [GhosttyTerminalController] for managing VT state and input handling.
 export 'src/terminal_controller.dart';
 
+/// Styled terminal snapshot and palette types used by the controller and view.
+export 'src/terminal_snapshot.dart';
+
+/// Shared mutable selection state for terminal widgets.
+export 'src/terminal_selection_session.dart';
+
+/// Shared auto-scroll session state for terminal widgets.
+export 'src/terminal_auto_scroll_session.dart';
+
+/// Shared gesture-side selection coordinator for terminal widgets.
+export 'src/terminal_gesture_coordinator.dart';
+
+/// Shared controller/buffer contracts for terminal surface integrations.
+export 'src/terminal_surface_contract.dart';
+
+/// Shared keyboard/input normalization helpers for terminal widgets.
+export 'src/keyboard_input.dart';
+
+/// Shared clipboard/paste/selection interaction helpers for terminal widgets.
+export 'src/terminal_interactions.dart';
+
+/// Shared tap and hover resolution helpers for terminal widgets.
+export 'src/terminal_pointer_flow.dart';
+
+/// Shared native PTY session types and implementation.
+export 'src/pty_session.dart';
+
+/// Shared shell-environment helpers for native terminal launches.
+export 'src/shell_environment.dart';
+
+/// Shared shell launch presets for terminal demos and apps.
+export 'src/shell_launch.dart';
+
 /// [GhosttyTerminalView] widget for rendering terminal output in Flutter.
 export 'src/terminal_view.dart';
 
