@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 import 'package:ghostty_vte/ghostty_vte.dart';
+import 'terminal_snapshot.dart';
 
 /// Resolved cell style derived from Ghostty render-state data.
 @immutable
@@ -15,6 +16,12 @@ final class GhosttyTerminalResolvedStyle {
     required this.overline,
     required this.strikethrough,
     required this.underline,
+    required this.inverse,
+    required this.invisible,
+    required this.faint,
+    this.hasExplicitUnderlineColor = false,
+    this.hasExplicitForeground = false,
+    this.hasExplicitBackground = false,
   });
 
   final Color foreground;
@@ -26,6 +33,240 @@ final class GhosttyTerminalResolvedStyle {
   final bool overline;
   final bool strikethrough;
   final GhosttySgrUnderline underline;
+  final bool inverse;
+  final bool invisible;
+  final bool faint;
+  final bool hasExplicitUnderlineColor;
+  final bool hasExplicitForeground;
+  final bool hasExplicitBackground;
+
+  factory GhosttyTerminalResolvedStyle.fromFormattedStyle({
+    required GhosttyTerminalStyle style,
+    required List<Color> palette,
+    required Color defaultForeground,
+    required Color defaultBackground,
+  }) {
+    Color resolveStyleColor({
+      required GhosttyTerminalColor? color,
+      required Color fallback,
+      required List<Color> palette,
+    }) {
+      if (color == null) {
+        return fallback;
+      }
+      final rgb = color.rgb;
+      if (rgb != null) {
+        return Color.fromARGB(
+          0xFF,
+          (rgb >> 16) & 0xFF,
+          (rgb >> 8) & 0xFF,
+          rgb & 0xFF,
+        );
+      }
+      final index = color.paletteIndex;
+      if (index == null) {
+        return fallback;
+      }
+      if (index >= 0 && index < palette.length) {
+        return palette[index];
+      }
+      return GhosttyTerminalPalette.xterm.resolve(
+        GhosttyTerminalColor.palette(index),
+        fallback: fallback,
+      );
+    }
+
+    final hasExplicitForeground = style.foreground != null;
+    final hasExplicitBackground = style.background != null;
+    final hasExplicitUnderlineColor = style.underlineColor != null;
+    const transparent = Color(0x00000000);
+
+    var foreground = hasExplicitForeground
+        ? resolveStyleColor(
+            color: style.foreground,
+            fallback: defaultForeground,
+            palette: palette,
+          )
+        : transparent;
+    var background = hasExplicitBackground
+        ? resolveStyleColor(
+            color: style.background,
+            fallback: defaultBackground,
+            palette: palette,
+          )
+        : transparent;
+    if (style.inverse) {
+      final swappedForeground = background;
+      background = hasExplicitForeground
+          ? foreground
+          : (foreground == transparent ? defaultForeground : foreground);
+      foreground = hasExplicitBackground
+          ? swappedForeground
+          : (swappedForeground == transparent
+                ? defaultBackground
+                : swappedForeground);
+    }
+    if (style.invisible) {
+      foreground = background == transparent ? defaultBackground : background;
+    }
+    if (style.faint) {
+      foreground = foreground.withValues(alpha: 0.72);
+    }
+
+    return GhosttyTerminalResolvedStyle(
+      foreground: foreground,
+      background: background,
+      underlineColor: resolveStyleColor(
+        color: style.underlineColor,
+        fallback: hasExplicitUnderlineColor ? defaultForeground : transparent,
+        palette: palette,
+      ),
+      bold: style.bold,
+      italic: style.italic,
+      blink: style.blink,
+      overline: style.overline,
+      strikethrough: style.strikethrough,
+      underline:
+          style.underline ?? GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_NONE,
+      inverse: style.inverse,
+      invisible: style.invisible,
+      faint: style.faint,
+      hasExplicitUnderlineColor: hasExplicitUnderlineColor,
+      hasExplicitForeground: hasExplicitForeground,
+      hasExplicitBackground: hasExplicitBackground,
+    );
+  }
+
+  factory GhosttyTerminalResolvedStyle.fromNativeStyle({
+    required VtStyle style,
+    required List<Color> palette,
+    required Color defaultForeground,
+    required Color defaultBackground,
+  }) {
+    Color resolveStyleColor(
+      VtStyleColor color, {
+      required Color fallback,
+      required List<Color> palette,
+    }) {
+      if (!color.isSet) {
+        return fallback;
+      }
+      final rgb = color.rgb;
+      if (rgb != null) {
+        return Color.fromARGB(0xFF, rgb.r, rgb.g, rgb.b);
+      }
+      final index = color.paletteIndex;
+      if (index == null) {
+        return fallback;
+      }
+      if (index >= 0 && index < palette.length) {
+        return palette[index];
+      }
+      return GhosttyTerminalPalette.xterm.resolve(
+        GhosttyTerminalColor.palette(index),
+        fallback: fallback,
+      );
+    }
+
+    final hasExplicitForeground = style.foreground.isSet;
+    final hasExplicitBackground = style.background.isSet;
+    final hasExplicitUnderlineColor = style.underlineColor.isSet;
+    const transparent = Color(0x00000000);
+
+    var foreground = hasExplicitForeground
+        ? resolveStyleColor(
+            style.foreground,
+            fallback: defaultForeground,
+            palette: palette,
+          )
+        : transparent;
+    var background = hasExplicitBackground
+        ? resolveStyleColor(
+            style.background,
+            fallback: defaultBackground,
+            palette: palette,
+          )
+        : transparent;
+
+    if (style.inverse) {
+      final swappedForeground = background;
+      background = hasExplicitForeground
+          ? foreground
+          : (foreground == transparent ? defaultForeground : foreground);
+      foreground = hasExplicitBackground
+          ? swappedForeground
+          : (swappedForeground == transparent
+                ? defaultBackground
+                : swappedForeground);
+    }
+    if (style.invisible) {
+      foreground = background == transparent ? defaultBackground : background;
+    }
+    if (style.faint) {
+      foreground = foreground.withValues(alpha: 0.72);
+    }
+
+    return GhosttyTerminalResolvedStyle(
+      foreground: foreground,
+      background: background,
+      underlineColor: resolveStyleColor(
+        style.underlineColor,
+        fallback: hasExplicitUnderlineColor ? defaultForeground : transparent,
+        palette: palette,
+      ),
+      hasExplicitUnderlineColor: hasExplicitUnderlineColor,
+      hasExplicitForeground: hasExplicitForeground,
+      hasExplicitBackground: hasExplicitBackground,
+      inverse: style.inverse,
+      invisible: style.invisible,
+      faint: style.faint,
+      blink: style.blink,
+      bold: style.bold,
+      italic: style.italic,
+      overline: style.overline,
+      strikethrough: style.strikethrough,
+      underline: style.underline,
+    );
+  }
+
+  static ({Color foreground, Color background}) resolveNativeStyleColors({
+    required GhosttyTerminalResolvedStyle style,
+    required Color defaultForeground,
+    required Color defaultBackground,
+    Color? metadataColor,
+  }) {
+    const transparent = Color(0x00000000);
+
+    final resolvedBackground =
+        metadataColor == null || style.hasExplicitBackground
+        ? style.background
+        : metadataColor;
+
+    var foreground = style.foreground;
+    var background = resolvedBackground;
+    if (style.inverse) {
+      final swappedForeground = background;
+      background = style.hasExplicitForeground
+          ? foreground
+          : (foreground == transparent ? defaultForeground : foreground);
+      foreground = style.hasExplicitBackground
+          ? swappedForeground
+          : (swappedForeground == transparent
+                ? defaultBackground
+                : swappedForeground);
+    }
+    if (style.invisible) {
+      foreground = background == transparent ? defaultBackground : background;
+    }
+    if (style.faint) {
+      foreground = foreground.withValues(alpha: 0.72);
+    }
+    if (foreground == transparent) {
+      foreground = defaultForeground;
+    }
+
+    return (foreground: foreground, background: background);
+  }
 }
 
 /// Cell-level metadata derived from the raw Ghostty cell snapshot.
