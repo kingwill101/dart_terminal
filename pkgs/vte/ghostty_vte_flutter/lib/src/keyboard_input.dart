@@ -99,7 +99,7 @@ final Map<LogicalKeyboardKey, String> _shiftedPrintableFallbacks =
       LogicalKeyboardKey.braceRight: '}',
       LogicalKeyboardKey.bracketLeft: '[',
       LogicalKeyboardKey.bracketRight: ']',
-      LogicalKeyboardKey.backslash: '\\',
+      LogicalKeyboardKey.backslash: '|',
       LogicalKeyboardKey.semicolon: ':',
       LogicalKeyboardKey.quote: '"',
       LogicalKeyboardKey.backquote: '~',

@@ -46,6 +46,22 @@ void main() {
     expect(text, '+');
   });
 
+  test(
+    'printable helper infers shifted backslash without character metadata',
+    () {
+      final text = ghosttyTerminalPrintableText(
+        const KeyDownEvent(
+          physicalKey: PhysicalKeyboardKey.backslash,
+          logicalKey: LogicalKeyboardKey.backslash,
+          timeStamp: Duration.zero,
+        ),
+        modifiers: const GhosttyTerminalModifierState(shiftPressed: true),
+      );
+
+      expect(text, '|');
+    },
+  );
+
   test('printable helper respects direct printable logical labels', () {
     final text = ghosttyTerminalPrintableText(
       const KeyDownEvent(
