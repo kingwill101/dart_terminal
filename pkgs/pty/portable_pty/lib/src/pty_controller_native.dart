@@ -93,11 +93,28 @@ class PortablePtyController with PtyListenable {
       return;
     }
 
-    pty.kill();
-    pty.close();
+    Object? stopError;
+    try {
+      pty.kill();
+    } catch (error) {
+      // The process may have already exited between UI state checks and stop.
+      // We still close the PTY handle and treat stop as successful cleanup.
+      stopError = error;
+    }
+
+    try {
+      pty.close();
+    } catch (error) {
+      stopError ??= error;
+    }
+
     _pty = null;
     _running = false;
-    _appendLine('[terminated]');
+    _appendLine(
+      stopError == null
+          ? '[terminated]'
+          : '[terminated with recovery: $stopError]',
+    );
     _markDirty();
   }
 
