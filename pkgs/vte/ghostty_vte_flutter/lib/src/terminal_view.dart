@@ -939,15 +939,15 @@ class _GhosttyTerminalPainter extends CustomPainter {
         nativeRender != null &&
         scrollOffsetLines == 0 &&
         nativeRender.hasViewportData) {
-      final nativeDefaultForeground = nativeRender.foregroundColor;
-      final nativeDefaultBackground = nativeRender.backgroundColor;
-      canvas.drawRect(contentRect, Paint()..color = nativeDefaultBackground);
+      // Keep the renderer's content area visually aligned with the formatter path
+      // by using the widget-provided theme defaults as the baseline.
+      canvas.drawRect(contentRect, Paint()..color = backgroundColor);
       _paintNativeRenderState(
         canvas,
         contentTop: contentTop,
         visibleStartLine: start,
-        defaultForeground: nativeDefaultForeground,
-        defaultBackground: nativeDefaultBackground,
+        defaultForeground: foregroundColor,
+        defaultBackground: backgroundColor,
         linePixels: linePixels,
         rowsData: nativeRender.rowsData,
       );
@@ -1458,6 +1458,9 @@ class _GhosttyTerminalPainter extends CustomPainter {
     return a.foreground == b.foreground &&
         a.background == b.background &&
         a.underlineColor == b.underlineColor &&
+        a.hasExplicitUnderlineColor == b.hasExplicitUnderlineColor &&
+        a.hasExplicitForeground == b.hasExplicitForeground &&
+        a.hasExplicitBackground == b.hasExplicitBackground &&
         a.bold == b.bold &&
         a.italic == b.italic &&
         a.inverse == b.inverse &&
