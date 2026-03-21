@@ -95,6 +95,20 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
     _ModOption('Super', GhosttyModsMask.superKey),
   ];
 
+  static const List<_RendererModeOption> _rendererModes = <_RendererModeOption>[
+    _RendererModeOption(
+      label: 'Formatter Paint',
+      value: GhosttyTerminalRendererMode.formatter,
+      enabledOnWeb: true,
+    ),
+    _RendererModeOption(
+      label: 'Render Paint',
+      value: GhosttyTerminalRendererMode.renderState,
+      enabledOnWeb: false,
+      unavailableReason: 'Native render requires non-web platforms.',
+    ),
+  ];
+
   late final TabController _tabs = TabController(length: 4, vsync: this);
 
   final List<String> _activity = <String>[];
@@ -120,6 +134,7 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
   String _htmlSnapshot = '';
   bool _pasteSafe = true;
   double _cellWidthScale = 1;
+  GhosttyTerminalRendererMode _renderer = GhosttyTerminalRendererMode.formatter;
   VtOscCommand? _oscCommand;
   String? _oscError;
   List<VtSgrAttributeData> _sgrAttributes = <VtSgrAttributeData>[];
@@ -145,8 +160,13 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
     _terminal.addListener(_onTerminalChanged);
     if (widget.autoStart) {
       _bootstrap();
+    } else {
+      _recomputeInspectorState(
+        addLog: false,
+        refreshSnapshots: false,
+        skipNativeChecks: true,
+      );
     }
-    _recomputeInspectorState(addLog: false);
   }
 
   @override
@@ -278,12 +298,31 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
     );
   }
 
-  void _recomputeInspectorState({bool addLog = true}) {
-    _refreshSnapshots();
-    _pasteSafe = GhosttyVt.isPasteSafe(_commandController.text);
-    _parseOsc();
-    _parseSgr();
-    _encodeKeyPreview();
+  void _recomputeInspectorState({
+    bool addLog = true,
+    bool refreshSnapshots = true,
+    bool skipNativeChecks = false,
+  }) {
+    if (refreshSnapshots) {
+      _refreshSnapshots();
+    } else {
+      _plainSnapshot = '';
+      _vtSnapshot = '';
+      _htmlSnapshot = '';
+    }
+    if (skipNativeChecks) {
+      _pasteSafe = true;
+      _oscCommand = null;
+      _oscError = 'OSC parser unavailable without native assets.';
+      _sgrAttributes = <VtSgrAttributeData>[];
+      _sgrError = 'SGR parser unavailable without native assets.';
+      _encodedBytes = Uint8List(0);
+    } else {
+      _pasteSafe = GhosttyVt.isPasteSafe(_commandController.text);
+      _parseOsc();
+      _parseSgr();
+      _encodeKeyPreview();
+    }
     if (addLog) {
       _appendLog('Refreshed formatter, parser, and key inspector state.');
     }
@@ -610,6 +649,39 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
                 ],
               ),
             ),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: <Widget>[
+                for (final mode in _rendererModes)
+                  mode.enabledOnWeb || !kIsWeb
+                      ? ChoiceChip(
+                          key: ValueKey<String>(
+                            'render-mode-${mode.value.name}',
+                          ),
+                          label: Text(mode.label),
+                          selected: _renderer == mode.value,
+                          onSelected: (_) => setState(() {
+                            _renderer = mode.value;
+                          }),
+                        )
+                      : Tooltip(
+                          message:
+                              mode.unavailableReason ??
+                              'Render mode unavailable on web',
+                          child: ChoiceChip(
+                            key: ValueKey<String>(
+                              'render-mode-${mode.value.name}',
+                            ),
+                            label: Text(mode.label),
+                            selected: _renderer == mode.value,
+                            onSelected: null,
+                          ),
+                        ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text('Renderer: ${_renderer.name}'),
           ],
         ),
         const SizedBox(height: 12),
@@ -640,6 +712,7 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
                     ? null
                     : _fontFamilyController.text.trim(),
                 cellWidthScale: _cellWidthScale,
+                renderer: _renderer,
                 padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
               ),
             ),
@@ -1210,4 +1283,18 @@ class _ModOption {
 
   final String label;
   final int mask;
+}
+
+class _RendererModeOption {
+  const _RendererModeOption({
+    required this.label,
+    required this.value,
+    required this.enabledOnWeb,
+    this.unavailableReason,
+  });
+
+  final String label;
+  final GhosttyTerminalRendererMode value;
+  final bool enabledOnWeb;
+  final String? unavailableReason;
 }

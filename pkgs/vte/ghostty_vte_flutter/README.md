@@ -126,6 +126,7 @@ GhosttyTerminalView(
 | `letterSpacing` | `double` | `0` | Additional character spacing |
 | `cellWidthScale` | `double` | `1` | Manual terminal cell width tuning for prompt glyph alignment |
 | `padding` | `EdgeInsets` | `all(12)` | Content padding |
+| `renderer` | `GhosttyTerminalRendererMode` | `GhosttyTerminalRendererMode.formatter` | Choose formatter rendering or native render-state rendering |
 
 `GhosttyTerminalView` now paints grapheme clusters instead of UTF-16 code
 units and exposes font-metric controls so shells with Nerd Font glyphs or
