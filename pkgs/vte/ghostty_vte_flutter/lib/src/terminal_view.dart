@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -13,8 +14,22 @@ import 'terminal_controller.dart';
 import 'terminal_gesture_coordinator.dart';
 import 'terminal_interactions.dart';
 import 'terminal_pointer_flow.dart';
+import 'terminal_render_model.dart';
 import 'terminal_snapshot.dart';
 import 'terminal_selection_session.dart';
+
+/// Paint backend used by [GhosttyTerminalView].
+enum GhosttyTerminalRendererMode {
+  /// Formatter/snapshot-driven painting. This remains the default because it
+  /// currently gives the best fidelity for dense TUIs and scrollback content.
+  formatter,
+
+  /// Native Ghostty render-state painting for the live viewport.
+  ///
+  /// This is useful for exercising the newer screen/render APIs without making
+  /// it the default path until feature parity is tighter.
+  renderState,
+}
 
 /// Painter-based terminal widget that renders lines from [GhosttyTerminalController].
 ///
@@ -37,6 +52,7 @@ class GhosttyTerminalView extends StatefulWidget {
     this.fontPackage,
     this.letterSpacing = 0,
     this.cellWidthScale = 1,
+    this.renderer = GhosttyTerminalRendererMode.formatter,
     this.padding = const EdgeInsets.all(12),
     this.palette = GhosttyTerminalPalette.xterm,
     this.cursorColor = const Color(0xFF9AD1C0),
@@ -65,6 +81,7 @@ class GhosttyTerminalView extends StatefulWidget {
   final String? fontPackage;
   final double letterSpacing;
   final double cellWidthScale;
+  final GhosttyTerminalRendererMode renderer;
   final EdgeInsets padding;
   final GhosttyTerminalPalette palette;
   final Color cursorColor;
@@ -751,6 +768,8 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
                       revision: widget.controller.revision,
                       title: widget.controller.title,
                       snapshot: widget.controller.snapshot,
+                      renderSnapshot: widget.controller.renderSnapshot,
+                      renderer: widget.renderer,
                       running: widget.controller.isRunning,
                       focused: _focusNode.hasFocus,
                       cols: widget.controller.cols,
@@ -791,6 +810,8 @@ class _GhosttyTerminalPainter extends CustomPainter {
     required this.revision,
     required this.title,
     required this.snapshot,
+    required this.renderSnapshot,
+    required this.renderer,
     required this.running,
     required this.focused,
     required this.cols,
@@ -818,6 +839,8 @@ class _GhosttyTerminalPainter extends CustomPainter {
   final int revision;
   final String title;
   final GhosttyTerminalSnapshot snapshot;
+  final GhosttyTerminalRenderSnapshot? renderSnapshot;
+  final GhosttyTerminalRendererMode renderer;
   final bool running;
   final bool focused;
   final int cols;
@@ -910,6 +933,37 @@ class _GhosttyTerminalPainter extends CustomPainter {
 
     canvas.save();
     canvas.clipRect(contentRect);
+    final nativeRender = renderSnapshot;
+    if (renderer == GhosttyTerminalRendererMode.renderState &&
+        nativeRender != null &&
+        scrollOffsetLines == 0 &&
+        nativeRender.hasViewportData) {
+      _paintNativeRenderState(
+        canvas,
+        contentTop: contentTop,
+        visibleStartLine: start,
+        linePixels: linePixels,
+        rowsData: nativeRender.rowsData,
+      );
+      _paintNativeCursor(
+        canvas,
+        contentTop: contentTop,
+        linePixels: linePixels,
+        visibleRows: nativeRender.rowsData.length,
+        cursor: nativeRender.cursor,
+        color: nativeRender.cursor.color ?? cursorColor,
+      );
+      canvas.restore();
+      if (focused) {
+        final focusPaint = Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1
+          ..color = const Color(0xFF2A83FF);
+        canvas.drawRect(fullRect.deflate(0.5), focusPaint);
+      }
+      return;
+    }
+
     var y = contentTop;
     for (var visibleIndex = 0; visibleIndex < visible.length; visibleIndex++) {
       final line = visible[visibleIndex];
@@ -1039,8 +1093,286 @@ class _GhosttyTerminalPainter extends CustomPainter {
         hyperlinkColor != oldDelegate.hyperlinkColor ||
         palette != oldDelegate.palette ||
         selection != oldDelegate.selection ||
+        renderer != oldDelegate.renderer ||
+        !_renderSnapshotEquals(renderSnapshot, oldDelegate.renderSnapshot) ||
         !listEquals(snapshot.lines, oldDelegate.snapshot.lines) ||
         snapshot.cursor != oldDelegate.snapshot.cursor;
+  }
+
+  void _paintNativeRenderState(
+    Canvas canvas, {
+    required double contentTop,
+    required int visibleStartLine,
+    required double linePixels,
+    required List<GhosttyTerminalRenderRow> rowsData,
+  }) {
+    for (var rowIndex = 0; rowIndex < rowsData.length; rowIndex++) {
+      final row = rowsData[rowIndex];
+      final y = contentTop + (rowIndex * linePixels);
+      final logicalRow = visibleStartLine + rowIndex;
+      final runs = _collectNativeRuns(row.cells);
+      for (final run in runs) {
+        if (run.width <= 0) {
+          continue;
+        }
+        final width = run.width * charWidth;
+        final startCol = run.startCol;
+        final endCol = startCol + run.width - 1;
+        final rect = Rect.fromLTWH(
+          padding.left + (startCol * charWidth),
+          y,
+          width,
+          linePixels,
+        );
+        if (run.background.a > 0) {
+          canvas.drawRect(rect, Paint()..color = run.background);
+        }
+        if (_selectionIntersectsSpan(logicalRow, startCol, endCol)) {
+          canvas.drawRect(rect, Paint()..color = selectionColor);
+        }
+        if (run.hasRenderableText) {
+          final textStyle = TextStyle(
+            color: run.style.foreground,
+            fontFamily: fontFamily,
+            fontFamilyFallback: fontFamilyFallback,
+            package: fontPackage,
+            fontSize: fontSize,
+            height: linePixels / fontSize,
+            letterSpacing: letterSpacing,
+            fontWeight: run.style.bold ? FontWeight.w700 : FontWeight.w400,
+            fontStyle: run.style.italic ? FontStyle.italic : FontStyle.normal,
+            decoration: _nativeTextDecoration(run.style),
+            decorationStyle: _nativeDecorationStyle(run.style.underline),
+            decorationColor: run.style.underlineColor,
+          );
+          final paragraphStyle = ui.ParagraphStyle(
+            textDirection: TextDirection.ltr,
+            maxLines: 1,
+          );
+          final paragraphBuilder = ui.ParagraphBuilder(paragraphStyle)
+            ..pushStyle(textStyle.getTextStyle())
+            ..addText(run.text);
+          final paragraph = paragraphBuilder.build()
+            ..layout(ui.ParagraphConstraints(width: rect.width));
+          final dy = rect.top + (linePixels - paragraph.height) / 2;
+          canvas.drawParagraph(paragraph, Offset(rect.left, dy));
+        }
+      }
+    }
+  }
+
+  void _paintNativeCursor(
+    Canvas canvas, {
+    required double contentTop,
+    required double linePixels,
+    required int visibleRows,
+    required GhosttyTerminalRenderCursor cursor,
+    required Color color,
+  }) {
+    if (!cursor.visible ||
+        !cursor.hasViewportPosition ||
+        cursor.row == null ||
+        cursor.col == null) {
+      return;
+    }
+    if (cursor.row! < 0 || cursor.row! >= visibleRows) {
+      return;
+    }
+    if (cursor.col! < 0 || cursor.col! >= cols) {
+      return;
+    }
+    final widthCells = cursor.onWideTail ? 2 : 1;
+    final cursorRect = Rect.fromLTWH(
+      padding.left + (cursor.col! * charWidth),
+      contentTop + (cursor.row! * linePixels),
+      charWidth * widthCells,
+      linePixels,
+    );
+    final shouldShowCursorFill = focused || !cursor.blinking;
+    final drawColor = color.withValues(
+      alpha: cursor.passwordInput ? 0.95 : (focused ? 0.95 : 0.8),
+    );
+    final strokeColor = drawColor.withValues(alpha: 0.85);
+    final fillPaint = Paint()..color = drawColor;
+    final strokePaint = Paint()
+      ..color = strokeColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = math.max(0.8, linePixels * 0.08);
+
+    final shapeRect = switch (cursor.visualStyle) {
+      GhosttyRenderStateCursorVisualStyle
+          .GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR =>
+        Rect.fromLTWH(
+          cursorRect.left,
+          cursorRect.top,
+          math.max(2.0, charWidth * 0.2),
+          cursorRect.height,
+        ),
+      GhosttyRenderStateCursorVisualStyle
+          .GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE =>
+        Rect.fromLTWH(
+          cursorRect.left,
+          cursorRect.bottom - math.max(1.5, linePixels * 0.12),
+          cursorRect.width,
+          math.max(1.5, linePixels * 0.12),
+        ),
+      GhosttyRenderStateCursorVisualStyle
+          .GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW =>
+        cursorRect,
+      _ => cursorRect,
+    };
+
+    switch (cursor.visualStyle) {
+      case GhosttyRenderStateCursorVisualStyle
+          .GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW:
+        canvas.drawRect(
+          shapeRect,
+          Paint()
+            ..color = drawColor.withValues(alpha: 0.22)
+            ..style = PaintingStyle.fill,
+        );
+        if (shouldShowCursorFill) {
+          canvas.drawRect(shapeRect.deflate(0.5), strokePaint);
+        }
+      case GhosttyRenderStateCursorVisualStyle
+          .GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE:
+      case GhosttyRenderStateCursorVisualStyle
+          .GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR:
+      case GhosttyRenderStateCursorVisualStyle
+          .GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK:
+        if (shouldShowCursorFill) {
+          canvas.drawRect(shapeRect, fillPaint);
+        }
+        canvas.drawRect(shapeRect, strokePaint);
+    }
+  }
+
+  List<_NativeRenderRun> _collectNativeRuns(
+    List<GhosttyTerminalRenderCell> cells,
+  ) {
+    if (cells.isEmpty) {
+      return const <_NativeRenderRun>[];
+    }
+    final runs = <_NativeRenderRun>[];
+    var runStart = 0;
+    var runStartCol = 0;
+    var runWidth = 0;
+    final runText = StringBuffer();
+    void flushCurrentRun() {
+      final firstCell = cells[runStart];
+      final text = runText.toString();
+      runs.add(
+        _NativeRenderRun(
+          style: firstCell.style,
+          background: _resolveNativeBackground(firstCell),
+          startCol: runStartCol,
+          width: runWidth,
+          text: text,
+          hasRenderableText: text.isNotEmpty,
+        ),
+      );
+      runStartCol += runWidth;
+      runWidth = 0;
+      runText.clear();
+    }
+
+    for (var index = 0; index < cells.length; index++) {
+      final currentCell = cells[index];
+      final shouldStartNewRun =
+          index > runStart &&
+          !_nativeRenderRunCanMerge(cells[index - 1], currentCell);
+      if (shouldStartNewRun) {
+        flushCurrentRun();
+        runStart = index;
+      }
+
+      runWidth += currentCell.width;
+      if (currentCell.text.isNotEmpty) {
+        runText.write(currentCell.text);
+      }
+
+      if (index == cells.length - 1) {
+        flushCurrentRun();
+        break;
+      }
+    }
+    return runs;
+  }
+
+  bool _nativeRenderRunCanMerge(
+    GhosttyTerminalRenderCell previous,
+    GhosttyTerminalRenderCell next,
+  ) {
+    return _nativeRenderStyleEquals(previous.style, next.style) &&
+        _resolveNativeBackground(previous) == _resolveNativeBackground(next);
+  }
+
+  Color _resolveNativeBackground(GhosttyTerminalRenderCell cell) {
+    return cell.metadata.backgroundColor ?? cell.style.background;
+  }
+
+  bool _nativeRenderStyleEquals(
+    GhosttyTerminalResolvedStyle a,
+    GhosttyTerminalResolvedStyle b,
+  ) {
+    return a.foreground == b.foreground &&
+        a.background == b.background &&
+        a.underlineColor == b.underlineColor &&
+        a.bold == b.bold &&
+        a.italic == b.italic &&
+        a.blink == b.blink &&
+        a.overline == b.overline &&
+        a.strikethrough == b.strikethrough &&
+        a.underline == b.underline;
+  }
+
+  bool _selectionIntersectsSpan(int row, int startCol, int endCol) {
+    final selection = this.selection;
+    if (selection == null) {
+      return false;
+    }
+    final normalized = selection.normalized;
+    if (row < normalized.start.row || row > normalized.end.row) {
+      return false;
+    }
+
+    final selectionStart = row == normalized.start.row
+        ? normalized.start.col
+        : 0;
+    final selectionEnd = row == normalized.end.row
+        ? normalized.end.col
+        : cols - 1;
+    return startCol <= selectionEnd && endCol >= selectionStart;
+  }
+
+  TextDecoration _nativeTextDecoration(GhosttyTerminalResolvedStyle style) {
+    final decorations = <TextDecoration>[];
+    if (style.underline != GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_NONE) {
+      decorations.add(TextDecoration.underline);
+    }
+    if (style.overline) {
+      decorations.add(TextDecoration.overline);
+    }
+    if (style.strikethrough) {
+      decorations.add(TextDecoration.lineThrough);
+    }
+    return decorations.isEmpty
+        ? TextDecoration.none
+        : TextDecoration.combine(decorations);
+  }
+
+  TextDecorationStyle _nativeDecorationStyle(GhosttySgrUnderline underline) {
+    return switch (underline) {
+      GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_DOUBLE =>
+        TextDecorationStyle.double,
+      GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_CURLY =>
+        TextDecorationStyle.wavy,
+      GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_DOTTED =>
+        TextDecorationStyle.dotted,
+      GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_DASHED =>
+        TextDecorationStyle.dashed,
+      _ => TextDecorationStyle.solid,
+    };
   }
 
   void _paintSelection(
@@ -1074,6 +1406,24 @@ class _GhosttyTerminalPainter extends CustomPainter {
   }
 }
 
+bool _renderSnapshotEquals(
+  GhosttyTerminalRenderSnapshot? a,
+  GhosttyTerminalRenderSnapshot? b,
+) {
+  if (identical(a, b)) {
+    return true;
+  }
+  if (a == null || b == null) {
+    return false;
+  }
+  return a.cols == b.cols &&
+      a.rows == b.rows &&
+      a.backgroundColor == b.backgroundColor &&
+      a.foregroundColor == b.foregroundColor &&
+      a.cursor == b.cursor &&
+      listEquals(a.rowsData, b.rowsData);
+}
+
 class _TerminalMetrics {
   const _TerminalMetrics({required this.charWidth, required this.linePixels});
 
@@ -1093,6 +1443,24 @@ class _TerminalViewport {
   final double contentTop;
   final double contentHeight;
   final int maxVisible;
+}
+
+final class _NativeRenderRun {
+  const _NativeRenderRun({
+    required this.style,
+    required this.background,
+    required this.startCol,
+    required this.width,
+    required this.text,
+    required this.hasRenderableText,
+  });
+
+  final GhosttyTerminalResolvedStyle style;
+  final Color background;
+  final int startCol;
+  final int width;
+  final String text;
+  final bool hasRenderableText;
 }
 
 final class _ResolvedTerminalStyle {

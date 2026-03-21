@@ -3,10 +3,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/painting.dart';
 import 'package:ghostty_vte/ghostty_vte.dart';
 
 import 'pty_session.dart';
 import 'shell_launch.dart';
+import 'terminal_render_model.dart';
 import 'terminal_snapshot.dart';
 import 'terminal_surface_contract.dart';
 
@@ -62,12 +64,14 @@ class GhosttyTerminalController extends ChangeNotifier
   VtTerminal? _terminal;
   VtTerminalFormatter? _plainFormatter;
   VtTerminalFormatter? _styledFormatter;
+  VtRenderState? _renderState;
   VtKeyEncoder? _encoder;
   GhosttyTerminalShellLaunch? _activeShellLaunch;
 
   final List<String> _lines = <String>[''];
   String _plainText = '';
   GhosttyTerminalSnapshot _snapshot = const GhosttyTerminalSnapshot.empty();
+  GhosttyTerminalRenderSnapshot? _renderSnapshot;
   String _title = 'Terminal';
   bool _running = false;
   bool _disposed = false;
@@ -103,6 +107,12 @@ class GhosttyTerminalController extends ChangeNotifier
 
   /// Current styled terminal snapshot used by [GhosttyTerminalView].
   GhosttyTerminalSnapshot get snapshot => _snapshot;
+
+  /// Native Ghostty render-state snapshot for the live visible viewport.
+  ///
+  /// This is only available on native platforms and only reflects the current
+  /// visible viewport, not formatter-derived scrollback transcript state.
+  GhosttyTerminalRenderSnapshot? get renderSnapshot => _renderSnapshot;
 
   /// Most recent shell launch metadata associated with this controller.
   GhosttyTerminalShellLaunch? get activeShellLaunch => _activeShellLaunch;
@@ -146,6 +156,7 @@ class GhosttyTerminalController extends ChangeNotifier
     _terminal = terminal;
     _plainFormatter = formatter;
     _styledFormatter = styledFormatter;
+    _renderState = terminal.createRenderState();
     _refreshSnapshot();
     return terminal;
   }
@@ -479,12 +490,14 @@ class GhosttyTerminalController extends ChangeNotifier
   void _refreshSnapshot() {
     final formatter = _plainFormatter;
     final styledFormatter = _styledFormatter;
-    if (formatter == null || styledFormatter == null) {
+    final renderState = _renderState;
+    if (formatter == null || styledFormatter == null || renderState == null) {
       _plainText = '';
       _lines
         ..clear()
         ..add('');
       _snapshot = const GhosttyTerminalSnapshot.empty();
+      _renderSnapshot = null;
       return;
     }
 
@@ -506,6 +519,8 @@ class GhosttyTerminalController extends ChangeNotifier
       styledFormatter.formatText(),
       maxLines: maxLines,
     );
+    renderState.update();
+    _renderSnapshot = _toRenderSnapshot(renderState.snapshot());
   }
 
   void _markDirty() {
@@ -563,6 +578,8 @@ class GhosttyTerminalController extends ChangeNotifier
     await stop();
     _encoder?.close();
     _encoder = null;
+    _renderState?.close();
+    _renderState = null;
     _plainFormatter?.close();
     _plainFormatter = null;
     _styledFormatter?.close();
@@ -580,3 +597,172 @@ class GhosttyTerminalController extends ChangeNotifier
 }
 
 final RegExp _oscRegex = RegExp(r'\x1b\]([^\x07\x1b]*)(?:\x07|\x1b\\)');
+
+GhosttyTerminalRenderSnapshot _toRenderSnapshot(VtRenderSnapshot snapshot) {
+  Color toColor(VtRgbColor color) =>
+      Color.fromARGB(0xFF, color.r, color.g, color.b);
+
+  Color resolveStyleColor(
+    VtStyleColor? color, {
+    required Color fallback,
+    required List<Color> palette,
+  }) {
+    if (color == null || !color.isSet) {
+      return fallback;
+    }
+    final rgb = color.rgb;
+    if (rgb != null) {
+      return toColor(rgb);
+    }
+    final index = color.paletteIndex;
+    if (index == null) {
+      return fallback;
+    }
+    if (index >= 0 && index < palette.length) {
+      return palette[index];
+    }
+    return GhosttyTerminalPalette.xterm.resolve(
+      GhosttyTerminalColor.palette(index),
+      fallback: fallback,
+    );
+  }
+
+  final palette = snapshot.colors.palette.map(toColor).toList(growable: false);
+  final defaultForeground = toColor(snapshot.colors.foreground);
+  final defaultBackground = toColor(snapshot.colors.background);
+  final cursorColor = snapshot.colors.cursor == null
+      ? null
+      : toColor(snapshot.colors.cursor!);
+
+  Color? resolveCellBackgroundColor(VtCellSnapshot rawCell) {
+    if (rawCell.contentTag ==
+        GhosttyCellContentTag.GHOSTTY_CELL_CONTENT_BG_COLOR_PALETTE) {
+      final paletteIndex = rawCell.colorPaletteIndex;
+      if (paletteIndex == null) {
+        return null;
+      }
+      if (paletteIndex >= 0 && paletteIndex < palette.length) {
+        return palette[paletteIndex];
+      }
+      return GhosttyTerminalPalette.xterm.resolve(
+        GhosttyTerminalColor.palette(paletteIndex),
+        fallback: defaultBackground,
+      );
+    }
+    if (rawCell.contentTag !=
+            GhosttyCellContentTag.GHOSTTY_CELL_CONTENT_BG_COLOR_RGB ||
+        rawCell.colorRgb == null) {
+      return null;
+    }
+    return toColor(rawCell.colorRgb!);
+  }
+
+  GhosttyTerminalResolvedStyle resolveStyle(VtStyle style) {
+    var foreground = resolveStyleColor(
+      style.foreground,
+      fallback: defaultForeground,
+      palette: palette,
+    );
+    var background = resolveStyleColor(
+      style.background,
+      fallback: defaultBackground,
+      palette: palette,
+    );
+    if (style.inverse) {
+      final swappedForeground = background;
+      background = foreground;
+      foreground = swappedForeground;
+    }
+    if (style.invisible) {
+      foreground = background;
+    }
+    if (style.faint) {
+      foreground = foreground.withValues(alpha: 0.72);
+    }
+    return GhosttyTerminalResolvedStyle(
+      foreground: foreground,
+      background: background,
+      underlineColor: resolveStyleColor(
+        style.underlineColor,
+        fallback: foreground,
+        palette: palette,
+      ),
+      blink: style.blink,
+      bold: style.bold,
+      italic: style.italic,
+      overline: style.overline,
+      strikethrough: style.strikethrough,
+      underline: style.underline,
+    );
+  }
+
+  final rows = snapshot.rowsData
+      .map(
+        (row) => GhosttyTerminalRenderRow(
+          dirty: row.dirty,
+          wrap: row.raw.wrap,
+          wrapContinuation: row.raw.wrapContinuation,
+          hasGrapheme: row.raw.hasGrapheme,
+          styled: row.raw.styled,
+          hasHyperlink: row.raw.hasHyperlink,
+          semanticPrompt: row.raw.semanticPrompt,
+          kittyVirtualPlaceholder: row.raw.kittyVirtualPlaceholder,
+          cells: row.cells
+              .where(
+                (cell) =>
+                    cell.raw.wide !=
+                    GhosttyCellWide.GHOSTTY_CELL_WIDE_SPACER_TAIL,
+              )
+              .map(
+                (cell) => GhosttyTerminalRenderCell(
+                  text: cell.graphemes,
+                  width: switch (cell.raw.wide) {
+                    GhosttyCellWide.GHOSTTY_CELL_WIDE_WIDE => 2,
+                    _ => 1,
+                  },
+                  hasText: cell.raw.hasText,
+                  hasStyling: cell.raw.hasStyling,
+                  hasHyperlink: cell.raw.hasHyperlink,
+                  isProtected: cell.raw.isProtected,
+                  semanticContent: cell.raw.semanticContent,
+                  metadata: () {
+                    final bgColor = resolveCellBackgroundColor(cell.raw);
+                    return GhosttyTerminalRenderCellMetadata(
+                      codepoint: cell.raw.codepoint,
+                      contentTag: cell.raw.contentTag,
+                      styleId: cell.raw.styleId,
+                      colorPaletteIndex: cell.raw.colorPaletteIndex,
+                      colorRgb: bgColor,
+                      wide: cell.raw.wide,
+                      hasBackgroundColor: bgColor != null,
+                      backgroundColor: bgColor,
+                    );
+                  }(),
+                  style: resolveStyle(cell.style),
+                ),
+              )
+              .toList(growable: false),
+        ),
+      )
+      .toList(growable: false);
+
+  return GhosttyTerminalRenderSnapshot(
+    cols: snapshot.cols,
+    rows: snapshot.rows,
+    dirty: snapshot.dirty,
+    backgroundColor: defaultBackground,
+    foregroundColor: defaultForeground,
+    cursor: GhosttyTerminalRenderCursor(
+      visualStyle: snapshot.cursor.visualStyle,
+      visible: snapshot.cursor.visible,
+      blinking: snapshot.cursor.blinking,
+      passwordInput: snapshot.cursor.passwordInput,
+      hasViewportPosition: snapshot.cursor.hasViewportPosition,
+      row: snapshot.cursor.viewportY,
+      col: snapshot.cursor.viewportX,
+      onWideTail: snapshot.cursor.onWideTail ?? false,
+      color: cursorColor,
+    ),
+    rowsData: rows,
+  );
+}

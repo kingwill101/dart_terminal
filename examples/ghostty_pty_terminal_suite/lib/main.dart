@@ -67,6 +67,8 @@ class _TerminalSuiteHomeState extends State<TerminalSuiteHome>
   int _pollIntervalMs = 200;
   bool _bridgePtyToGhostty = true;
   bool _sanitizePaste = true;
+  GhosttyTerminalRendererMode _ghosttyRendererMode =
+      GhosttyTerminalRendererMode.formatter;
 
   int _ptyReads = 0;
   int _ptyBytesRead = 0;
@@ -622,6 +624,28 @@ class _TerminalSuiteHomeState extends State<TerminalSuiteHome>
                   Text('${_pollIntervalMs}ms'),
                 ],
               ),
+              const SizedBox(height: 12),
+              SegmentedButton<GhosttyTerminalRendererMode>(
+                segments: const <ButtonSegment<GhosttyTerminalRendererMode>>[
+                  ButtonSegment<GhosttyTerminalRendererMode>(
+                    value: GhosttyTerminalRendererMode.formatter,
+                    label: Text('Formatter'),
+                    icon: Icon(Icons.text_fields),
+                  ),
+                  ButtonSegment<GhosttyTerminalRendererMode>(
+                    value: GhosttyTerminalRendererMode.renderState,
+                    label: Text('Render State'),
+                    icon: Icon(Icons.auto_awesome),
+                  ),
+                ],
+                selected: <GhosttyTerminalRendererMode>{_ghosttyRendererMode},
+                onSelectionChanged: (Set<GhosttyTerminalRendererMode> modes) {
+                  setState(() {
+                    _ghosttyRendererMode = modes.first;
+                  });
+                },
+              ),
+              const SizedBox(height: 8),
               if (kIsWeb) ...<Widget>[
                 const SizedBox(height: 8),
                 SegmentedButton<_RemoteTransportMode>(
@@ -683,6 +707,7 @@ class _TerminalSuiteHomeState extends State<TerminalSuiteHome>
               autofocus: false,
               fontSize: 14,
               lineHeight: 1.35,
+              renderer: _ghosttyRendererMode,
             ),
           ),
         ),
