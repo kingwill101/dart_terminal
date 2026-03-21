@@ -144,6 +144,66 @@ void main() {
       expect(invisible.background, equals(Colors.transparent));
     });
 
+    test('formatter and native style resolution stay aligned', () {
+      const formattedStyle = GhosttyTerminalStyle(
+        foreground: GhosttyTerminalColor.palette(1),
+        background: GhosttyTerminalColor.palette(2),
+        underlineColor: GhosttyTerminalColor.palette(3),
+        bold: true,
+        italic: true,
+        faint: true,
+        blink: false,
+        inverse: true,
+        invisible: true,
+        strikethrough: true,
+        overline: true,
+        underline: GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_DASHED,
+        hyperlink: 'https://example.com',
+      );
+      const nativeStyle = VtStyle(
+        foreground: VtStyleColor.palette(1),
+        background: VtStyleColor.palette(2),
+        underlineColor: VtStyleColor.palette(3),
+        bold: true,
+        italic: true,
+        faint: true,
+        blink: false,
+        inverse: true,
+        invisible: true,
+        strikethrough: true,
+        overline: true,
+        underline: GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_DASHED,
+      );
+
+      final resolvedFormatted = GhosttyTerminalResolvedStyle.fromFormattedStyle(
+        style: formattedStyle,
+        palette: palette,
+        defaultForeground: defaultForeground,
+        defaultBackground: defaultBackground,
+      );
+      final resolvedNative = GhosttyTerminalResolvedStyle.fromNativeStyle(
+        style: nativeStyle,
+        palette: palette,
+        defaultForeground: defaultForeground,
+        defaultBackground: defaultBackground,
+      );
+
+      expect(resolvedFormatted.foreground, equals(resolvedNative.foreground));
+      expect(resolvedFormatted.background, equals(resolvedNative.background));
+      expect(
+        resolvedFormatted.underlineColor,
+        equals(resolvedNative.underlineColor),
+      );
+      expect(resolvedFormatted.bold, isTrue);
+      expect(resolvedNative.bold, isTrue);
+      expect(resolvedFormatted.italic, isTrue);
+      expect(resolvedNative.italic, isTrue);
+      expect(resolvedFormatted.overline, isTrue);
+      expect(resolvedNative.overline, isTrue);
+      expect(resolvedFormatted.strikethrough, isTrue);
+      expect(resolvedNative.strikethrough, isTrue);
+    });
+
     test(
       'resolves metadata background color as implicit background when style is not explicit',
       () {
