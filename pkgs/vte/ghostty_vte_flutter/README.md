@@ -13,8 +13,10 @@ a terminal in any Flutter app — on desktop, mobile, and the web.
 
 | Widget / Class | Description |
 |----------------|-------------|
-| `GhosttyTerminalView` | `CustomPaint`-based terminal renderer with keyboard input |
-| `GhosttyTerminalController` | `ChangeNotifier` that manages a shell subprocess (native) or remote transport (web) |
+| `GhosttyTerminalView` | `CustomPaint`-based terminal renderer with keyboard input, text selection, hyperlink detection, and mouse reporting |
+| `GhosttyTerminalController` | `ChangeNotifier` that manages a shell subprocess (native PTY or `Process`) or remote transport (web) |
+| `GhosttyTerminalSnapshot` | Parsed styled terminal output with selection, word-boundary, and hyperlink support |
+| `GhosttyTerminalRenderSnapshot` | High-fidelity cell-level render data from Ghostty's native render-state API |
 | `initializeGhosttyVteWeb()` | One-liner that loads `ghostty-vt.wasm` from Flutter assets on web |
 
 This package re-exports all of
@@ -25,11 +27,11 @@ single import.
 
 | Platform | Native shell | Web (wasm) |
 |----------|:------------:|:----------:|
-| Linux    | ✅           | ✅          |
-| macOS    | ✅           | ✅          |
-| Windows  | ✅           | ✅          |
-| Android  | ✅           | ✅          |
-| iOS      | —            | ✅          |
+| Linux    |      yes     |    yes     |
+| macOS    |      yes     |    yes     |
+| Windows  |      yes     |    yes     |
+| Android  |      yes     |    yes     |
+| iOS      |       --     |    yes     |
 
 ## Installation
 
@@ -42,6 +44,8 @@ No separate `ghostty_vte` dependency is needed — it's re-exported
 automatically.
 
 ## Quick start
+
+A minimal terminal app with a live shell session:
 
 ```dart
 import 'package:flutter/material.dart';
@@ -90,12 +94,249 @@ class _TerminalPageState extends State<TerminalPage> {
 }
 ```
 
-## Widgets & controllers
+## Controller
+
+### Creating a controller
+
+```dart
+final controller = GhosttyTerminalController(
+  maxLines: 2000,          // max retained lines in formatted snapshot
+  maxScrollback: 10000,    // scrollback depth in the VT terminal
+  initialCols: 80,         // initial grid width before layout
+  initialRows: 24,         // initial grid height before layout
+  preferPty: true,         // prefer native PTY over Process.start
+  defaultShell: '/bin/bash',
+);
+```
+
+### Starting a shell
+
+```dart
+// Simple start with defaults
+await controller.start();
+
+// Custom shell, arguments, and environment
+await controller.start(
+  shell: '/bin/zsh',
+  arguments: ['-l'],
+  environment: {'TERM': 'xterm-256color', 'LANG': 'en_US.UTF-8'},
+);
+```
+
+### Shell profiles
+
+Use the built-in shell profile resolver for common configurations:
+
+```dart
+final launch = await controller.startShellProfile(
+  profile: GhosttyTerminalShellProfile.cleanBash,
+  platformEnvironment: ghosttyTerminalPlatformEnvironment(),
+  environmentOverrides: const {'TERM': 'xterm-256color'},
+);
+
+print(controller.activeShellLaunch?.commandLine);
+print(controller.activeShellLaunch?.environment?['TERM']);
+```
+
+Available profiles: `auto`, `cleanBash`, `cleanZsh`, `userShell`.
+
+### Shell environment helper
+
+Build a usable native shell environment with sane defaults:
+
+```dart
+await controller.start(
+  environment: ghosttyTerminalShellEnvironment(
+    platformEnvironment: ghosttyTerminalPlatformEnvironment(),
+    overrides: const {'TERM': 'xterm-256color'},
+  ),
+);
+```
+
+`ghosttyTerminalShellEnvironment()` preserves the caller's base
+environment, sets `TERM`, fills `HOME`-derived `XDG_*` paths, and ensures a
+UTF-8 locale when the input environment omitted one.
+
+### Launch plans
+
+For full control, create and start a resolved launch plan:
+
+```dart
+final launch = GhosttyTerminalShellLaunch(
+  label: 'dev-shell',
+  shell: '/bin/bash',
+  arguments: ['--rcfile', '/path/to/custom.bashrc'],
+  environment: {'TERM': 'xterm-256color'},
+  setupCommand: 'cd ~/projects\n',
+);
+
+await controller.startLaunch(launch);
+
+// Restart with the same launch plan
+await controller.restartLaunch(launch);
+```
+
+### Writing input
+
+```dart
+// Write text to stdin (with optional paste safety check)
+controller.write('ls -la\n');
+controller.write('rm -rf /\n', sanitizePaste: true);  // rejected: unsafe
+
+// Write raw bytes
+controller.writeBytes(utf8.encode('hello'));
+```
+
+### Sending key events
+
+```dart
+// Send Ctrl+C
+controller.sendKey(
+  key: GhosttyKey.GHOSTTY_KEY_C,
+  mods: GhosttyModsMask.ctrl,
+  utf8Text: 'c',
+  unshiftedCodepoint: 0x63,
+);
+
+// Send Enter
+controller.sendKey(
+  key: GhosttyKey.GHOSTTY_KEY_ENTER,
+  utf8Text: '\r',
+);
+
+// Send arrow keys
+controller.sendKey(key: GhosttyKey.GHOSTTY_KEY_ARROW_UP);
+```
+
+### Sending mouse events
+
+```dart
+controller.sendMouse(
+  action: GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_PRESS,
+  button: GhosttyMouseButton.GHOSTTY_MOUSE_BUTTON_LEFT,
+  position: VtMousePosition(col: 10, row: 5),
+  size: VtMouseEncoderSize(cols: controller.cols, rows: controller.rows),
+);
+```
+
+### Reading terminal state
+
+```dart
+print(controller.title);       // window title from OSC 0/2
+print(controller.isRunning);   // subprocess alive?
+print(controller.lines);       // buffered output lines
+print(controller.lineCount);   // number of buffered lines
+print(controller.plainText);   // full plain-text snapshot
+print(controller.cols);        // current grid width
+print(controller.rows);        // current grid height
+print(controller.revision);    // monotonic change counter
+```
+
+### Styled snapshot
+
+The controller exposes a `GhosttyTerminalSnapshot` parsed from VT
+formatter output. This contains styled lines with full SGR attributes,
+hyperlink detection, and selection support:
+
+```dart
+final snapshot = controller.snapshot;
+for (final line in snapshot.lines) {
+  for (final run in line.runs) {
+    print('${run.text} bold=${run.style.bold} fg=${run.style.foreground}');
+  }
+}
+
+// Text selection
+final selection = GhosttyTerminalSelection(
+  base: GhosttyTerminalCellPosition(row: 0, col: 0),
+  extent: GhosttyTerminalCellPosition(row: 2, col: 10),
+);
+final selectedText = snapshot.textForSelection(selection);
+
+// Word selection at a cell position
+final wordSel = snapshot.wordSelectionAt(
+  GhosttyTerminalCellPosition(row: 1, col: 5),
+);
+
+// Hyperlink detection
+final link = snapshot.hyperlinkAt(
+  GhosttyTerminalCellPosition(row: 3, col: 12),
+);
+```
+
+### Native render-state snapshot
+
+On native platforms, the controller also exposes a high-fidelity
+`GhosttyTerminalRenderSnapshot` derived from Ghostty's incremental
+render-state API:
+
+```dart
+final renderSnap = controller.renderSnapshot;
+if (renderSnap != null) {
+  print(renderSnap.cols);             // viewport width
+  print(renderSnap.rows);             // viewport height
+  print(renderSnap.dirty);            // dirty state
+  print(renderSnap.cursor.visible);   // cursor visibility
+  print(renderSnap.cursor.row);       // cursor row
+
+  for (final row in renderSnap.rowsData) {
+    for (final cell in row.cells) {
+      // cell.text, cell.style.foreground, cell.style.bold, etc.
+    }
+  }
+}
+```
+
+### Direct VT terminal access
+
+The controller exposes the underlying `VtTerminal` for advanced use cases:
+
+```dart
+final terminal = controller.terminal;
+print(terminal.cursorPosition);
+print(terminal.isPrimaryScreen);
+print(terminal.mouseProtocolState.enabled);
+
+// Query terminal modes
+final bracketedPaste = terminal.getMode(VtModes.bracketedPaste);
+
+// Grid introspection
+final cell = terminal.activeCell(0, 0);
+print(cell.graphemeText);
+print(cell.style);
+```
+
+### Custom formatted output
+
+Generate terminal output in different formats on demand:
+
+```dart
+// Plain text with trimming
+final plain = controller.formatTerminal();
+
+// VT sequences with styles and cursor
+final vt = controller.formatTerminal(
+  emit: GhosttyFormatterFormat.GHOSTTY_FORMATTER_FORMAT_VT,
+  trim: false,
+  extra: const VtFormatterTerminalExtra.all(),
+);
+```
+
+### Stopping and cleanup
+
+```dart
+await controller.stop();  // kill subprocess
+controller.clear();       // reset terminal, clear scrollback
+controller.dispose();     // release all resources
+```
+
+## View
 
 ### GhosttyTerminalView
 
-A `CustomPaint` widget that renders terminal output and routes keyboard
-events through the Ghostty key encoder.
+A `CustomPaint` widget that renders terminal output, handles keyboard
+events through the Ghostty key encoder, and supports text selection,
+hyperlinks, and mouse reporting.
 
 ```dart
 GhosttyTerminalView(
@@ -108,6 +349,16 @@ GhosttyTerminalView(
   fontFamily: 'JetBrainsMono Nerd Font',
   cellWidthScale: 1.0,
   padding: const EdgeInsets.all(12),
+  palette: GhosttyTerminalPalette.xterm,
+  cursorColor: const Color(0xFF9AD1C0),
+  selectionColor: const Color(0x665DA9FF),
+  hyperlinkColor: const Color(0xFF61AFEF),
+  renderer: GhosttyTerminalRendererMode.formatter,
+  interactionPolicy: GhosttyTerminalInteractionPolicy.auto,
+  onSelectionChanged: (selection) { /* ... */ },
+  onCopySelection: (content) { /* ... */ },
+  onPasteRequest: () async => clipboardText,
+  onOpenHyperlink: (uri) { /* ... */ },
 )
 ```
 
@@ -118,6 +369,7 @@ GhosttyTerminalView(
 | `focusNode` | `FocusNode?` | `null` | Custom focus node |
 | `backgroundColor` | `Color` | `#0A0F14` | Canvas background |
 | `foregroundColor` | `Color` | `#E6EDF3` | Text color |
+| `chromeColor` | `Color` | `#121A24` | Terminal chrome accent color |
 | `fontSize` | `double` | `14` | Monospace font size |
 | `lineHeight` | `double` | `1.35` | Line height multiplier |
 | `fontFamily` | `String?` | `null` | Override the terminal font family |
@@ -126,87 +378,184 @@ GhosttyTerminalView(
 | `letterSpacing` | `double` | `0` | Additional character spacing |
 | `cellWidthScale` | `double` | `1` | Manual terminal cell width tuning for prompt glyph alignment |
 | `padding` | `EdgeInsets` | `all(12)` | Content padding |
-| `renderer` | `GhosttyTerminalRendererMode` | `GhosttyTerminalRendererMode.formatter` | Choose formatter rendering or native render-state rendering |
+| `palette` | `GhosttyTerminalPalette` | `xterm` | Color palette for indexed ANSI colors |
+| `cursorColor` | `Color` | `#9AD1C0` | Cursor fill color |
+| `selectionColor` | `Color` | `#665DA9FF` | Selection highlight color |
+| `hyperlinkColor` | `Color` | `#61AFEF` | Detected hyperlink text color |
+| `renderer` | `GhosttyTerminalRendererMode` | `formatter` | Choose formatter or native render-state painting |
+| `interactionPolicy` | `GhosttyTerminalInteractionPolicy` | `auto` | Resolve conflicts between text selection and terminal mouse reporting |
+| `onSelectionChanged` | callback | `null` | Called when text selection changes |
+| `onCopySelection` | callback | `null` | Called with selection content for clipboard copy |
+| `onPasteRequest` | callback | `null` | Called to retrieve clipboard text for paste |
+| `onOpenHyperlink` | callback | `null` | Called when a hyperlink is activated |
 
-`GhosttyTerminalView` now paints grapheme clusters instead of UTF-16 code
-units and exposes font-metric controls so shells with Nerd Font glyphs or
-heavier prompt redraw behavior can be tuned without forking the widget.
-
-### GhosttyTerminalController
-
-A `ChangeNotifier` managing a terminal session.
-
-- **Native:** prefers a shared PTY session through `GhosttyTerminalPtySession`
-  with fallback to `Process.start` when PTY startup is disabled or fails.
-- **Web:** same API surface — feed output through `appendDebugOutput()` and
-  read input via `write()` / `sendKey()` to connect a remote backend.
+### Renderer modes
 
 ```dart
-final controller = GhosttyTerminalController(
-  maxLines: 2000,
-  defaultShell: '/bin/bash',
-);
+// Formatter mode (default): snapshot-driven, best for scrollback and dense TUIs
+GhosttyTerminalView(
+  controller: ctrl,
+  renderer: GhosttyTerminalRendererMode.formatter,
+)
 
-await controller.start(
-  environment: ghosttyTerminalShellEnvironment(
-    platformEnvironment: ghosttyTerminalPlatformEnvironment(),
-    overrides: const {'TERM': 'xterm-256color'},
-  ),
-);
-controller.write('ls -la\n', sanitizePaste: true);
-
-controller.sendKey(
-  key: GhosttyKey.GHOSTTY_KEY_C,
-  mods: GhosttyModsMask.ctrl,
-  utf8Text: 'c',
-  unshiftedCodepoint: 0x63,
-);
-
-print(controller.title);     // window title from OSC
-print(controller.lines);     // buffered output lines
-print(controller.isRunning); // subprocess alive?
-
-await controller.stop();
-controller.dispose();
+// Render-state mode: native cell-level data, incremental dirty tracking
+GhosttyTerminalView(
+  controller: ctrl,
+  renderer: GhosttyTerminalRendererMode.renderState,
+)
 ```
 
-| Property / Method | Description |
-|-------------------|-------------|
-| `start({shell, arguments, environment})` | Start a shell subprocess |
-| `startLaunch(launch)` | Start a resolved shared shell launch plan |
-| `restartLaunch(launch)` | Restart using a resolved launch plan |
-| `startShellProfile(...)` | Start a shared shell profile such as `cleanBash` or `cleanZsh` |
-| `stop()` | Kill the subprocess |
-| `write(text, {sanitizePaste})` | Write text to stdin |
-| `writeBytes(bytes)` | Write raw bytes to stdin |
-| `sendKey(...)` | Encode and send a key event |
-| `clear()` | Clear the output buffer |
-| `title` | Current terminal title (from OSC 0/2) |
-| `lines` | Buffered output lines |
-| `isRunning` | Whether the subprocess is active |
-| `activeShellLaunch` | Last resolved launch metadata, including shell args and normalized env |
-| `ptySession` | Active shared PTY session when the native PTY backend is in use |
+### Interaction policies
 
-`ghosttyTerminalShellEnvironment(...)` is the shared helper for building a
-usable native shell environment. It preserves the caller's base environment,
-sets `TERM`, fills `HOME`-derived `XDG_*` paths, and ensures a UTF-8 locale
-when the input environment omitted one.
-
-`ghosttyTerminalShellLaunches(...)` is the shared preset resolver. It returns
-normalized launch plans for `GhosttyTerminalShellProfile.auto`,
-`GhosttyTerminalShellProfile.cleanBash`,
-`GhosttyTerminalShellProfile.cleanZsh`, and
-`GhosttyTerminalShellProfile.userShell`.
+Control how the view handles conflicts between text selection and terminal
+mouse reporting:
 
 ```dart
-final controller = GhosttyTerminalController();
-final launch = await controller.startShellProfile(
-  profile: GhosttyTerminalShellProfile.cleanBash,
-  platformEnvironment: ghosttyTerminalPlatformEnvironment(),
-);
+// Auto (default): prefer text selection unless the running program enables
+// mouse reporting
+GhosttyTerminalView(
+  controller: ctrl,
+  interactionPolicy: GhosttyTerminalInteractionPolicy.auto,
+)
 
-print(controller.activeShellLaunch?.commandLine);
-print(controller.activeShellLaunch?.environment?['TERM']);
+// Always prefer text selection
+GhosttyTerminalView(
+  controller: ctrl,
+  interactionPolicy: GhosttyTerminalInteractionPolicy.selectionFirst,
+)
+
+// Always forward to terminal mouse reporting
+GhosttyTerminalView(
+  controller: ctrl,
+  interactionPolicy: GhosttyTerminalInteractionPolicy.terminalMouseFirst,
+)
+```
+
+### Selection and clipboard
+
+Wire up selection and clipboard callbacks for copy/paste support:
+
+```dart
+GhosttyTerminalView(
+  controller: ctrl,
+  copyOptions: const GhosttyTerminalCopyOptions(
+    trimTrailingSpaces: true,
+    joinWrappedLines: false,
+  ),
+  wordBoundaryPolicy: const GhosttyTerminalWordBoundaryPolicy(
+    extraWordCharacters: '._/~:@%#?&=+-',
+    treatNonAsciiAsWord: true,
+  ),
+  onCopySelection: (content) {
+    Clipboard.setData(ClipboardData(text: content.text));
+  },
+  onPasteRequest: () async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    return data?.text;
+  },
+  onOpenHyperlink: (uri) {
+    launchUrl(Uri.parse(uri));
+  },
+)
+```
+
+## Complete example
+
+A full terminal app with shell profile selection, clipboard, and theming:
+
+```dart
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:ghostty_vte_flutter/ghostty_vte_flutter.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await initializeGhosttyVteWeb();
+  runApp(const TerminalApp());
+}
+
+class TerminalApp extends StatelessWidget {
+  const TerminalApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      theme: ThemeData.dark(),
+      home: const TerminalScreen(),
+    );
+  }
+}
+
+class TerminalScreen extends StatefulWidget {
+  const TerminalScreen({super.key});
+  @override
+  State<TerminalScreen> createState() => _TerminalScreenState();
+}
+
+class _TerminalScreenState extends State<TerminalScreen> {
+  final _ctrl = GhosttyTerminalController(
+    maxScrollback: 10000,
+    preferPty: true,
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _startShell();
+  }
+
+  Future<void> _startShell() async {
+    await _ctrl.startShellProfile(
+      profile: GhosttyTerminalShellProfile.auto,
+      platformEnvironment: ghosttyTerminalPlatformEnvironment(),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: ListenableBuilder(
+          listenable: _ctrl,
+          builder: (context, _) => Text(_ctrl.title),
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () async {
+              final launch = _ctrl.activeShellLaunch;
+              if (launch != null) {
+                await _ctrl.restartLaunch(launch);
+              }
+            },
+          ),
+        ],
+      ),
+      body: GhosttyTerminalView(
+        controller: _ctrl,
+        autofocus: true,
+        backgroundColor: const Color(0xFF0A0F14),
+        foregroundColor: const Color(0xFFE6EDF3),
+        fontSize: 14,
+        fontFamily: 'JetBrainsMono Nerd Font',
+        fontFamilyFallback: const ['monospace'],
+        onCopySelection: (content) {
+          Clipboard.setData(ClipboardData(text: content.text));
+        },
+        onPasteRequest: () async {
+          final data = await Clipboard.getData(Clipboard.kTextPlain);
+          return data?.text;
+        },
+      ),
+    );
+  }
+}
 ```
 
 ## Web setup

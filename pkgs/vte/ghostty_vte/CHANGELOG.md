@@ -1,3 +1,14 @@
+## 0.0.3+1
+
+- Auto-download prebuilt native libraries from GitHub Releases during
+  the build hook — no more manual `dart run ghostty_vte:setup` required.
+- Build hook resolution order: env var → local `.prebuilt/` → auto-download
+  (cached in `outputDirectoryShared`) → build from source.
+- SHA256 hash verification of downloaded artifacts.
+- Fixed `_findPrebuiltInProjectRoots()` to also match directories with
+  `pubspec.yaml` + `pkgs/` (monorepo/workspace roots).
+- Updated setup script default tag to `v0.0.3`.
+
 ## 0.0.2
 
 - Added `dart run ghostty_vte:setup` command to download prebuilt native

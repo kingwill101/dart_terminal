@@ -1,3 +1,7 @@
+## 0.0.3+1
+
+- Bumped `ghostty_vte` dependency to `^0.0.3` for auto-download support.
+
 ## 0.0.1+1
 
 - Bumped package version to `0.0.1+1`.
