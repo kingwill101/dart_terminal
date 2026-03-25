@@ -43,6 +43,10 @@ class TerminalStudioPage extends StatefulWidget {
   State<TerminalStudioPage> createState() => _TerminalStudioPageState();
 }
 
+enum _DemoMouseTrackingProfile { disabled, x10, normal, button, any }
+
+enum _DemoMouseFormatProfile { x10, utf8, sgr, urxvt, sgrPixels }
+
 class _TerminalStudioPageState extends State<TerminalStudioPage>
     with SingleTickerProviderStateMixin {
   late final GhosttyTerminalController _terminal;
@@ -69,6 +73,27 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
     text: '0x63',
   );
   final TextEditingController _fontFamilyController = TextEditingController();
+
+  // Clipboard/selection/hyperlink state
+  String _selectionText = '';
+  String _lastCopiedText = '';
+  String _lastHyperlink = '';
+  int _pasteRequestCount = 0;
+
+  // onWritePty activity log
+  final List<String> _writePtyLog = <String>[];
+  int _writePtyTotalBytes = 0;
+
+  // Effect callback activity tracking
+  int _bellCount = 0;
+  int _titleChangedCount = 0;
+  String _lastTitle = '';
+  int _sizeQueryCount = 0;
+  int _colorSchemeQueryCount = 0;
+  int _deviceAttributesQueryCount = 0;
+  int _enquiryCount = 0;
+  int _xtversionCount = 0;
+  final List<String> _effectLog = <String>[];
 
   static const List<_ActionOption> _actions = <_ActionOption>[
     _ActionOption('Press', GhosttyKeyAction.GHOSTTY_KEY_ACTION_PRESS),
@@ -109,7 +134,7 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
     ),
   ];
 
-  late final TabController _tabs = TabController(length: 4, vsync: this);
+  late final TabController _tabs = TabController(length: 5, vsync: this);
 
   final List<String> _activity = <String>[];
   GhosttyKeyAction _selectedAction = GhosttyKeyAction.GHOSTTY_KEY_ACTION_PRESS;
@@ -135,6 +160,13 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
   bool _pasteSafe = true;
   double _cellWidthScale = 1;
   GhosttyTerminalRendererMode _renderer = GhosttyTerminalRendererMode.formatter;
+  GhosttyTerminalInteractionPolicy _interactionPolicy =
+      GhosttyTerminalInteractionPolicy.auto;
+  _DemoMouseTrackingProfile _mouseTrackingProfile =
+      _DemoMouseTrackingProfile.disabled;
+  _DemoMouseFormatProfile _mouseFormatProfile = _DemoMouseFormatProfile.sgr;
+  bool _mouseFocusEvents = false;
+  bool _mouseAltScroll = false;
   VtOscCommand? _oscCommand;
   String? _oscError;
   List<VtSgrAttributeData> _sgrAttributes = <VtSgrAttributeData>[];
@@ -158,6 +190,14 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
     _terminal = widget.controller ?? GhosttyTerminalController();
     _ownsTerminal = widget.controller == null;
     _terminal.addListener(_onTerminalChanged);
+    _terminal.onWritePtyData = _onWritePtyData;
+    _terminal.onBellData = _onBell;
+    _terminal.onTitleChangedData = _onTitleChanged;
+    _terminal.onSizeQueryData = _onSizeQuery;
+    _terminal.onColorSchemeQueryData = _onColorSchemeQuery;
+    _terminal.onDeviceAttributesQueryData = _onDeviceAttributesQuery;
+    _terminal.onEnquiryData = _onEnquiry;
+    _terminal.onXtversionData = _onXtversion;
     if (widget.autoStart) {
       _bootstrap();
     } else {
@@ -171,6 +211,14 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
 
   @override
   void dispose() {
+    _terminal.onWritePtyData = null;
+    _terminal.onBellData = null;
+    _terminal.onTitleChangedData = null;
+    _terminal.onSizeQueryData = null;
+    _terminal.onColorSchemeQueryData = null;
+    _terminal.onDeviceAttributesQueryData = null;
+    _terminal.onEnquiryData = null;
+    _terminal.onXtversionData = null;
     _terminal.removeListener(_onTerminalChanged);
     if (_ownsTerminal) {
       _terminal.dispose();
@@ -249,12 +297,188 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
     }
   }
 
+  bool _safeTerminalMode(VtMode mode) {
+    try {
+      return _terminal.terminal.getMode(mode);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  void _applyMouseProtocolModes() {
+    try {
+      final terminal = _terminal.terminal;
+      terminal.setMode(VtModes.x10Mouse, false);
+      terminal.setMode(VtModes.normalMouse, false);
+      terminal.setMode(VtModes.buttonMouse, false);
+      terminal.setMode(VtModes.anyMouse, false);
+      terminal.setMode(VtModes.utf8Mouse, false);
+      terminal.setMode(VtModes.sgrMouse, false);
+      terminal.setMode(VtModes.urxvtMouse, false);
+      terminal.setMode(VtModes.sgrPixelsMouse, false);
+
+      switch (_mouseTrackingProfile) {
+        case _DemoMouseTrackingProfile.disabled:
+          break;
+        case _DemoMouseTrackingProfile.x10:
+          terminal.setMode(VtModes.x10Mouse, true);
+        case _DemoMouseTrackingProfile.normal:
+          terminal.setMode(VtModes.normalMouse, true);
+        case _DemoMouseTrackingProfile.button:
+          terminal.setMode(VtModes.buttonMouse, true);
+        case _DemoMouseTrackingProfile.any:
+          terminal.setMode(VtModes.anyMouse, true);
+      }
+
+      switch (_mouseFormatProfile) {
+        case _DemoMouseFormatProfile.x10:
+          break;
+        case _DemoMouseFormatProfile.utf8:
+          terminal.setMode(VtModes.utf8Mouse, true);
+        case _DemoMouseFormatProfile.sgr:
+          terminal.setMode(VtModes.sgrMouse, true);
+        case _DemoMouseFormatProfile.urxvt:
+          terminal.setMode(VtModes.urxvtMouse, true);
+        case _DemoMouseFormatProfile.sgrPixels:
+          terminal.setMode(VtModes.sgrPixelsMouse, true);
+      }
+
+      terminal.setMode(VtModes.focusEvent, _mouseFocusEvents);
+      terminal.setMode(VtModes.altScroll, _mouseAltScroll);
+    } catch (_) {}
+    _recomputeInspectorState(addLog: false);
+  }
+
+  void _syncMouseProtocolControlsFromTerminal() {
+    if (_safeTerminalMode(VtModes.anyMouse)) {
+      _mouseTrackingProfile = _DemoMouseTrackingProfile.any;
+    } else if (_safeTerminalMode(VtModes.buttonMouse)) {
+      _mouseTrackingProfile = _DemoMouseTrackingProfile.button;
+    } else if (_safeTerminalMode(VtModes.normalMouse)) {
+      _mouseTrackingProfile = _DemoMouseTrackingProfile.normal;
+    } else if (_safeTerminalMode(VtModes.x10Mouse)) {
+      _mouseTrackingProfile = _DemoMouseTrackingProfile.x10;
+    } else {
+      _mouseTrackingProfile = _DemoMouseTrackingProfile.disabled;
+    }
+
+    if (_safeTerminalMode(VtModes.sgrPixelsMouse)) {
+      _mouseFormatProfile = _DemoMouseFormatProfile.sgrPixels;
+    } else if (_safeTerminalMode(VtModes.sgrMouse)) {
+      _mouseFormatProfile = _DemoMouseFormatProfile.sgr;
+    } else if (_safeTerminalMode(VtModes.urxvtMouse)) {
+      _mouseFormatProfile = _DemoMouseFormatProfile.urxvt;
+    } else if (_safeTerminalMode(VtModes.utf8Mouse)) {
+      _mouseFormatProfile = _DemoMouseFormatProfile.utf8;
+    } else {
+      _mouseFormatProfile = _DemoMouseFormatProfile.x10;
+    }
+
+    _mouseFocusEvents = _safeTerminalMode(VtModes.focusEvent);
+    _mouseAltScroll = _safeTerminalMode(VtModes.altScroll);
+  }
+
   void _onTerminalChanged() {
     if (!mounted) {
       return;
     }
     _refreshSnapshots();
+    _syncMouseProtocolControlsFromTerminal();
     setState(() {});
+  }
+
+  void _onWritePtyData(Uint8List data) {
+    final now = DateTime.now();
+    final hh = now.hour.toString().padLeft(2, '0');
+    final mm = now.minute.toString().padLeft(2, '0');
+    final ss = now.second.toString().padLeft(2, '0');
+    final ms = now.millisecond.toString().padLeft(3, '0');
+    final hex = data.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
+    final preview = data.length <= 32 ? hex : '${hex.substring(0, 95)}...';
+    _writePtyLog.insert(0, '$hh:$mm:$ss.$ms  ${data.length}B  $preview');
+    if (_writePtyLog.length > 200) {
+      _writePtyLog.removeLast();
+    }
+    _writePtyTotalBytes += data.length;
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  void _appendEffectLog(String message) {
+    final now = DateTime.now();
+    final hh = now.hour.toString().padLeft(2, '0');
+    final mm = now.minute.toString().padLeft(2, '0');
+    final ss = now.second.toString().padLeft(2, '0');
+    final ms = now.millisecond.toString().padLeft(3, '0');
+    _effectLog.insert(0, '$hh:$mm:$ss.$ms  $message');
+    if (_effectLog.length > 200) {
+      _effectLog.removeLast();
+    }
+  }
+
+  void _onBell() {
+    _bellCount++;
+    _appendEffectLog('BEL received (#$_bellCount)');
+    if (mounted) setState(() {});
+  }
+
+  void _onTitleChanged() {
+    _titleChangedCount++;
+    _lastTitle = _terminal.title;
+    _appendEffectLog('Title changed to "$_lastTitle" (#$_titleChangedCount)');
+    if (mounted) setState(() {});
+  }
+
+  VtSizeReportSize? _onSizeQuery() {
+    _sizeQueryCount++;
+    _appendEffectLog('Size query (#$_sizeQueryCount)');
+    if (mounted) setState(() {});
+    return VtSizeReportSize(
+      rows: _terminal.rows,
+      columns: _terminal.cols,
+      cellWidth: 8,
+      cellHeight: 16,
+    );
+  }
+
+  GhosttyColorScheme? _onColorSchemeQuery() {
+    _colorSchemeQueryCount++;
+    _appendEffectLog('Color scheme query (#$_colorSchemeQueryCount)');
+    if (mounted) setState(() {});
+    return GhosttyColorScheme.GHOSTTY_COLOR_SCHEME_DARK;
+  }
+
+  VtDeviceAttributes? _onDeviceAttributesQuery() {
+    _deviceAttributesQueryCount++;
+    _appendEffectLog('Device attributes query (#$_deviceAttributesQueryCount)');
+    if (mounted) setState(() {});
+    return const VtDeviceAttributes(
+      primary: VtDeviceAttributesPrimary(
+        conformanceLevel: 62,
+        features: <int>[1, 6, 7, 22],
+      ),
+      secondary: VtDeviceAttributesSecondary(
+        deviceType: 1,
+        firmwareVersion: 10,
+      ),
+      tertiary: VtDeviceAttributesTertiary(unitId: 0),
+    );
+  }
+
+  Uint8List _onEnquiry() {
+    _enquiryCount++;
+    _appendEffectLog('ENQ received (#$_enquiryCount)');
+    if (mounted) setState(() {});
+    // Respond with an empty answerback by default.
+    return Uint8List(0);
+  }
+
+  String _onXtversion() {
+    _xtversionCount++;
+    _appendEffectLog('XTVERSION query (#$_xtversionCount)');
+    if (mounted) setState(() {});
+    return 'GhosttyVTStudio 1.0';
   }
 
   void _appendLog(String message) {
@@ -270,22 +494,7 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
 
   void _refreshSnapshots() {
     _plainSnapshot = _terminal.plainText;
-    final extra = VtFormatterTerminalExtra(
-      palette: _formatterPalette,
-      modes: _formatterModes,
-      scrollingRegion: _formatterScrollingRegion,
-      tabstops: _formatterTabstops,
-      pwd: _formatterPwd,
-      keyboard: _formatterKeyboard,
-      screen: VtFormatterScreenExtra(
-        cursor: _formatterCursor,
-        style: _formatterStyle,
-        hyperlink: _formatterHyperlink,
-        protection: _formatterProtection,
-        kittyKeyboard: _formatterKittyKeyboard,
-        charsets: _formatterCharsets,
-      ),
-    );
+    final extra = _formatterExtra;
     _vtSnapshot = _terminal.formatTerminal(
       emit: GhosttyFormatterFormat.GHOSTTY_FORMATTER_FORMAT_VT,
       extra: extra,
@@ -296,6 +505,113 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
       extra: extra,
       trim: false,
     );
+  }
+
+  VtFormatterTerminalExtra get _formatterExtra => VtFormatterTerminalExtra(
+    palette: _formatterPalette,
+    modes: _formatterModes,
+    scrollingRegion: _formatterScrollingRegion,
+    tabstops: _formatterTabstops,
+    pwd: _formatterPwd,
+    keyboard: _formatterKeyboard,
+    screen: VtFormatterScreenExtra(
+      cursor: _formatterCursor,
+      style: _formatterStyle,
+      hyperlink: _formatterHyperlink,
+      protection: _formatterProtection,
+      kittyKeyboard: _formatterKittyKeyboard,
+      charsets: _formatterCharsets,
+    ),
+  );
+
+  bool get _allFormatterExtrasEnabled =>
+      _formatterPalette &&
+      _formatterModes &&
+      _formatterScrollingRegion &&
+      _formatterTabstops &&
+      _formatterPwd &&
+      _formatterKeyboard &&
+      _formatterCursor &&
+      _formatterStyle &&
+      _formatterHyperlink &&
+      _formatterProtection &&
+      _formatterKittyKeyboard &&
+      _formatterCharsets;
+
+  void _setAllFormatterExtras(bool enabled) {
+    setState(() {
+      _formatterPalette = enabled;
+      _formatterModes = enabled;
+      _formatterScrollingRegion = enabled;
+      _formatterTabstops = enabled;
+      _formatterPwd = enabled;
+      _formatterKeyboard = enabled;
+      _formatterCursor = enabled;
+      _formatterStyle = enabled;
+      _formatterHyperlink = enabled;
+      _formatterProtection = enabled;
+      _formatterKittyKeyboard = enabled;
+      _formatterCharsets = enabled;
+      _recomputeInspectorState(addLog: false);
+    });
+  }
+
+  String _mouseProtocolSummary() {
+    try {
+      final state = _terminal.terminal.mouseProtocolState;
+      if (!state.enabled) {
+        return 'Mouse reporting: disabled';
+      }
+      return 'Mouse reporting: ${state.trackingMode?.name ?? 'unknown'}'
+          ' • ${state.format?.name ?? 'unknown'}'
+          ' • focus ${state.focusEvents ? 'on' : 'off'}'
+          ' • altScroll ${state.altScroll ? 'on' : 'off'}';
+    } catch (_) {
+      return 'Mouse reporting unavailable before native terminal init.';
+    }
+  }
+
+  String _renderSemanticSummary() {
+    final snapshot = _terminal.renderSnapshot;
+    if (snapshot == null || !snapshot.hasViewportData) {
+      return 'Render snapshot unavailable on this platform or before native viewport update.';
+    }
+
+    var promptRows = 0;
+    var continuationRows = 0;
+    var promptTextCells = 0;
+    var promptInputCells = 0;
+    var promptOutputCells = 0;
+
+    for (final row in snapshot.rowsData) {
+      if (row.isPrompt) {
+        promptRows += 1;
+      }
+      if (row.isPromptContinuation) {
+        continuationRows += 1;
+      }
+      for (final cell in row.cells) {
+        if (cell.isPromptText) {
+          promptTextCells += 1;
+        }
+        if (cell.isPromptInput) {
+          promptInputCells += 1;
+        }
+        if (cell.isPromptOutput) {
+          promptOutputCells += 1;
+        }
+      }
+    }
+
+    final cursor = snapshot.cursor;
+    return 'rows=${snapshot.rowsData.length}\n'
+        'promptRows=$promptRows\n'
+        'promptContinuationRows=$continuationRows\n'
+        'promptTextCells=$promptTextCells\n'
+        'promptInputCells=$promptInputCells\n'
+        'promptOutputCells=$promptOutputCells\n'
+        'cursorVisible=${cursor.visible}\n'
+        'cursorViewport=${cursor.hasViewportPosition ? '${cursor.row},${cursor.col}' : '(offscreen)'}';
   }
 
   void _recomputeInspectorState({
@@ -402,6 +718,24 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
     _appendLog(
       sent ? 'Sent key ${key.name}.' : 'Key send failed (terminal stopped).',
     );
+    setState(() {});
+  }
+
+  void _sendDemoMouse() {
+    final sent = _terminal.sendMouse(
+      action: GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_PRESS,
+      button: GhosttyMouseButton.GHOSTTY_MOUSE_BUTTON_LEFT,
+      position: const VtMousePosition(x: 16, y: 16),
+      size: const VtMouseEncoderSize(
+        screenWidth: 1280,
+        screenHeight: 720,
+        cellWidth: 10,
+        cellHeight: 20,
+      ),
+      trackingMode: GhosttyMouseTrackingMode.GHOSTTY_MOUSE_TRACKING_NORMAL,
+      format: GhosttyMouseFormat.GHOSTTY_MOUSE_FORMAT_SGR,
+    );
+    _appendLog(sent ? 'Sent demo mouse event.' : 'Mouse send failed.');
     setState(() {});
   }
 
@@ -524,241 +858,422 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
   }
 
   Widget _buildTerminalColumn(ThemeData theme) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        if (!kIsWeb) ...<Widget>[
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: GhosttyTerminalShellProfile.values
-                .map(
-                  (profile) => ChoiceChip(
-                    label: Text(profile.label),
-                    selected: _selectedShellProfile == profile,
-                    onSelected: (_) => _selectShellProfile(profile),
-                  ),
-                )
-                .toList(),
-          ),
-          const SizedBox(height: 12),
-        ],
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final terminalHeight = constraints.maxHeight.isFinite
+            ? (constraints.maxHeight * 0.42).clamp(220.0, 420.0)
+            : 320.0;
+        return ListView(
           children: <Widget>[
-            FilledButton.icon(
-              onPressed: _sendCommand,
-              icon: const Icon(Icons.subdirectory_arrow_left),
-              label: const Text('Send Command'),
+            if (!kIsWeb) ...<Widget>[
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: GhosttyTerminalShellProfile.values
+                    .map(
+                      (profile) => ChoiceChip(
+                        label: Text(profile.label),
+                        selected: _selectedShellProfile == profile,
+                        onSelected: (_) => _selectShellProfile(profile),
+                      ),
+                    )
+                    .toList(),
+              ),
+              const SizedBox(height: 12),
+            ],
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: <Widget>[
+                FilledButton.icon(
+                  onPressed: _sendCommand,
+                  icon: const Icon(Icons.subdirectory_arrow_left),
+                  label: const Text('Send Command'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _injectDemoOutput,
+                  icon: const Icon(Icons.auto_awesome),
+                  label: const Text('Inject VT Demo'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _clearTerminal,
+                  icon: const Icon(Icons.layers_clear),
+                  label: const Text('Reset'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _restartTerminal,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Restart Shell'),
+                ),
+                _StatusPill(
+                  label: _terminal.isRunning ? 'Running' : 'Stopped',
+                  color: _terminal.isRunning
+                      ? const Color(0xFF2BD576)
+                      : const Color(0xFFD65C5C),
+                ),
+                _StatusPill(
+                  label: '${_terminal.cols} x ${_terminal.rows}',
+                  color: theme.colorScheme.secondary,
+                ),
+                _StatusPill(
+                  label: '${_terminal.lineCount} lines',
+                  color: theme.colorScheme.tertiary,
+                ),
+                _StatusPill(
+                  label: _currentShellLabel,
+                  color: theme.colorScheme.primary,
+                ),
+              ],
             ),
-            OutlinedButton.icon(
-              onPressed: _injectDemoOutput,
-              icon: const Icon(Icons.auto_awesome),
-              label: const Text('Inject VT Demo'),
-            ),
-            OutlinedButton.icon(
-              onPressed: _clearTerminal,
-              icon: const Icon(Icons.layers_clear),
-              label: const Text('Reset'),
-            ),
-            OutlinedButton.icon(
-              onPressed: _restartTerminal,
-              icon: const Icon(Icons.refresh),
-              label: const Text('Restart Shell'),
-            ),
-            _StatusPill(
-              label: _terminal.isRunning ? 'Running' : 'Stopped',
-              color: _terminal.isRunning
-                  ? const Color(0xFF2BD576)
-                  : const Color(0xFFD65C5C),
-            ),
-            _StatusPill(
-              label: '${_terminal.cols} x ${_terminal.rows}',
-              color: theme.colorScheme.secondary,
-            ),
-            _StatusPill(
-              label: '${_terminal.lineCount} lines',
-              color: theme.colorScheme.tertiary,
-            ),
-            _StatusPill(
-              label: _currentShellLabel,
-              color: theme.colorScheme.primary,
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _commandController,
-          onChanged: (_) => setState(() {
-            _pasteSafe = GhosttyVt.isPasteSafe(_commandController.text);
-          }),
-          decoration: InputDecoration(
-            labelText: 'Shell command or pasted text',
-            helperText: _pasteSafe
-                ? 'Paste-safe input'
-                : 'Paste safety would block this input',
-            helperStyle: TextStyle(
-              color: _pasteSafe
-                  ? const Color(0xFF76E5B1)
-                  : const Color(0xFFFFA899),
-            ),
-            border: const OutlineInputBorder(),
-            suffixIcon: Icon(
-              _pasteSafe ? Icons.verified : Icons.warning_amber_rounded,
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: <Widget>[
-            SizedBox(
-              width: 280,
-              child: TextField(
-                controller: _fontFamilyController,
-                onChanged: (_) => setState(() {}),
-                decoration: const InputDecoration(
-                  labelText: 'Terminal font family',
-                  hintText: 'JetBrainsMono Nerd Font',
-                  border: OutlineInputBorder(),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _commandController,
+              onChanged: (_) => setState(() {
+                _pasteSafe = GhosttyVt.isPasteSafe(_commandController.text);
+              }),
+              decoration: InputDecoration(
+                labelText: 'Shell command or pasted text',
+                helperText: _pasteSafe
+                    ? 'Paste-safe input'
+                    : 'Paste safety would block this input',
+                helperStyle: TextStyle(
+                  color: _pasteSafe
+                      ? const Color(0xFF76E5B1)
+                      : const Color(0xFFFFA899),
+                ),
+                border: const OutlineInputBorder(),
+                suffixIcon: Icon(
+                  _pasteSafe ? Icons.verified : Icons.warning_amber_rounded,
                 ),
               ),
             ),
-            ConstrainedBox(
-              constraints: const BoxConstraints(minWidth: 240, maxWidth: 360),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Text(
-                    'Cell width scale ${_cellWidthScale.toStringAsFixed(2)}',
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: <Widget>[
+                SizedBox(
+                  width: 280,
+                  child: TextField(
+                    controller: _fontFamilyController,
+                    onChanged: (_) => setState(() {}),
+                    decoration: const InputDecoration(
+                      labelText: 'Terminal font family',
+                      hintText: 'JetBrainsMono Nerd Font',
+                      border: OutlineInputBorder(),
+                    ),
                   ),
-                  Slider(
-                    value: _cellWidthScale,
-                    min: 0.75,
-                    max: 1.4,
-                    divisions: 13,
-                    label: _cellWidthScale.toStringAsFixed(2),
-                    onChanged: (value) => setState(() {
-                      _cellWidthScale = value;
-                    }),
+                ),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    minWidth: 240,
+                    maxWidth: 360,
                   ),
-                ],
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        'Cell width scale ${_cellWidthScale.toStringAsFixed(2)}',
+                      ),
+                      Slider(
+                        value: _cellWidthScale,
+                        min: 0.75,
+                        max: 1.4,
+                        divisions: 13,
+                        label: _cellWidthScale.toStringAsFixed(2),
+                        onChanged: (value) => setState(() {
+                          _cellWidthScale = value;
+                        }),
+                      ),
+                    ],
+                  ),
+                ),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: <Widget>[
+                    for (final mode in _rendererModes)
+                      mode.enabledOnWeb || !kIsWeb
+                          ? ChoiceChip(
+                              key: ValueKey<String>(
+                                'render-mode-${mode.value.name}',
+                              ),
+                              label: Text(mode.label),
+                              selected: _renderer == mode.value,
+                              onSelected: (_) => setState(() {
+                                _renderer = mode.value;
+                              }),
+                            )
+                          : Tooltip(
+                              message:
+                                  mode.unavailableReason ??
+                                  'Render mode unavailable on web',
+                              child: ChoiceChip(
+                                key: ValueKey<String>(
+                                  'render-mode-${mode.value.name}',
+                                ),
+                                label: Text(mode.label),
+                                selected: _renderer == mode.value,
+                                onSelected: null,
+                              ),
+                            ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text('Renderer: ${_renderer.name}'),
+                const SizedBox(height: 8),
+                SegmentedButton<GhosttyTerminalInteractionPolicy>(
+                  segments:
+                      const <ButtonSegment<GhosttyTerminalInteractionPolicy>>[
+                        ButtonSegment<GhosttyTerminalInteractionPolicy>(
+                          value: GhosttyTerminalInteractionPolicy.auto,
+                          label: Text('Auto'),
+                          icon: Icon(Icons.tune),
+                        ),
+                        ButtonSegment<GhosttyTerminalInteractionPolicy>(
+                          value:
+                              GhosttyTerminalInteractionPolicy.selectionFirst,
+                          label: Text('Selection First'),
+                          icon: Icon(Icons.select_all),
+                        ),
+                        ButtonSegment<GhosttyTerminalInteractionPolicy>(
+                          value: GhosttyTerminalInteractionPolicy
+                              .terminalMouseFirst,
+                          label: Text('Terminal Mouse'),
+                          icon: Icon(Icons.mouse),
+                        ),
+                      ],
+                  selected: <GhosttyTerminalInteractionPolicy>{
+                    _interactionPolicy,
+                  },
+                  onSelectionChanged:
+                      (Set<GhosttyTerminalInteractionPolicy> selection) {
+                        setState(() {
+                          _interactionPolicy = selection.first;
+                        });
+                      },
+                ),
+                const SizedBox(height: 8),
+                Text('Interaction: ${_interactionPolicy.name}'),
+                const SizedBox(height: 4),
+                Text(_mouseProtocolSummary()),
+                const SizedBox(height: 8),
+                const Text('Mouse Tracking'),
+                SegmentedButton<_DemoMouseTrackingProfile>(
+                  segments: const <ButtonSegment<_DemoMouseTrackingProfile>>[
+                    ButtonSegment<_DemoMouseTrackingProfile>(
+                      value: _DemoMouseTrackingProfile.disabled,
+                      label: Text('Disabled'),
+                    ),
+                    ButtonSegment<_DemoMouseTrackingProfile>(
+                      value: _DemoMouseTrackingProfile.x10,
+                      label: Text('X10'),
+                    ),
+                    ButtonSegment<_DemoMouseTrackingProfile>(
+                      value: _DemoMouseTrackingProfile.normal,
+                      label: Text('Normal'),
+                    ),
+                    ButtonSegment<_DemoMouseTrackingProfile>(
+                      value: _DemoMouseTrackingProfile.button,
+                      label: Text('Button'),
+                    ),
+                    ButtonSegment<_DemoMouseTrackingProfile>(
+                      value: _DemoMouseTrackingProfile.any,
+                      label: Text('Any'),
+                    ),
+                  ],
+                  selected: <_DemoMouseTrackingProfile>{_mouseTrackingProfile},
+                  onSelectionChanged:
+                      (Set<_DemoMouseTrackingProfile> selection) {
+                        setState(() {
+                          _mouseTrackingProfile = selection.first;
+                        });
+                        _applyMouseProtocolModes();
+                      },
+                ),
+                const SizedBox(height: 8),
+                const Text('Mouse Format'),
+                SegmentedButton<_DemoMouseFormatProfile>(
+                  segments: const <ButtonSegment<_DemoMouseFormatProfile>>[
+                    ButtonSegment<_DemoMouseFormatProfile>(
+                      value: _DemoMouseFormatProfile.x10,
+                      label: Text('X10'),
+                    ),
+                    ButtonSegment<_DemoMouseFormatProfile>(
+                      value: _DemoMouseFormatProfile.utf8,
+                      label: Text('UTF8'),
+                    ),
+                    ButtonSegment<_DemoMouseFormatProfile>(
+                      value: _DemoMouseFormatProfile.sgr,
+                      label: Text('SGR'),
+                    ),
+                    ButtonSegment<_DemoMouseFormatProfile>(
+                      value: _DemoMouseFormatProfile.urxvt,
+                      label: Text('URXVT'),
+                    ),
+                    ButtonSegment<_DemoMouseFormatProfile>(
+                      value: _DemoMouseFormatProfile.sgrPixels,
+                      label: Text('SGR Pixels'),
+                    ),
+                  ],
+                  selected: <_DemoMouseFormatProfile>{_mouseFormatProfile},
+                  onSelectionChanged: (Set<_DemoMouseFormatProfile> selection) {
+                    setState(() {
+                      _mouseFormatProfile = selection.first;
+                    });
+                    _applyMouseProtocolModes();
+                  },
+                ),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: <Widget>[
+                    FilterChip(
+                      label: const Text('Focus Events'),
+                      selected: _mouseFocusEvents,
+                      onSelected: (selected) {
+                        setState(() {
+                          _mouseFocusEvents = selected;
+                        });
+                        _applyMouseProtocolModes();
+                      },
+                    ),
+                    FilterChip(
+                      label: const Text('Alt Scroll'),
+                      selected: _mouseAltScroll,
+                      onSelected: (selected) {
+                        setState(() {
+                          _mouseAltScroll = selected;
+                        });
+                        _applyMouseProtocolModes();
+                      },
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: terminalHeight,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: theme.colorScheme.outlineVariant),
+                  boxShadow: const <BoxShadow>[
+                    BoxShadow(
+                      color: Color(0x33000000),
+                      blurRadius: 28,
+                      offset: Offset(0, 12),
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(18),
+                  child: GhosttyTerminalView(
+                    controller: _terminal,
+                    autofocus: true,
+                    chromeColor: const Color(0xFF10212C),
+                    backgroundColor: const Color(0xFF060D13),
+                    foregroundColor: const Color(0xFFE7F8F5),
+                    fontSize: 14,
+                    lineHeight: 1.32,
+                    fontFamily: _fontFamilyController.text.trim().isEmpty
+                        ? null
+                        : _fontFamilyController.text.trim(),
+                    cellWidthScale: _cellWidthScale,
+                    renderer: _renderer,
+                    interactionPolicy: _interactionPolicy,
+                    padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+                    onSelectionChanged: (selection) {
+                      setState(() {
+                        _selectionText = selection != null
+                            ? '${selection.base} -> ${selection.extent}'
+                            : '';
+                      });
+                      _appendLog(
+                        selection != null
+                            ? 'Selection changed: ${selection.base} -> ${selection.extent}'
+                            : 'Selection cleared.',
+                      );
+                    },
+                    onCopySelection: (text) async {
+                      await Clipboard.setData(ClipboardData(text: text));
+                      setState(() {
+                        _lastCopiedText = text.length > 120
+                            ? '${text.substring(0, 120)}...'
+                            : text;
+                      });
+                      _appendLog('Copied ${text.length} chars to clipboard.');
+                    },
+                    onPasteRequest: () async {
+                      setState(() {
+                        _pasteRequestCount += 1;
+                      });
+                      _appendLog('Paste requested (#$_pasteRequestCount).');
+                      final data = await Clipboard.getData(
+                        Clipboard.kTextPlain,
+                      );
+                      return data?.text;
+                    },
+                    onOpenHyperlink: (uri) async {
+                      setState(() {
+                        _lastHyperlink = uri;
+                      });
+                      _appendLog('Hyperlink activated: $uri');
+                    },
+                  ),
+                ),
               ),
             ),
+            const SizedBox(height: 12),
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: <Widget>[
-                for (final mode in _rendererModes)
-                  mode.enabledOnWeb || !kIsWeb
-                      ? ChoiceChip(
-                          key: ValueKey<String>(
-                            'render-mode-${mode.value.name}',
-                          ),
-                          label: Text(mode.label),
-                          selected: _renderer == mode.value,
-                          onSelected: (_) => setState(() {
-                            _renderer = mode.value;
-                          }),
-                        )
-                      : Tooltip(
-                          message:
-                              mode.unavailableReason ??
-                              'Render mode unavailable on web',
-                          child: ChoiceChip(
-                            key: ValueKey<String>(
-                              'render-mode-${mode.value.name}',
-                            ),
-                            label: Text(mode.label),
-                            selected: _renderer == mode.value,
-                            onSelected: null,
-                          ),
-                        ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text('Renderer: ${_renderer.name}'),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Expanded(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: theme.colorScheme.outlineVariant),
-              boxShadow: const <BoxShadow>[
-                BoxShadow(
-                  color: Color(0x33000000),
-                  blurRadius: 28,
-                  offset: Offset(0, 12),
+                FilledButton.tonal(
+                  onPressed: () =>
+                      _sendQuickKey(GhosttyKey.GHOSTTY_KEY_ARROW_UP),
+                  child: const Text('Up'),
+                ),
+                FilledButton.tonal(
+                  onPressed: () =>
+                      _sendQuickKey(GhosttyKey.GHOSTTY_KEY_ARROW_LEFT),
+                  child: const Text('Left'),
+                ),
+                FilledButton.tonal(
+                  onPressed: () =>
+                      _sendQuickKey(GhosttyKey.GHOSTTY_KEY_ARROW_RIGHT),
+                  child: const Text('Right'),
+                ),
+                FilledButton.tonal(
+                  onPressed: () =>
+                      _sendQuickKey(GhosttyKey.GHOSTTY_KEY_BACKSPACE),
+                  child: const Text('Backspace'),
+                ),
+                FilledButton.tonal(
+                  onPressed: () => _sendQuickKey(
+                    GhosttyKey.GHOSTTY_KEY_C,
+                    mods: GhosttyModsMask.ctrl,
+                    utf8Text: 'c',
+                  ),
+                  child: const Text('Ctrl+C'),
+                ),
+                FilledButton.tonal(
+                  onPressed: () => _sendQuickKey(GhosttyKey.GHOSTTY_KEY_TAB),
+                  child: const Text('Tab'),
+                ),
+                FilledButton.tonal(
+                  onPressed: () => _sendQuickKey(GhosttyKey.GHOSTTY_KEY_ENTER),
+                  child: const Text('Enter'),
                 ),
               ],
             ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(18),
-              child: GhosttyTerminalView(
-                controller: _terminal,
-                autofocus: true,
-                chromeColor: const Color(0xFF10212C),
-                backgroundColor: const Color(0xFF060D13),
-                foregroundColor: const Color(0xFFE7F8F5),
-                fontSize: 14,
-                lineHeight: 1.32,
-                fontFamily: _fontFamilyController.text.trim().isEmpty
-                    ? null
-                    : _fontFamilyController.text.trim(),
-                cellWidthScale: _cellWidthScale,
-                renderer: _renderer,
-                padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: <Widget>[
-            FilledButton.tonal(
-              onPressed: () => _sendQuickKey(GhosttyKey.GHOSTTY_KEY_ARROW_UP),
-              child: const Text('Up'),
-            ),
-            FilledButton.tonal(
-              onPressed: () => _sendQuickKey(GhosttyKey.GHOSTTY_KEY_ARROW_LEFT),
-              child: const Text('Left'),
-            ),
-            FilledButton.tonal(
-              onPressed: () =>
-                  _sendQuickKey(GhosttyKey.GHOSTTY_KEY_ARROW_RIGHT),
-              child: const Text('Right'),
-            ),
-            FilledButton.tonal(
-              onPressed: () => _sendQuickKey(GhosttyKey.GHOSTTY_KEY_BACKSPACE),
-              child: const Text('Backspace'),
-            ),
-            FilledButton.tonal(
-              onPressed: () => _sendQuickKey(
-                GhosttyKey.GHOSTTY_KEY_C,
-                mods: GhosttyModsMask.ctrl,
-                utf8Text: 'c',
-              ),
-              child: const Text('Ctrl+C'),
-            ),
-            FilledButton.tonal(
-              onPressed: () => _sendQuickKey(GhosttyKey.GHOSTTY_KEY_TAB),
-              child: const Text('Tab'),
-            ),
-            FilledButton.tonal(
-              onPressed: () => _sendQuickKey(GhosttyKey.GHOSTTY_KEY_ENTER),
-              child: const Text('Enter'),
-            ),
           ],
-        ),
-      ],
+        );
+      },
     );
   }
 
@@ -778,6 +1293,7 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
               Tab(text: 'Key Encoder'),
               Tab(text: 'Parsers'),
               Tab(text: 'Session'),
+              Tab(text: 'Terminal'),
             ],
           ),
           Expanded(
@@ -788,6 +1304,7 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
                 _buildKeyTab(),
                 _buildParserTab(),
                 _buildSessionTab(),
+                _buildTerminalTab(),
               ],
             ),
           ),
@@ -809,6 +1326,11 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
           spacing: 8,
           runSpacing: 8,
           children: <Widget>[
+            FilterChip(
+              label: const Text('All Extras'),
+              selected: _allFormatterExtrasEnabled,
+              onSelected: _setAllFormatterExtras,
+            ),
             _boolChip(
               'Palette',
               _formatterPalette,
@@ -913,6 +1435,8 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
         _snapshotCard('VT Output', _vtSnapshot),
         const SizedBox(height: 12),
         _snapshotCard('HTML Output', _htmlSnapshot),
+        const SizedBox(height: 12),
+        _snapshotCard('Render Semantics', _renderSemanticSummary()),
       ],
     );
   }
@@ -1066,6 +1590,12 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
           icon: const Icon(Icons.keyboard),
           label: const Text('Send Key Event'),
         ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: _sendDemoMouse,
+          icon: const Icon(Icons.mouse),
+          label: const Text('Send Demo Mouse Event'),
+        ),
       ],
     );
   }
@@ -1121,6 +1651,195 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
                   : _sgrAttributes
                         .map((attr) => _describeSgr(attr))
                         .join('\n')),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTerminalTab() {
+    String terminalState;
+    try {
+      final vt = _terminal.terminal;
+      final cursor = vt.cursorPosition;
+      final screen = vt.isPrimaryScreen
+          ? 'primary'
+          : vt.isAlternateScreen
+          ? 'alternate'
+          : 'unknown';
+      final scrollbar = vt.scrollbar;
+      terminalState =
+          'title="${vt.title}"\n'
+          'pwd="${vt.pwd}"\n'
+          'cursor=(${cursor.x}, ${cursor.y})\n'
+          'cursorPendingWrap=${vt.cursorPendingWrap}\n'
+          'activeScreen=$screen\n'
+          'totalRows=${vt.totalRows}  scrollbackRows=${vt.scrollbackRows}\n'
+          'size=${vt.widthPx}x${vt.heightPx} px\n'
+          'scrollbar: offset=${scrollbar.offset} / total=${scrollbar.total} visible=${scrollbar.length}\n'
+          'mouseTracking=${vt.mouseTracking}\n'
+          'bracketedPaste=${_safeTerminalMode(VtModes.bracketedPaste)}\n'
+          'cursorKeys=${_safeTerminalMode(VtModes.cursorKeys)}\n'
+          'kittyKeyboardFlags=${vt.kittyKeyboardFlags}\n'
+          '${_mouseProtocolSummary()}';
+    } catch (_) {
+      terminalState = '(terminal not yet initialized)';
+    }
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: <Widget>[
+        _snapshotCard('Terminal State', terminalState),
+        const SizedBox(height: 12),
+        _snapshotCard(
+          'Clipboard / Selection',
+          'selection=$_selectionText\n'
+              'lastCopied=${_lastCopiedText.isEmpty ? '(none)' : _lastCopiedText}\n'
+              'lastHyperlink=${_lastHyperlink.isEmpty ? '(none)' : _lastHyperlink}\n'
+              'pasteRequests=$_pasteRequestCount',
+        ),
+        const SizedBox(height: 12),
+
+        // --- Trigger Effects ---
+        Row(
+          children: <Widget>[
+            const Text(
+              'Trigger Effects',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            ),
+            const Spacer(),
+            TextButton(
+              onPressed: () => setState(() {
+                _bellCount = 0;
+                _titleChangedCount = 0;
+                _lastTitle = '';
+                _sizeQueryCount = 0;
+                _colorSchemeQueryCount = 0;
+                _deviceAttributesQueryCount = 0;
+                _enquiryCount = 0;
+                _xtversionCount = 0;
+                _effectLog.clear();
+              }),
+              child: const Text('Reset'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: <Widget>[
+            _triggerButton(
+              label: 'BEL',
+              tooltip: 'Send BEL character (0x07)',
+              sequence: '\x07',
+            ),
+            _triggerButton(
+              label: 'Set Title',
+              tooltip: r'Send OSC 2 ; Demo Title BEL',
+              sequence: '\x1b]2;Demo Title\x07',
+            ),
+            _triggerButton(
+              label: 'Size Query',
+              tooltip: 'Send CSI 18 t (text area size)',
+              sequence: '\x1b[18t',
+            ),
+            _triggerButton(
+              label: 'Color Scheme',
+              tooltip: 'Send CSI ? 996 n',
+              sequence: '\x1b[?996n',
+            ),
+            _triggerButton(
+              label: 'DA1',
+              tooltip: 'Send CSI c (primary device attributes)',
+              sequence: '\x1b[c',
+            ),
+            _triggerButton(
+              label: 'DA2',
+              tooltip: 'Send CSI > c (secondary device attributes)',
+              sequence: '\x1b[>c',
+            ),
+            _triggerButton(
+              label: 'DA3',
+              tooltip: 'Send CSI = c (tertiary device attributes)',
+              sequence: '\x1b[=c',
+            ),
+            _triggerButton(
+              label: 'ENQ',
+              tooltip: 'Send ENQ character (0x05)',
+              sequence: '\x05',
+            ),
+            _triggerButton(
+              label: 'XTVERSION',
+              tooltip: 'Send CSI > q',
+              sequence: '\x1b[>q',
+            ),
+            _triggerButton(
+              label: 'DSR',
+              tooltip: 'Send CSI 5 n (device status report)',
+              sequence: '\x1b[5n',
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        _snapshotCard(
+          'Effect Callback Counters',
+          'bell=$_bellCount\n'
+              'titleChanged=$_titleChangedCount  title="$_lastTitle"\n'
+              'sizeQuery=$_sizeQueryCount\n'
+              'colorSchemeQuery=$_colorSchemeQueryCount\n'
+              'deviceAttributesQuery=$_deviceAttributesQueryCount\n'
+              'enquiry=$_enquiryCount\n'
+              'xtversion=$_xtversionCount',
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: <Widget>[
+            const Text(
+              'Effect Callback Log',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            ),
+            const Spacer(),
+            TextButton(
+              onPressed: () => setState(() => _effectLog.clear()),
+              child: const Text('Clear'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        _snapshotCard(
+          'Effect Log',
+          _effectLog.isEmpty
+              ? '(no effect callbacks triggered yet — press a button above)'
+              : _effectLog.take(60).join('\n'),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: <Widget>[
+            const Text(
+              'onWritePty Activity',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            ),
+            const Spacer(),
+            Text(
+              '$_writePtyTotalBytes bytes total',
+              style: const TextStyle(fontSize: 12, color: Color(0xFF76E5B1)),
+            ),
+            const SizedBox(width: 8),
+            TextButton(
+              onPressed: () => setState(() {
+                _writePtyLog.clear();
+                _writePtyTotalBytes = 0;
+              }),
+              child: const Text('Clear'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        _snapshotCard(
+          'Write PTY Log',
+          _writePtyLog.isEmpty
+              ? '(no pty writes yet — trigger with DSR queries, DA responses, etc.)'
+              : _writePtyLog.take(60).join('\n'),
         ),
       ],
     );
@@ -1188,6 +1907,30 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _triggerButton({
+    required String label,
+    required String tooltip,
+    required String sequence,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFF193041),
+          foregroundColor: const Color(0xFF76E5B1),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          textStyle: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+        ),
+        onPressed: () {
+          _terminal.terminal.write(sequence);
+          _appendEffectLog('Injected: $label');
+          setState(() {});
+        },
+        child: Text(label),
       ),
     );
   }
