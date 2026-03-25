@@ -147,6 +147,329 @@ enum GhosttySgrUnderline {
   }
 }
 
+/// Focus event types for focus reporting mode (mode 1004).
+enum GhosttyFocusEvent {
+  GHOSTTY_FOCUS_GAINED(0),
+  GHOSTTY_FOCUS_LOST(1);
+
+  const GhosttyFocusEvent(this.value);
+  final int value;
+
+  static GhosttyFocusEvent fromValue(int value) => switch (value) {
+    0 => GHOSTTY_FOCUS_GAINED,
+    1 => GHOSTTY_FOCUS_LOST,
+    _ => throw ArgumentError('Unknown value for GhosttyFocusEvent: $value'),
+  };
+}
+
+/// DECRPM report state values.
+enum GhosttyModeReportState {
+  GHOSTTY_MODE_REPORT_NOT_RECOGNIZED(0),
+  GHOSTTY_MODE_REPORT_SET(1),
+  GHOSTTY_MODE_REPORT_RESET(2),
+  GHOSTTY_MODE_REPORT_PERMANENTLY_SET(3),
+  GHOSTTY_MODE_REPORT_PERMANENTLY_RESET(4);
+
+  const GhosttyModeReportState(this.value);
+  final int value;
+
+  static GhosttyModeReportState fromValue(int value) => switch (value) {
+    0 => GHOSTTY_MODE_REPORT_NOT_RECOGNIZED,
+    1 => GHOSTTY_MODE_REPORT_SET,
+    2 => GHOSTTY_MODE_REPORT_RESET,
+    3 => GHOSTTY_MODE_REPORT_PERMANENTLY_SET,
+    4 => GHOSTTY_MODE_REPORT_PERMANENTLY_RESET,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyModeReportState: $value',
+    ),
+  };
+}
+
+/// Cell content tag.
+enum GhosttyCellContentTag {
+  GHOSTTY_CELL_CONTENT_CODEPOINT(0),
+  GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME(1),
+  GHOSTTY_CELL_CONTENT_BG_COLOR_PALETTE(2),
+  GHOSTTY_CELL_CONTENT_BG_COLOR_RGB(3);
+
+  const GhosttyCellContentTag(this.value);
+  final int value;
+
+  static GhosttyCellContentTag fromValue(int value) => switch (value) {
+    0 => GHOSTTY_CELL_CONTENT_CODEPOINT,
+    1 => GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME,
+    2 => GHOSTTY_CELL_CONTENT_BG_COLOR_PALETTE,
+    3 => GHOSTTY_CELL_CONTENT_BG_COLOR_RGB,
+    _ => throw ArgumentError('Unknown value for GhosttyCellContentTag: $value'),
+  };
+}
+
+/// Cell wide property.
+enum GhosttyCellWide {
+  GHOSTTY_CELL_WIDE_NARROW(0),
+  GHOSTTY_CELL_WIDE_WIDE(1),
+  GHOSTTY_CELL_WIDE_SPACER_TAIL(2),
+  GHOSTTY_CELL_WIDE_SPACER_HEAD(3);
+
+  const GhosttyCellWide(this.value);
+  final int value;
+
+  static GhosttyCellWide fromValue(int value) => switch (value) {
+    0 => GHOSTTY_CELL_WIDE_NARROW,
+    1 => GHOSTTY_CELL_WIDE_WIDE,
+    2 => GHOSTTY_CELL_WIDE_SPACER_TAIL,
+    3 => GHOSTTY_CELL_WIDE_SPACER_HEAD,
+    _ => throw ArgumentError('Unknown value for GhosttyCellWide: $value'),
+  };
+}
+
+/// Semantic content type of a cell.
+enum GhosttyCellSemanticContent {
+  GHOSTTY_CELL_SEMANTIC_OUTPUT(0),
+  GHOSTTY_CELL_SEMANTIC_INPUT(1),
+  GHOSTTY_CELL_SEMANTIC_PROMPT(2);
+
+  const GhosttyCellSemanticContent(this.value);
+  final int value;
+
+  static GhosttyCellSemanticContent fromValue(int value) => switch (value) {
+    0 => GHOSTTY_CELL_SEMANTIC_OUTPUT,
+    1 => GHOSTTY_CELL_SEMANTIC_INPUT,
+    2 => GHOSTTY_CELL_SEMANTIC_PROMPT,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyCellSemanticContent: $value',
+    ),
+  };
+}
+
+/// Row semantic prompt state.
+enum GhosttyRowSemanticPrompt {
+  GHOSTTY_ROW_SEMANTIC_NONE(0),
+  GHOSTTY_ROW_SEMANTIC_PROMPT(1),
+  GHOSTTY_ROW_SEMANTIC_PROMPT_CONTINUATION(2);
+
+  const GhosttyRowSemanticPrompt(this.value);
+  final int value;
+
+  static GhosttyRowSemanticPrompt fromValue(int value) => switch (value) {
+    0 => GHOSTTY_ROW_SEMANTIC_NONE,
+    1 => GHOSTTY_ROW_SEMANTIC_PROMPT,
+    2 => GHOSTTY_ROW_SEMANTIC_PROMPT_CONTINUATION,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyRowSemanticPrompt: $value',
+    ),
+  };
+}
+
+/// Style color tags.
+enum GhosttyStyleColorTag {
+  GHOSTTY_STYLE_COLOR_NONE(0),
+  GHOSTTY_STYLE_COLOR_PALETTE(1),
+  GHOSTTY_STYLE_COLOR_RGB(2);
+
+  const GhosttyStyleColorTag(this.value);
+  final int value;
+
+  static GhosttyStyleColorTag fromValue(int value) => switch (value) {
+    0 => GHOSTTY_STYLE_COLOR_NONE,
+    1 => GHOSTTY_STYLE_COLOR_PALETTE,
+    2 => GHOSTTY_STYLE_COLOR_RGB,
+    _ => throw ArgumentError('Unknown value for GhosttyStyleColorTag: $value'),
+  };
+}
+
+/// Point reference tag.
+enum GhosttyPointTag {
+  GHOSTTY_POINT_TAG_ACTIVE(0),
+  GHOSTTY_POINT_TAG_VIEWPORT(1),
+  GHOSTTY_POINT_TAG_SCREEN(2),
+  GHOSTTY_POINT_TAG_HISTORY(3);
+
+  const GhosttyPointTag(this.value);
+  final int value;
+
+  static GhosttyPointTag fromValue(int value) => switch (value) {
+    0 => GHOSTTY_POINT_TAG_ACTIVE,
+    1 => GHOSTTY_POINT_TAG_VIEWPORT,
+    2 => GHOSTTY_POINT_TAG_SCREEN,
+    3 => GHOSTTY_POINT_TAG_HISTORY,
+    _ => throw ArgumentError('Unknown value for GhosttyPointTag: $value'),
+  };
+}
+
+/// Terminal screen identifier.
+enum GhosttyTerminalScreen {
+  GHOSTTY_TERMINAL_SCREEN_PRIMARY(0),
+  GHOSTTY_TERMINAL_SCREEN_ALTERNATE(1);
+
+  const GhosttyTerminalScreen(this.value);
+  final int value;
+
+  static GhosttyTerminalScreen fromValue(int value) => switch (value) {
+    0 => GHOSTTY_TERMINAL_SCREEN_PRIMARY,
+    1 => GHOSTTY_TERMINAL_SCREEN_ALTERNATE,
+    _ => throw ArgumentError('Unknown value for GhosttyTerminalScreen: $value'),
+  };
+}
+
+/// Dirty state of a render state after update.
+enum GhosttyRenderStateDirty {
+  GHOSTTY_RENDER_STATE_DIRTY_FALSE(0),
+  GHOSTTY_RENDER_STATE_DIRTY_PARTIAL(1),
+  GHOSTTY_RENDER_STATE_DIRTY_FULL(2);
+
+  const GhosttyRenderStateDirty(this.value);
+  final int value;
+
+  static GhosttyRenderStateDirty fromValue(int value) => switch (value) {
+    0 => GHOSTTY_RENDER_STATE_DIRTY_FALSE,
+    1 => GHOSTTY_RENDER_STATE_DIRTY_PARTIAL,
+    2 => GHOSTTY_RENDER_STATE_DIRTY_FULL,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyRenderStateDirty: $value',
+    ),
+  };
+}
+
+/// Visual style of the cursor.
+enum GhosttyRenderStateCursorVisualStyle {
+  GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR(0),
+  GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK(1),
+  GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE(2),
+  GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW(3);
+
+  const GhosttyRenderStateCursorVisualStyle(this.value);
+  final int value;
+
+  static GhosttyRenderStateCursorVisualStyle fromValue(int value) =>
+      switch (value) {
+        0 => GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR,
+        1 => GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK,
+        2 => GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE,
+        3 => GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW,
+        _ => throw ArgumentError(
+          'Unknown value for GhosttyRenderStateCursorVisualStyle: $value',
+        ),
+      };
+}
+
+/// Mouse event action type.
+enum GhosttyMouseAction {
+  GHOSTTY_MOUSE_ACTION_PRESS(0),
+  GHOSTTY_MOUSE_ACTION_RELEASE(1),
+  GHOSTTY_MOUSE_ACTION_MOTION(2);
+
+  const GhosttyMouseAction(this.value);
+  final int value;
+
+  static GhosttyMouseAction fromValue(int value) => switch (value) {
+    0 => GHOSTTY_MOUSE_ACTION_PRESS,
+    1 => GHOSTTY_MOUSE_ACTION_RELEASE,
+    2 => GHOSTTY_MOUSE_ACTION_MOTION,
+    _ => throw ArgumentError('Unknown value for GhosttyMouseAction: $value'),
+  };
+}
+
+/// Mouse button identity.
+enum GhosttyMouseButton {
+  GHOSTTY_MOUSE_BUTTON_UNKNOWN(0),
+  GHOSTTY_MOUSE_BUTTON_LEFT(1),
+  GHOSTTY_MOUSE_BUTTON_RIGHT(2),
+  GHOSTTY_MOUSE_BUTTON_MIDDLE(3),
+  GHOSTTY_MOUSE_BUTTON_FOUR(4),
+  GHOSTTY_MOUSE_BUTTON_FIVE(5),
+  GHOSTTY_MOUSE_BUTTON_SIX(6),
+  GHOSTTY_MOUSE_BUTTON_SEVEN(7),
+  GHOSTTY_MOUSE_BUTTON_EIGHT(8),
+  GHOSTTY_MOUSE_BUTTON_NINE(9),
+  GHOSTTY_MOUSE_BUTTON_TEN(10),
+  GHOSTTY_MOUSE_BUTTON_ELEVEN(11);
+
+  const GhosttyMouseButton(this.value);
+  final int value;
+
+  static GhosttyMouseButton fromValue(int value) => switch (value) {
+    0 => GHOSTTY_MOUSE_BUTTON_UNKNOWN,
+    1 => GHOSTTY_MOUSE_BUTTON_LEFT,
+    2 => GHOSTTY_MOUSE_BUTTON_RIGHT,
+    3 => GHOSTTY_MOUSE_BUTTON_MIDDLE,
+    4 => GHOSTTY_MOUSE_BUTTON_FOUR,
+    5 => GHOSTTY_MOUSE_BUTTON_FIVE,
+    6 => GHOSTTY_MOUSE_BUTTON_SIX,
+    7 => GHOSTTY_MOUSE_BUTTON_SEVEN,
+    8 => GHOSTTY_MOUSE_BUTTON_EIGHT,
+    9 => GHOSTTY_MOUSE_BUTTON_NINE,
+    10 => GHOSTTY_MOUSE_BUTTON_TEN,
+    11 => GHOSTTY_MOUSE_BUTTON_ELEVEN,
+    _ => throw ArgumentError('Unknown value for GhosttyMouseButton: $value'),
+  };
+}
+
+/// Mouse tracking mode.
+enum GhosttyMouseTrackingMode {
+  GHOSTTY_MOUSE_TRACKING_NONE(0),
+  GHOSTTY_MOUSE_TRACKING_X10(1),
+  GHOSTTY_MOUSE_TRACKING_NORMAL(2),
+  GHOSTTY_MOUSE_TRACKING_BUTTON(3),
+  GHOSTTY_MOUSE_TRACKING_ANY(4);
+
+  const GhosttyMouseTrackingMode(this.value);
+  final int value;
+
+  static GhosttyMouseTrackingMode fromValue(int value) => switch (value) {
+    0 => GHOSTTY_MOUSE_TRACKING_NONE,
+    1 => GHOSTTY_MOUSE_TRACKING_X10,
+    2 => GHOSTTY_MOUSE_TRACKING_NORMAL,
+    3 => GHOSTTY_MOUSE_TRACKING_BUTTON,
+    4 => GHOSTTY_MOUSE_TRACKING_ANY,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyMouseTrackingMode: $value',
+    ),
+  };
+}
+
+/// Mouse output format.
+enum GhosttyMouseFormat {
+  GHOSTTY_MOUSE_FORMAT_X10(0),
+  GHOSTTY_MOUSE_FORMAT_UTF8(1),
+  GHOSTTY_MOUSE_FORMAT_SGR(2),
+  GHOSTTY_MOUSE_FORMAT_URXVT(3),
+  GHOSTTY_MOUSE_FORMAT_SGR_PIXELS(4);
+
+  const GhosttyMouseFormat(this.value);
+  final int value;
+
+  static GhosttyMouseFormat fromValue(int value) => switch (value) {
+    0 => GHOSTTY_MOUSE_FORMAT_X10,
+    1 => GHOSTTY_MOUSE_FORMAT_UTF8,
+    2 => GHOSTTY_MOUSE_FORMAT_SGR,
+    3 => GHOSTTY_MOUSE_FORMAT_URXVT,
+    4 => GHOSTTY_MOUSE_FORMAT_SGR_PIXELS,
+    _ => throw ArgumentError('Unknown value for GhosttyMouseFormat: $value'),
+  };
+}
+
+/// Size report style.
+enum GhosttySizeReportStyle {
+  GHOSTTY_SIZE_REPORT_MODE_2048(0),
+  GHOSTTY_SIZE_REPORT_CSI_14_T(1),
+  GHOSTTY_SIZE_REPORT_CSI_16_T(2),
+  GHOSTTY_SIZE_REPORT_CSI_18_T(3);
+
+  const GhosttySizeReportStyle(this.value);
+  final int value;
+
+  static GhosttySizeReportStyle fromValue(int value) => switch (value) {
+    0 => GHOSTTY_SIZE_REPORT_MODE_2048,
+    1 => GHOSTTY_SIZE_REPORT_CSI_14_T,
+    2 => GHOSTTY_SIZE_REPORT_CSI_16_T,
+    3 => GHOSTTY_SIZE_REPORT_CSI_18_T,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttySizeReportStyle: $value',
+    ),
+  };
+}
+
 /// Key event action enum used by the key encoder.
 enum GhosttyKeyAction {
   GHOSTTY_KEY_ACTION_RELEASE(0),
@@ -670,6 +993,348 @@ final class VtRgbColor {
 
   @override
   String toString() => 'VtRgbColor(r: $r, g: $g, b: $b)';
+}
+
+final class VtMode {
+  const VtMode(this.mode, {this.ansi = false})
+    : assert(mode >= 0 && mode <= 0x7FFF);
+
+  final int mode;
+  final bool ansi;
+
+  int get packed => (mode & 0x7FFF) | (ansi ? 0x8000 : 0);
+}
+
+final class VtPoint {
+  const VtPoint.active(this.x, this.y)
+    : tag = GhosttyPointTag.GHOSTTY_POINT_TAG_ACTIVE;
+
+  const VtPoint.viewport(this.x, this.y)
+    : tag = GhosttyPointTag.GHOSTTY_POINT_TAG_VIEWPORT;
+
+  const VtPoint.screen(this.x, this.y)
+    : tag = GhosttyPointTag.GHOSTTY_POINT_TAG_SCREEN;
+
+  const VtPoint.history(this.x, this.y)
+    : tag = GhosttyPointTag.GHOSTTY_POINT_TAG_HISTORY;
+
+  final GhosttyPointTag tag;
+  final int x;
+  final int y;
+}
+
+final class VtStyleColor {
+  const VtStyleColor._({required this.tag, this.paletteIndex, this.rgb});
+
+  const VtStyleColor.none()
+    : this._(tag: GhosttyStyleColorTag.GHOSTTY_STYLE_COLOR_NONE);
+
+  const VtStyleColor.palette(int index)
+    : this._(
+        tag: GhosttyStyleColorTag.GHOSTTY_STYLE_COLOR_PALETTE,
+        paletteIndex: index,
+      );
+
+  const VtStyleColor.rgb(VtRgbColor value)
+    : this._(tag: GhosttyStyleColorTag.GHOSTTY_STYLE_COLOR_RGB, rgb: value);
+
+  final GhosttyStyleColorTag tag;
+  final int? paletteIndex;
+  final VtRgbColor? rgb;
+
+  bool get isSet => tag != GhosttyStyleColorTag.GHOSTTY_STYLE_COLOR_NONE;
+}
+
+final class VtStyle {
+  const VtStyle({
+    required this.foreground,
+    required this.background,
+    required this.underlineColor,
+    required this.bold,
+    required this.italic,
+    required this.faint,
+    required this.blink,
+    required this.inverse,
+    required this.invisible,
+    required this.strikethrough,
+    required this.overline,
+    required this.underline,
+  });
+
+  final VtStyleColor foreground;
+  final VtStyleColor background;
+  final VtStyleColor underlineColor;
+  final bool bold;
+  final bool italic;
+  final bool faint;
+  final bool blink;
+  final bool inverse;
+  final bool invisible;
+  final bool strikethrough;
+  final bool overline;
+  final GhosttySgrUnderline underline;
+}
+
+final class VtTerminalScrollbar {
+  const VtTerminalScrollbar({
+    required this.total,
+    required this.offset,
+    required this.length,
+  });
+
+  final int total;
+  final int offset;
+  final int length;
+}
+
+final class VtRowSnapshot {
+  const VtRowSnapshot({
+    required this.wrap,
+    required this.wrapContinuation,
+    required this.hasGrapheme,
+    required this.styled,
+    required this.hasHyperlink,
+    required this.semanticPrompt,
+    required this.kittyVirtualPlaceholder,
+    required this.dirty,
+  });
+
+  final bool wrap;
+  final bool wrapContinuation;
+  final bool hasGrapheme;
+  final bool styled;
+  final bool hasHyperlink;
+  final GhosttyRowSemanticPrompt semanticPrompt;
+  final bool kittyVirtualPlaceholder;
+  final bool dirty;
+}
+
+final class VtCellSnapshot {
+  const VtCellSnapshot({
+    required this.codepoint,
+    required this.contentTag,
+    required this.wide,
+    required this.hasText,
+    required this.hasStyling,
+    required this.styleId,
+    required this.hasHyperlink,
+    required this.isProtected,
+    required this.semanticContent,
+    this.colorPaletteIndex,
+    this.colorRgb,
+  });
+
+  final int codepoint;
+  final GhosttyCellContentTag contentTag;
+  final GhosttyCellWide wide;
+  final bool hasText;
+  final bool hasStyling;
+  final int styleId;
+  final bool hasHyperlink;
+  final bool isProtected;
+  final GhosttyCellSemanticContent semanticContent;
+  final int? colorPaletteIndex;
+  final VtRgbColor? colorRgb;
+
+  String get text => codepoint == 0 ? '' : String.fromCharCode(codepoint);
+}
+
+final class VtGridRefSnapshot {
+  const VtGridRefSnapshot({
+    required this.x,
+    required this.y,
+    required this.cell,
+    required this.row,
+    required this.style,
+    required this.graphemes,
+  });
+
+  final int x;
+  final int y;
+  final VtCellSnapshot cell;
+  final VtRowSnapshot row;
+  final VtStyle style;
+  final String graphemes;
+}
+
+final class VtRenderColors {
+  const VtRenderColors({
+    required this.background,
+    required this.foreground,
+    required this.cursor,
+    required this.palette,
+  });
+
+  final VtRgbColor background;
+  final VtRgbColor foreground;
+  final VtRgbColor? cursor;
+  final List<VtRgbColor> palette;
+}
+
+final class VtRenderCursorSnapshot {
+  const VtRenderCursorSnapshot({
+    required this.visualStyle,
+    required this.visible,
+    required this.blinking,
+    required this.passwordInput,
+    required this.hasViewportPosition,
+    this.viewportX,
+    this.viewportY,
+    this.onWideTail,
+  });
+
+  final GhosttyRenderStateCursorVisualStyle visualStyle;
+  final bool visible;
+  final bool blinking;
+  final bool passwordInput;
+  final bool hasViewportPosition;
+  final int? viewportX;
+  final int? viewportY;
+  final bool? onWideTail;
+}
+
+final class VtRenderCellSnapshot {
+  const VtRenderCellSnapshot({
+    required this.raw,
+    required this.style,
+    required this.graphemes,
+  });
+
+  final VtCellSnapshot raw;
+  final VtStyle style;
+  final String graphemes;
+}
+
+final class VtRenderRowSnapshot {
+  const VtRenderRowSnapshot({
+    required this.dirty,
+    required this.raw,
+    required this.cells,
+  });
+
+  final bool dirty;
+  final VtRowSnapshot raw;
+  final List<VtRenderCellSnapshot> cells;
+}
+
+final class VtRenderSnapshot {
+  const VtRenderSnapshot({
+    required this.cols,
+    required this.rows,
+    required this.dirty,
+    required this.colors,
+    required this.cursor,
+    required this.rowsData,
+  });
+
+  final int cols;
+  final int rows;
+  final GhosttyRenderStateDirty dirty;
+  final VtRenderColors colors;
+  final VtRenderCursorSnapshot cursor;
+  final List<VtRenderRowSnapshot> rowsData;
+}
+
+final class VtSizeReportSize {
+  const VtSizeReportSize({
+    required this.rows,
+    required this.columns,
+    required this.cellWidth,
+    required this.cellHeight,
+  });
+
+  final int rows;
+  final int columns;
+  final int cellWidth;
+  final int cellHeight;
+}
+
+/// Color scheme variants for the terminal.
+enum GhosttyColorScheme {
+  GHOSTTY_COLOR_SCHEME_LIGHT(0),
+  GHOSTTY_COLOR_SCHEME_DARK(1);
+
+  final int value;
+  const GhosttyColorScheme(this.value);
+
+  static GhosttyColorScheme fromValue(int value) => switch (value) {
+    0 => GHOSTTY_COLOR_SCHEME_LIGHT,
+    1 => GHOSTTY_COLOR_SCHEME_DARK,
+    _ => throw ArgumentError('Unknown value for GhosttyColorScheme: $value'),
+  };
+}
+
+/// Primary device attributes (DA1) response data.
+final class VtDeviceAttributesPrimary {
+  const VtDeviceAttributesPrimary({
+    required this.conformanceLevel,
+    this.features = const [],
+  });
+
+  final int conformanceLevel;
+  final List<int> features;
+}
+
+/// Secondary device attributes (DA2) response data.
+final class VtDeviceAttributesSecondary {
+  const VtDeviceAttributesSecondary({
+    required this.deviceType,
+    required this.firmwareVersion,
+    this.romCartridge = 0,
+  });
+
+  final int deviceType;
+  final int firmwareVersion;
+  final int romCartridge;
+}
+
+/// Tertiary device attributes (DA3) response data.
+final class VtDeviceAttributesTertiary {
+  const VtDeviceAttributesTertiary({required this.unitId});
+
+  final int unitId;
+}
+
+/// Device attributes response data for all three DA levels.
+final class VtDeviceAttributes {
+  const VtDeviceAttributes({
+    required this.primary,
+    required this.secondary,
+    required this.tertiary,
+  });
+
+  final VtDeviceAttributesPrimary primary;
+  final VtDeviceAttributesSecondary secondary;
+  final VtDeviceAttributesTertiary tertiary;
+}
+
+final class VtMousePosition {
+  const VtMousePosition({required this.x, required this.y});
+
+  final double x;
+  final double y;
+}
+
+final class VtMouseEncoderSize {
+  const VtMouseEncoderSize({
+    required this.screenWidth,
+    required this.screenHeight,
+    required this.cellWidth,
+    required this.cellHeight,
+    this.paddingTop = 0,
+    this.paddingBottom = 0,
+    this.paddingRight = 0,
+    this.paddingLeft = 0,
+  });
+
+  final int screenWidth;
+  final int screenHeight;
+  final int cellWidth;
+  final int cellHeight;
+  final int paddingTop;
+  final int paddingBottom;
+  final int paddingRight;
+  final int paddingLeft;
 }
 
 final class VtOscCommand {
@@ -1991,8 +2656,9 @@ final class VtKeyEncoder {
 Never _unsupportedTerminalApi(String member) {
   throw UnsupportedError(
     '$member is not available on web yet. '
-    'The wasm runtime supports VT terminals and formatters, but not the raw '
-    'allocator bridge that this member depends on.',
+    'The wasm runtime currently supports OSC, SGR, key encoding, VT '
+    'terminals, and formatters, but this newer VT surface has not been '
+    'bridged yet.',
   );
 }
 
@@ -2077,6 +2743,94 @@ final class VtAllocator {
   }
 }
 
+final class VtRenderState {
+  VtRenderState._(this._terminal);
+
+  final VtTerminal _terminal;
+  bool _closed = false;
+
+  void _ensureOpen() {
+    if (_closed) {
+      throw StateError('VtRenderState is already closed.');
+    }
+  }
+
+  void update() {
+    _ensureOpen();
+    _terminal._ensureOpen();
+    _unsupportedTerminalApi('VtRenderState.update');
+  }
+
+  VtRenderSnapshot snapshot() {
+    _ensureOpen();
+    _terminal._ensureOpen();
+    _unsupportedTerminalApi('VtRenderState.snapshot');
+  }
+
+  void close() {
+    _closed = true;
+  }
+}
+
+final class VtMouseEvent {
+  GhosttyMouseAction action = GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_PRESS;
+  GhosttyMouseButton? button;
+  int mods = 0;
+  VtMousePosition position = const VtMousePosition(x: 0, y: 0);
+  bool _closed = false;
+
+  void _ensureOpen() {
+    if (_closed) {
+      throw StateError('VtMouseEvent is already closed.');
+    }
+  }
+
+  void close() {
+    _closed = true;
+  }
+}
+
+final class VtMouseEncoder {
+  GhosttyMouseTrackingMode trackingMode =
+      GhosttyMouseTrackingMode.GHOSTTY_MOUSE_TRACKING_NONE;
+  GhosttyMouseFormat format = GhosttyMouseFormat.GHOSTTY_MOUSE_FORMAT_SGR;
+  VtMouseEncoderSize size = const VtMouseEncoderSize(
+    screenWidth: 1,
+    screenHeight: 1,
+    cellWidth: 1,
+    cellHeight: 1,
+  );
+  bool anyButtonPressed = false;
+  bool trackLastCell = false;
+  bool _closed = false;
+
+  void _ensureOpen() {
+    if (_closed) {
+      throw StateError('VtMouseEncoder is already closed.');
+    }
+  }
+
+  void setOptionsFromTerminal(VtTerminal terminal) {
+    _ensureOpen();
+    terminal._ensureOpen();
+    _unsupportedTerminalApi('VtMouseEncoder.setOptionsFromTerminal');
+  }
+
+  void reset() {
+    _ensureOpen();
+  }
+
+  Uint8List encode(VtMouseEvent event) {
+    _ensureOpen();
+    event._ensureOpen();
+    _unsupportedTerminalApi('VtMouseEncoder.encode');
+  }
+
+  void close() {
+    _closed = true;
+  }
+}
+
 final class VtTerminal {
   VtTerminal({required int cols, required int rows, int maxScrollback = 10_000})
     : _cols = _checkPositiveUint16(cols, 'cols'),
@@ -2118,6 +2872,85 @@ final class VtTerminal {
   int _rows;
   final int _maxScrollback;
 
+  /// Not yet supported on the web platform.
+  // ignore: use_setters_to_change_properties
+  set onWritePty(void Function(Uint8List data)? callback) {
+    _unsupportedTerminalApi('VtTerminal.onWritePty');
+  }
+
+  /// Not yet supported on the web platform.
+  void Function(Uint8List data)? get onWritePty =>
+      _unsupportedTerminalApi('VtTerminal.onWritePty');
+
+  /// Not yet supported on the web platform.
+  // ignore: use_setters_to_change_properties
+  set onBell(void Function()? callback) {
+    _unsupportedTerminalApi('VtTerminal.onBell');
+  }
+
+  /// Not yet supported on the web platform.
+  void Function()? get onBell => _unsupportedTerminalApi('VtTerminal.onBell');
+
+  /// Not yet supported on the web platform.
+  // ignore: use_setters_to_change_properties
+  set onTitleChanged(void Function()? callback) {
+    _unsupportedTerminalApi('VtTerminal.onTitleChanged');
+  }
+
+  /// Not yet supported on the web platform.
+  void Function()? get onTitleChanged =>
+      _unsupportedTerminalApi('VtTerminal.onTitleChanged');
+
+  /// Not yet supported on the web platform.
+  // ignore: use_setters_to_change_properties
+  set onSizeQuery(VtSizeReportSize? Function()? callback) {
+    _unsupportedTerminalApi('VtTerminal.onSizeQuery');
+  }
+
+  /// Not yet supported on the web platform.
+  VtSizeReportSize? Function()? get onSizeQuery =>
+      _unsupportedTerminalApi('VtTerminal.onSizeQuery');
+
+  /// Not yet supported on the web platform.
+  // ignore: use_setters_to_change_properties
+  set onColorSchemeQuery(GhosttyColorScheme? Function()? callback) {
+    _unsupportedTerminalApi('VtTerminal.onColorSchemeQuery');
+  }
+
+  /// Not yet supported on the web platform.
+  GhosttyColorScheme? Function()? get onColorSchemeQuery =>
+      _unsupportedTerminalApi('VtTerminal.onColorSchemeQuery');
+
+  /// Not yet supported on the web platform.
+  // ignore: use_setters_to_change_properties
+  set onDeviceAttributesQuery(VtDeviceAttributes? Function()? callback) {
+    _unsupportedTerminalApi('VtTerminal.onDeviceAttributesQuery');
+  }
+
+  /// Not yet supported on the web platform.
+  VtDeviceAttributes? Function()? get onDeviceAttributesQuery =>
+      _unsupportedTerminalApi('VtTerminal.onDeviceAttributesQuery');
+
+  /// Not yet supported on the web platform.
+  // ignore: use_setters_to_change_properties
+  set onEnquiry(Uint8List Function()? callback) {
+    _unsupportedTerminalApi('VtTerminal.onEnquiry');
+  }
+
+  /// Not yet supported on the web platform.
+  Uint8List Function()? get onEnquiry =>
+      _unsupportedTerminalApi('VtTerminal.onEnquiry');
+
+  /// Not yet supported on the web platform.
+  // ignore: use_setters_to_change_properties
+  set onXtversion(String Function()? callback) {
+    _unsupportedTerminalApi('VtTerminal.onXtversion');
+  }
+
+  /// Not yet supported on the web platform.
+  String Function()? get onXtversion =>
+      _unsupportedTerminalApi('VtTerminal.onXtversion');
+
   void _ensureOpen() {
     if (_closed) {
       throw StateError('VtTerminal is already closed.');
@@ -2141,6 +2974,81 @@ final class VtTerminal {
   int get maxScrollback {
     _ensureOpen();
     return _maxScrollback;
+  }
+
+  int get cursorX {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.cursorX');
+  }
+
+  int get cursorY {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.cursorY');
+  }
+
+  bool get cursorPendingWrap {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.cursorPendingWrap');
+  }
+
+  GhosttyTerminalScreen get activeScreen {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.activeScreen');
+  }
+
+  bool get cursorVisible {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.cursorVisible');
+  }
+
+  String get title {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.title');
+  }
+
+  String get pwd {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.pwd');
+  }
+
+  bool get mouseTracking {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.mouseTracking');
+  }
+
+  int get totalRows {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.totalRows');
+  }
+
+  int get scrollbackRows {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.scrollbackRows');
+  }
+
+  int get widthPx {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.widthPx');
+  }
+
+  int get heightPx {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.heightPx');
+  }
+
+  int get kittyKeyboardFlags {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.kittyKeyboardFlags');
+  }
+
+  VtTerminalScrollbar get scrollbar {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.scrollbar');
+  }
+
+  VtStyle get cursorStyle {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.cursorStyle');
   }
 
   void writeBytes(List<int> bytes) {
@@ -2174,7 +3082,16 @@ final class VtTerminal {
     _wasm.callInt('ghostty_terminal_reset', <Object>[_handle]);
   }
 
-  void resize({required int cols, required int rows}) {
+  /// Resizes the terminal to the given cell dimensions.
+  ///
+  /// [cellWidthPx] and [cellHeightPx] specify the pixel dimensions of a
+  /// single cell, used for pixel-based size reporting. They default to 0.
+  void resize({
+    required int cols,
+    required int rows,
+    int cellWidthPx = 0,
+    int cellHeightPx = 0,
+  }) {
     _ensureOpen();
     final checkedCols = _checkPositiveUint16(cols, 'cols');
     final checkedRows = _checkPositiveUint16(rows, 'rows');
@@ -2182,6 +3099,8 @@ final class VtTerminal {
       _handle,
       checkedCols,
       checkedRows,
+      cellWidthPx,
+      cellHeightPx,
     ]);
     _checkResult(result, 'ghostty_terminal_resize');
     _cols = checkedCols;
@@ -2228,6 +3147,16 @@ final class VtTerminal {
     final formatter = VtTerminalFormatter._(this, options);
     _formatters.add(formatter);
     return formatter;
+  }
+
+  VtGridRefSnapshot gridRef(VtPoint point) {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.gridRef');
+  }
+
+  VtRenderState createRenderState() {
+    _ensureOpen();
+    return VtRenderState._(this);
   }
 
   void close() {
@@ -2491,6 +3420,40 @@ final class GhosttyVt {
   static VtSgrParser newSgrParser() => VtSgrParser();
   static VtKeyEvent newKeyEvent() => VtKeyEvent();
   static VtKeyEncoder newKeyEncoder() => VtKeyEncoder();
+  static VtMouseEvent newMouseEvent() => VtMouseEvent();
+  static VtMouseEncoder newMouseEncoder() => VtMouseEncoder();
+
+  static Uint8List encodeFocus(GhosttyFocusEvent event) {
+    return Uint8List.fromList(
+      ascii.encode(
+        event == GhosttyFocusEvent.GHOSTTY_FOCUS_GAINED ? '\x1b[I' : '\x1b[O',
+      ),
+    );
+  }
+
+  static Uint8List encodeModeReport(VtMode mode, GhosttyModeReportState state) {
+    final prefix = mode.ansi ? '' : '?';
+    return Uint8List.fromList(
+      ascii.encode('\x1b[$prefix${mode.mode};${state.value}\$y'),
+    );
+  }
+
+  static Uint8List encodeSizeReport(
+    GhosttySizeReportStyle style,
+    VtSizeReportSize size,
+  ) {
+    final sequence = switch (style) {
+      GhosttySizeReportStyle.GHOSTTY_SIZE_REPORT_MODE_2048 =>
+        '\x1b[48;${size.rows};${size.columns};${size.cellHeight};${size.cellWidth}t',
+      GhosttySizeReportStyle.GHOSTTY_SIZE_REPORT_CSI_14_T =>
+        '\x1b[4;${size.cellHeight * size.rows};${size.cellWidth * size.columns}t',
+      GhosttySizeReportStyle.GHOSTTY_SIZE_REPORT_CSI_16_T =>
+        '\x1b[6;${size.cellHeight};${size.cellWidth}t',
+      GhosttySizeReportStyle.GHOSTTY_SIZE_REPORT_CSI_18_T =>
+        '\x1b[8;${size.rows};${size.columns}t',
+    };
+    return Uint8List.fromList(ascii.encode(sequence));
+  }
 
   static VtTerminal newTerminal({
     required int cols,
