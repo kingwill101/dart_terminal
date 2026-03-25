@@ -70,7 +70,7 @@ void main(List<String> args) async {
         await downloaded.copy(File.fromUri(bundledLibUri).path);
         _addAsset(output, input.packageName, bundledLibUri);
         return;
-      } on Exception catch (e) {
+      } on Object catch (e) {
         stderr.writeln('Download failed: $e');
         stderr.writeln('Falling back to build from source...');
       }
