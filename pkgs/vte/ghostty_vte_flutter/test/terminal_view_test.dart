@@ -1,9 +1,23 @@
+import 'dart:ui' as ui;
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostty_vte_flutter/ghostty_vte_flutter.dart';
+
+final bool _hasNativeTerminal = _hasNativeTerminalSupport();
+
+bool _hasNativeTerminalSupport() {
+  try {
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+    terminal.close();
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
 
 void main() {
   group('GhosttyTerminalView', () {
@@ -18,6 +32,7 @@ void main() {
     });
 
     Widget buildView({
+      GhosttyTerminalController? terminalController,
       bool autofocus = false,
       FocusNode? focusNode,
       Color? backgroundColor,
@@ -30,6 +45,8 @@ void main() {
           const GhosttyTerminalCopyOptions(),
       GhosttyTerminalWordBoundaryPolicy wordBoundaryPolicy =
           const GhosttyTerminalWordBoundaryPolicy(),
+      GhosttyTerminalInteractionPolicy interactionPolicy =
+          GhosttyTerminalInteractionPolicy.auto,
       EdgeInsets? padding,
       ValueChanged<GhosttyTerminalSelection?>? onSelectionChanged,
       ValueChanged<GhosttyTerminalSelectionContent<GhosttyTerminalSelection>?>?
@@ -42,7 +59,7 @@ void main() {
             width: 600,
             height: 400,
             child: GhosttyTerminalView(
-              controller: controller,
+              controller: terminalController ?? controller,
               autofocus: autofocus,
               focusNode: focusNode,
               backgroundColor: backgroundColor ?? const Color(0xFF0A0F14),
@@ -52,6 +69,7 @@ void main() {
               renderer: renderer,
               copyOptions: copyOptions,
               wordBoundaryPolicy: wordBoundaryPolicy,
+              interactionPolicy: interactionPolicy,
               padding: padding ?? const EdgeInsets.all(12),
               onSelectionChanged: onSelectionChanged,
               onSelectionContentChanged: onSelectionContentChanged,
@@ -73,6 +91,10 @@ void main() {
     });
 
     testWidgets('renders VT-backed controller output', (tester) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
       controller.appendDebugOutput('hello\r\nsecond line');
       await tester.pumpWidget(buildView());
       await tester.pump();
@@ -84,6 +106,10 @@ void main() {
     testWidgets('exposes native render-state data while the view renders', (
       tester,
     ) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
       controller.appendDebugOutput('\u001b[31mhello\u001b[0m\r\nsecond line');
       await tester.pumpWidget(
         buildView(renderer: GhosttyTerminalRendererMode.renderState),
@@ -99,6 +125,10 @@ void main() {
     testWidgets(
       'keeps painted color output consistent across formatter and renderState',
       (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
         controller.appendDebugOutput('\x1b[31;1mX\x1b[0m');
 
         await tester.pumpWidget(buildView());
@@ -125,7 +155,141 @@ void main() {
       },
     );
 
+    testWidgets(
+      'formatter and renderState paint comparable colored pixel coverage',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        controller.appendDebugOutput(
+          '\x1b[31;1mCPU\x1b[0m  '
+          '\x1b[32mRAM\x1b[0m\r\n'
+          'plain text',
+        );
+
+        final formatterKey = GlobalKey();
+        await tester.pumpWidget(
+          RepaintBoundary(
+            key: formatterKey,
+            child: buildView(
+              renderer: GhosttyTerminalRendererMode.formatter,
+              backgroundColor: const Color(0xFF0A0F14),
+              foregroundColor: const Color(0xFFE6EDF3),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final formatterStats = await _captureTerminalPaintStats(formatterKey);
+
+        final renderStateKey = GlobalKey();
+        await tester.pumpWidget(
+          RepaintBoundary(
+            key: renderStateKey,
+            child: buildView(
+              renderer: GhosttyTerminalRendererMode.renderState,
+              backgroundColor: const Color(0xFF0A0F14),
+              foregroundColor: const Color(0xFFE6EDF3),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final renderStateStats = await _captureTerminalPaintStats(
+          renderStateKey,
+        );
+
+        expect(formatterStats.nonBackgroundPixels, greaterThan(0));
+        expect(renderStateStats.nonBackgroundPixels, greaterThan(0));
+        expect(formatterStats.redPixels, greaterThan(0));
+        expect(renderStateStats.redPixels, greaterThan(0));
+        expect(formatterStats.greenPixels, greaterThan(0));
+        expect(renderStateStats.greenPixels, greaterThan(0));
+
+        final nonBackgroundRatio =
+            renderStateStats.nonBackgroundPixels /
+            formatterStats.nonBackgroundPixels;
+        final redRatio = renderStateStats.redPixels / formatterStats.redPixels;
+        final greenRatio =
+            renderStateStats.greenPixels / formatterStats.greenPixels;
+
+        expect(nonBackgroundRatio, inInclusiveRange(0.55, 1.8));
+        expect(redRatio, inInclusiveRange(0.4, 2.5));
+        expect(greenRatio, inInclusiveRange(0.4, 2.5));
+      },
+    );
+
+    testWidgets(
+      'formatter and renderState paint comparable mixed-width pixel coverage',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        controller.appendDebugOutput('A🙂界e\u0301Z\r\nwide mix');
+
+        final formatterStats = await _captureModePaintStats(
+          tester,
+          buildView: buildView,
+          renderer: GhosttyTerminalRendererMode.formatter,
+        );
+        final renderStateStats = await _captureModePaintStats(
+          tester,
+          buildView: buildView,
+          renderer: GhosttyTerminalRendererMode.renderState,
+        );
+
+        expect(formatterStats.nonBackgroundPixels, greaterThan(0));
+        expect(renderStateStats.nonBackgroundPixels, greaterThan(0));
+
+        final ratio =
+            renderStateStats.nonBackgroundPixels /
+            formatterStats.nonBackgroundPixels;
+        expect(ratio, inInclusiveRange(0.55, 1.9));
+      },
+    );
+
+    testWidgets(
+      'formatter and renderState paint comparable inverse and blue background coverage',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        controller.appendDebugOutput(
+          '\x1b[7;31mINV\x1b[0m '
+          '\x1b[44;97mBOX\x1b[0m '
+          '\x1b[33mWARN\x1b[0m',
+        );
+
+        final formatterStats = await _captureModePaintStats(
+          tester,
+          buildView: buildView,
+          renderer: GhosttyTerminalRendererMode.formatter,
+        );
+        final renderStateStats = await _captureModePaintStats(
+          tester,
+          buildView: buildView,
+          renderer: GhosttyTerminalRendererMode.renderState,
+        );
+
+        expect(formatterStats.bluePixels, greaterThan(0));
+        expect(renderStateStats.bluePixels, greaterThan(0));
+        expect(formatterStats.redPixels, greaterThan(0));
+        expect(renderStateStats.redPixels, greaterThan(0));
+
+        final blueRatio =
+            renderStateStats.bluePixels / formatterStats.bluePixels;
+        final redRatio = renderStateStats.redPixels / formatterStats.redPixels;
+        expect(blueRatio, inInclusiveRange(0.35, 2.8));
+        expect(redRatio, inInclusiveRange(0.35, 2.8));
+      },
+    );
+
     testWidgets('updates when controller notifies', (tester) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
       await tester.pumpWidget(buildView());
 
       final initialRevision = controller.revision;
@@ -147,6 +311,10 @@ void main() {
     });
 
     testWidgets('switches controllers correctly', (tester) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
       final controller2 = GhosttyTerminalController();
       addTearDown(controller2.dispose);
 
@@ -230,6 +398,10 @@ void main() {
     });
 
     testWidgets('handles many lines without overflow', (tester) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
       final manyLines = List.generate(200, (i) => 'Line $i').join('\r\n');
       controller.appendDebugOutput(manyLines);
 
@@ -242,6 +414,10 @@ void main() {
     });
 
     testWidgets('handles empty lines and explicit line starts', (tester) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
       controller.appendDebugOutput('line1\r\n\r\n\r\nline4');
 
       await tester.pumpWidget(buildView());
@@ -253,6 +429,10 @@ void main() {
     testWidgets('select-all and escape expose selection callbacks', (
       tester,
     ) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
       GhosttyTerminalSelection? currentSelection;
       GhosttyTerminalSelectionContent<GhosttyTerminalSelection>? currentContent;
       controller.appendDebugOutput('hello  \r\nsecond line');
@@ -427,9 +607,268 @@ void main() {
       expect(controller.lastUnshiftedCodepoint, 0);
     });
 
+    testWidgets('pointer interaction does not forward mouse events by default', (
+      tester,
+    ) async {
+      final controller = _RecordingTerminalController();
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 600,
+              height: 400,
+              child: GhosttyTerminalView(
+                controller: controller,
+                autofocus: true,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final gesture = await tester.startGesture(const Offset(100, 100));
+      await tester.pump();
+      await gesture.moveTo(const Offset(140, 120));
+      await tester.pump();
+      await gesture.up();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(controller.mouseEvents, isEmpty);
+    });
+
+    testWidgets(
+        'pointer interaction forwards Ghostty mouse events when reporting is enabled',
+        (tester) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      final controller = _RecordingTerminalController();
+      addTearDown(controller.dispose);
+      controller.appendDebugOutput('hello world');
+      controller.terminal.setMode(VtModes.normalMouse, true);
+      controller.terminal.setMode(VtModes.sgrMouse, true);
+
+      GhosttyTerminalSelection? currentSelection;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 600,
+              height: 400,
+              child: GhosttyTerminalView(
+                controller: controller,
+                autofocus: true,
+                onSelectionChanged: (selection) {
+                  currentSelection = selection;
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final gesture = await tester.startGesture(const Offset(100, 100));
+      await tester.pump();
+      await gesture.moveTo(const Offset(140, 120));
+      await tester.pump();
+      await gesture.up();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(controller.mouseEvents, isNotEmpty);
+      expect(
+        controller.mouseEvents.map((event) => event.action),
+        contains(GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_PRESS),
+      );
+      expect(
+        controller.mouseEvents.map((event) => event.action),
+        contains(GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_MOTION),
+      );
+      expect(
+        controller.mouseEvents.map((event) => event.action),
+        contains(GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_RELEASE),
+      );
+      expect(controller.mouseEvents.first.size.screenWidth, greaterThan(0));
+      expect(
+        controller.mouseEvents.first.button,
+        GhosttyMouseButton.GHOSTTY_MOUSE_BUTTON_LEFT,
+      );
+      expect(currentSelection, isNull);
+    });
+
+    testWidgets(
+      'scroll wheel forwards Ghostty mouse buttons four and five when reporting is enabled',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        final controller = _RecordingTerminalController();
+        addTearDown(controller.dispose);
+        controller.terminal.setMode(VtModes.normalMouse, true);
+        controller.terminal.setMode(VtModes.sgrMouse, true);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 600,
+                height: 400,
+                child: GhosttyTerminalView(
+                  controller: controller,
+                  autofocus: true,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final pointer = TestPointer(1, ui.PointerDeviceKind.mouse);
+        await tester.sendEventToBinding(pointer.hover(const Offset(120, 120)));
+        await tester.pump();
+
+        await tester.sendEventToBinding(pointer.scroll(const Offset(0, -32)));
+        await tester.pump();
+
+        await tester.sendEventToBinding(pointer.scroll(const Offset(0, 32)));
+        await tester.pump();
+
+        final pressEvents = controller.mouseEvents
+            .where(
+              (event) =>
+                  event.action ==
+                  GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_PRESS,
+            )
+            .toList(growable: false);
+        final releaseEvents = controller.mouseEvents
+            .where(
+              (event) =>
+                  event.action ==
+                  GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_RELEASE,
+            )
+            .toList(growable: false);
+
+        expect(pressEvents, hasLength(2));
+        expect(releaseEvents, hasLength(2));
+        expect(
+          pressEvents.map((event) => event.button),
+          <GhosttyMouseButton?>[
+            GhosttyMouseButton.GHOSTTY_MOUSE_BUTTON_FOUR,
+            GhosttyMouseButton.GHOSTTY_MOUSE_BUTTON_FIVE,
+          ],
+        );
+        expect(
+          releaseEvents.map((event) => event.button),
+          <GhosttyMouseButton?>[
+            GhosttyMouseButton.GHOSTTY_MOUSE_BUTTON_FOUR,
+            GhosttyMouseButton.GHOSTTY_MOUSE_BUTTON_FIVE,
+          ],
+        );
+      },
+    );
+
+    testWidgets(
+      'selectionFirst policy keeps selection active even when terminal mouse reporting is enabled',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        final controller = _RecordingTerminalController();
+        addTearDown(controller.dispose);
+        controller.appendDebugOutput('hello world');
+        controller.terminal.setMode(VtModes.normalMouse, true);
+        controller.terminal.setMode(VtModes.sgrMouse, true);
+
+        GhosttyTerminalSelection? currentSelection;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 600,
+                height: 400,
+                child: GhosttyTerminalView(
+                  controller: controller,
+                  autofocus: true,
+                  interactionPolicy:
+                      GhosttyTerminalInteractionPolicy.selectionFirst,
+                  onSelectionChanged: (selection) {
+                    currentSelection = selection;
+                  },
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final gesture = await tester.startGesture(const Offset(100, 100));
+        await tester.pump();
+        await gesture.moveTo(const Offset(180, 100));
+        await tester.pump();
+        await gesture.up();
+        await tester.pump(const Duration(milliseconds: 300));
+
+        expect(controller.mouseEvents, isEmpty);
+        expect(currentSelection, isNotNull);
+      },
+    );
+
+    testWidgets(
+      'terminalMouseFirst policy forwards mouse events without native terminal mode detection',
+      (tester) async {
+        final controller = _RecordingTerminalController();
+        addTearDown(controller.dispose);
+
+        GhosttyTerminalSelection? currentSelection;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 600,
+                height: 400,
+                child: GhosttyTerminalView(
+                  controller: controller,
+                  autofocus: true,
+                  interactionPolicy:
+                      GhosttyTerminalInteractionPolicy.terminalMouseFirst,
+                  onSelectionChanged: (selection) {
+                    currentSelection = selection;
+                  },
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final gesture = await tester.startGesture(const Offset(100, 100));
+        await tester.pump();
+        await gesture.moveTo(const Offset(140, 120));
+        await tester.pump();
+        await gesture.up();
+        await tester.pump(const Duration(milliseconds: 300));
+
+        expect(controller.mouseEvents, isNotEmpty);
+        expect(currentSelection, isNull);
+      },
+    );
+
     testWidgets('shifted underscore and plus are written as printable text', (
       tester,
     ) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
       final controller = _InteractiveEchoTerminalController();
       addTearDown(controller.dispose);
 
@@ -471,6 +910,10 @@ void main() {
     testWidgets(
       'backspace in the terminal area erases and the next key overwrites it',
       (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
         final controller = _InteractiveEchoTerminalController();
         addTearDown(controller.dispose);
 
@@ -533,6 +976,10 @@ void main() {
     });
 
     test('appendDebugOutput increments revision and creates VT state', () {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
       expect(controller.revision, 0);
       controller.appendDebugOutput('hello');
       expect(controller.revision, 1);
@@ -541,6 +988,10 @@ void main() {
     });
 
     test('line feed preserves the current column in VT mode', () {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
       controller.appendDebugOutput('a\nb\nc');
 
       expect(controller.lines, ['a', ' b', '  c']);
@@ -548,18 +999,30 @@ void main() {
     });
 
     test('carriage return overwrites the current line', () {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
       controller.appendDebugOutput('hello\rworld');
 
       expect(controller.lines, ['world']);
     });
 
     test('backspace moves the cursor left without truncating the tail', () {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
       controller.appendDebugOutput('abc\b\bd');
 
       expect(controller.lines, ['adc']);
     });
 
     test('shell erase echo clears the cell and leaves the cursor there', () {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
       controller.appendDebugOutput('abc\b \b');
 
       expect(controller.lines, ['ab']);
@@ -570,6 +1033,10 @@ void main() {
     });
 
     test('clear resets lines', () {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
       controller.appendDebugOutput('some\r\ntext');
       expect(controller.lineCount, 2);
 
@@ -579,6 +1046,10 @@ void main() {
     });
 
     test('resize updates the live terminal grid', () {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
       controller.resize(cols: 132, rows: 40);
 
       expect(controller.cols, 132);
@@ -588,6 +1059,10 @@ void main() {
     });
 
     test('OSC title commands are parsed', () {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
       controller.appendDebugOutput('\x1b]0;My Title\x07');
       expect(controller.title, 'My Title');
 
@@ -599,6 +1074,10 @@ void main() {
     });
 
     test('plain formatting strips CSI while VT formatting preserves it', () {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
       controller.appendDebugOutput('\x1b[31;1mred bold\x1b[0m normal');
 
       expect(controller.lines.single, 'red bold normal');
@@ -611,6 +1090,10 @@ void main() {
     });
 
     test('styled snapshot keeps ANSI colors, emphasis, and cursor info', () {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
       controller.appendDebugOutput(
         '\x1b[31;1mred\x1b[0m normal\r\nplain \x1b[4;34mblue\x1b[0m',
       );
@@ -639,6 +1122,10 @@ void main() {
     });
 
     test('snapshot selection extracts multi-line text ranges', () {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
       controller.appendDebugOutput('alpha\r\nbravo\r\ncharlie');
 
       final text = controller.snapshot.textForSelection(
@@ -654,6 +1141,10 @@ void main() {
     test(
       'snapshot hyperlink lookup and word selection detect visible URLs',
       () {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
         controller.appendDebugOutput('see https://example.com/docs now');
 
         final snapshot = controller.snapshot;
@@ -676,6 +1167,10 @@ void main() {
     );
 
     test('maxLines truncates old lines from formatted snapshots', () {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
       final small = GhosttyTerminalController(maxLines: 5);
       addTearDown(small.dispose);
 
@@ -686,6 +1181,10 @@ void main() {
     });
 
     test('notifyListeners called on appendDebugOutput and clear', () {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
       var notifications = 0;
       controller.addListener(() => notifications++);
 
@@ -704,6 +1203,10 @@ void main() {
     test(
       'carriage return plus line feed starts the next line at column zero',
       () {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
         controller.appendDebugOutput('hello\r\nworld');
 
         expect(controller.lines, ['hello', 'world']);
@@ -711,6 +1214,10 @@ void main() {
     );
 
     test('interactive shell backspace rewrites the prompt line', () async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
       if (!(Platform.isLinux || Platform.isMacOS)) {
         return;
       }
@@ -745,6 +1252,10 @@ void main() {
     });
 
     test('interactive clean zsh handles arrow editing and backspace', () async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
       if (!(Platform.isLinux || Platform.isMacOS)) {
         return;
       }
@@ -803,6 +1314,10 @@ void main() {
     });
 
     test('interactive clean zsh handles editing with a right prompt', () async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
       if (!(Platform.isLinux || Platform.isMacOS)) {
         return;
       }
@@ -890,6 +1405,7 @@ class _RecordingTerminalController extends GhosttyTerminalController {
   GhosttyKeyAction? lastAction;
   String lastUtf8Text = '';
   int lastUnshiftedCodepoint = 0;
+  final List<_RecordedMouseEvent> mouseEvents = <_RecordedMouseEvent>[];
 
   @override
   bool sendKey({
@@ -907,6 +1423,46 @@ class _RecordingTerminalController extends GhosttyTerminalController {
     lastUnshiftedCodepoint = unshiftedCodepoint;
     return true;
   }
+
+  @override
+  bool sendMouse({
+    required GhosttyMouseAction action,
+    GhosttyMouseButton? button,
+    int mods = 0,
+    required VtMousePosition position,
+    required VtMouseEncoderSize size,
+    GhosttyMouseTrackingMode? trackingMode,
+    GhosttyMouseFormat? format,
+    bool? anyButtonPressed,
+    bool? trackLastCell,
+  }) {
+    mouseEvents.add(
+      _RecordedMouseEvent(
+        action: action,
+        button: button,
+        position: position,
+        size: size,
+        mods: mods,
+      ),
+    );
+    return true;
+  }
+}
+
+class _RecordedMouseEvent {
+  const _RecordedMouseEvent({
+    required this.action,
+    required this.button,
+    required this.position,
+    required this.size,
+    required this.mods,
+  });
+
+  final GhosttyMouseAction action;
+  final GhosttyMouseButton? button;
+  final VtMousePosition position;
+  final VtMouseEncoderSize size;
+  final int mods;
 }
 
 class _InteractiveEchoTerminalController extends GhosttyTerminalController {
@@ -958,4 +1514,108 @@ String _lastNonEmptyLine(List<String> lines) {
         orElse: () => lines.isEmpty ? '' : lines.last,
       )
       .trimRight();
+}
+
+Future<_TerminalPaintStats> _captureTerminalPaintStats(GlobalKey key) async {
+  final boundary =
+      key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+  final image = await boundary.toImage(pixelRatio: 1);
+  try {
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+    final bytes = byteData!.buffer.asUint8List();
+    return _measureTerminalPaintStats(bytes);
+  } finally {
+    image.dispose();
+  }
+}
+
+Future<_TerminalPaintStats> _captureModePaintStats(
+  WidgetTester tester, {
+  required Widget Function({
+    bool autofocus,
+    FocusNode? focusNode,
+    Color? backgroundColor,
+    Color? foregroundColor,
+    double? fontSize,
+    double? lineHeight,
+    GhosttyTerminalRendererMode renderer,
+    GhosttyTerminalCopyOptions copyOptions,
+    GhosttyTerminalWordBoundaryPolicy wordBoundaryPolicy,
+    EdgeInsets? padding,
+    ValueChanged<GhosttyTerminalSelection?>? onSelectionChanged,
+    ValueChanged<GhosttyTerminalSelectionContent<GhosttyTerminalSelection>?>?
+    onSelectionContentChanged,
+    Future<void> Function(String uri)? onOpenHyperlink,
+  })
+  buildView,
+  required GhosttyTerminalRendererMode renderer,
+}) async {
+  final key = GlobalKey();
+  await tester.pumpWidget(
+    RepaintBoundary(
+      key: key,
+      child: buildView(
+        renderer: renderer,
+        backgroundColor: const Color(0xFF0A0F14),
+        foregroundColor: const Color(0xFFE6EDF3),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+  return _captureTerminalPaintStats(key);
+}
+
+_TerminalPaintStats _measureTerminalPaintStats(Uint8List rgba) {
+  const backgroundR = 0x0A;
+  const backgroundG = 0x0F;
+  const backgroundB = 0x14;
+
+  var nonBackgroundPixels = 0;
+  var redPixels = 0;
+  var greenPixels = 0;
+  var bluePixels = 0;
+  for (var index = 0; index + 3 < rgba.length; index += 4) {
+    final r = rgba[index];
+    final g = rgba[index + 1];
+    final b = rgba[index + 2];
+    final a = rgba[index + 3];
+    if (a == 0) {
+      continue;
+    }
+    final dr = (r - backgroundR).abs();
+    final dg = (g - backgroundG).abs();
+    final db = (b - backgroundB).abs();
+    if (dr > 10 || dg > 10 || db > 10) {
+      nonBackgroundPixels++;
+    }
+    if (r > 150 && r > g + 20 && r > b + 20) {
+      redPixels++;
+    }
+    if (g > 120 && g > r + 10 && g > b + 10) {
+      greenPixels++;
+    }
+    if (b > 120 && b > r + 10 && b > g + 10) {
+      bluePixels++;
+    }
+  }
+  return _TerminalPaintStats(
+    nonBackgroundPixels: nonBackgroundPixels,
+    redPixels: redPixels,
+    greenPixels: greenPixels,
+    bluePixels: bluePixels,
+  );
+}
+
+final class _TerminalPaintStats {
+  const _TerminalPaintStats({
+    required this.nonBackgroundPixels,
+    required this.redPixels,
+    required this.greenPixels,
+    required this.bluePixels,
+  });
+
+  final int nonBackgroundPixels;
+  final int redPixels;
+  final int greenPixels;
+  final int bluePixels;
 }

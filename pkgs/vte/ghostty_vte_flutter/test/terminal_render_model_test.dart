@@ -328,6 +328,49 @@ void main() {
       expect(resolved.underlineColor, equals(defaultForeground));
     });
 
+    test(
+      'can resolve native styles directly from VtRenderColors shared logic',
+      () {
+        const renderColors = VtRenderColors(
+          background: VtRgbColor(10, 15, 20),
+          foreground: VtRgbColor(154, 209, 192),
+          cursor: null,
+          palette: <VtRgbColor>[
+            VtRgbColor(0, 0, 0),
+            VtRgbColor(255, 0, 0),
+            VtRgbColor(0, 255, 0),
+            VtRgbColor(0, 0, 255),
+          ],
+        );
+
+        final resolved =
+            GhosttyTerminalResolvedStyle.fromNativeStyleWithRenderColors(
+              style: const VtStyle(
+                foreground: VtStyleColor.palette(1),
+                background: VtStyleColor.palette(2),
+                underlineColor: VtStyleColor.palette(3),
+                bold: false,
+                italic: false,
+                faint: false,
+                blink: false,
+                inverse: false,
+                invisible: false,
+                strikethrough: false,
+                overline: false,
+                underline: GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_DOTTED,
+              ),
+              colors: renderColors,
+            );
+
+        expect(resolved.foreground, equals(const Color(0xFFFF0000)));
+        expect(resolved.background, equals(const Color(0xFF00FF00)));
+        expect(resolved.underlineColor, equals(const Color(0xFF0000FF)));
+        expect(resolved.hasExplicitForeground, isTrue);
+        expect(resolved.hasExplicitBackground, isTrue);
+        expect(resolved.hasExplicitUnderlineColor, isTrue);
+      },
+    );
+
     test('resolves formatted styles with matching SGR logic', () {
       final resolved = GhosttyTerminalResolvedStyle.fromFormattedStyle(
         style: const GhosttyTerminalStyle(
@@ -385,5 +428,169 @@ void main() {
         expect(resolved.foreground, equals(palette[1]));
       },
     );
+  });
+
+  group('Render semantics', () {
+    test('render cell semantic helpers mirror Ghostty semantic content', () {
+      const promptCell = GhosttyTerminalRenderCell(
+        text: '\$',
+        width: 1,
+        hasText: true,
+        hasStyling: false,
+        hasHyperlink: false,
+        isProtected: false,
+        semanticContent:
+            GhosttyCellSemanticContent.GHOSTTY_CELL_SEMANTIC_PROMPT,
+        metadata: GhosttyTerminalRenderCellMetadata(
+          codepoint: 36,
+          contentTag: GhosttyCellContentTag.GHOSTTY_CELL_CONTENT_CODEPOINT,
+          styleId: 0,
+          colorPaletteIndex: null,
+          colorRgb: null,
+          wide: GhosttyCellWide.GHOSTTY_CELL_WIDE_NARROW,
+          hasBackgroundColor: false,
+        ),
+        style: GhosttyTerminalResolvedStyle(
+          foreground: defaultForeground,
+          background: Colors.transparent,
+          underlineColor: Colors.transparent,
+          bold: false,
+          italic: false,
+          blink: false,
+          overline: false,
+          strikethrough: false,
+          underline: GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_NONE,
+          inverse: false,
+          invisible: false,
+          faint: false,
+        ),
+      );
+      const inputCell = GhosttyTerminalRenderCell(
+        text: 'l',
+        width: 1,
+        hasText: true,
+        hasStyling: false,
+        hasHyperlink: false,
+        isProtected: false,
+        semanticContent: GhosttyCellSemanticContent.GHOSTTY_CELL_SEMANTIC_INPUT,
+        metadata: GhosttyTerminalRenderCellMetadata(
+          codepoint: 108,
+          contentTag: GhosttyCellContentTag.GHOSTTY_CELL_CONTENT_CODEPOINT,
+          styleId: 0,
+          colorPaletteIndex: null,
+          colorRgb: null,
+          wide: GhosttyCellWide.GHOSTTY_CELL_WIDE_NARROW,
+          hasBackgroundColor: false,
+        ),
+        style: GhosttyTerminalResolvedStyle(
+          foreground: defaultForeground,
+          background: Colors.transparent,
+          underlineColor: Colors.transparent,
+          bold: false,
+          italic: false,
+          blink: false,
+          overline: false,
+          strikethrough: false,
+          underline: GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_NONE,
+          inverse: false,
+          invisible: false,
+          faint: false,
+        ),
+      );
+      const outputCell = GhosttyTerminalRenderCell(
+        text: 'o',
+        width: 1,
+        hasText: true,
+        hasStyling: false,
+        hasHyperlink: false,
+        isProtected: false,
+        semanticContent:
+            GhosttyCellSemanticContent.GHOSTTY_CELL_SEMANTIC_OUTPUT,
+        metadata: GhosttyTerminalRenderCellMetadata(
+          codepoint: 111,
+          contentTag: GhosttyCellContentTag.GHOSTTY_CELL_CONTENT_CODEPOINT,
+          styleId: 0,
+          colorPaletteIndex: null,
+          colorRgb: null,
+          wide: GhosttyCellWide.GHOSTTY_CELL_WIDE_NARROW,
+          hasBackgroundColor: false,
+        ),
+        style: GhosttyTerminalResolvedStyle(
+          foreground: defaultForeground,
+          background: Colors.transparent,
+          underlineColor: Colors.transparent,
+          bold: false,
+          italic: false,
+          blink: false,
+          overline: false,
+          strikethrough: false,
+          underline: GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_NONE,
+          inverse: false,
+          invisible: false,
+          faint: false,
+        ),
+      );
+
+      expect(promptCell.isPromptText, isTrue);
+      expect(promptCell.isPromptInput, isFalse);
+      expect(promptCell.isPromptOutput, isFalse);
+
+      expect(inputCell.isPromptText, isFalse);
+      expect(inputCell.isPromptInput, isTrue);
+      expect(inputCell.isPromptOutput, isFalse);
+
+      expect(outputCell.isPromptText, isFalse);
+      expect(outputCell.isPromptInput, isFalse);
+      expect(outputCell.isPromptOutput, isTrue);
+    });
+
+    test('render row semantic helpers mirror Ghostty prompt state', () {
+      const promptRow = GhosttyTerminalRenderRow(
+        dirty: false,
+        wrap: false,
+        wrapContinuation: false,
+        hasGrapheme: true,
+        styled: false,
+        hasHyperlink: false,
+        semanticPrompt: GhosttyRowSemanticPrompt.GHOSTTY_ROW_SEMANTIC_PROMPT,
+        kittyVirtualPlaceholder: false,
+        cells: <GhosttyTerminalRenderCell>[],
+      );
+      const continuationRow = GhosttyTerminalRenderRow(
+        dirty: false,
+        wrap: true,
+        wrapContinuation: true,
+        hasGrapheme: true,
+        styled: false,
+        hasHyperlink: false,
+        semanticPrompt:
+            GhosttyRowSemanticPrompt.GHOSTTY_ROW_SEMANTIC_PROMPT_CONTINUATION,
+        kittyVirtualPlaceholder: false,
+        cells: <GhosttyTerminalRenderCell>[],
+      );
+      const plainRow = GhosttyTerminalRenderRow(
+        dirty: false,
+        wrap: false,
+        wrapContinuation: false,
+        hasGrapheme: true,
+        styled: false,
+        hasHyperlink: false,
+        semanticPrompt: GhosttyRowSemanticPrompt.GHOSTTY_ROW_SEMANTIC_NONE,
+        kittyVirtualPlaceholder: false,
+        cells: <GhosttyTerminalRenderCell>[],
+      );
+
+      expect(promptRow.isPrompt, isTrue);
+      expect(promptRow.isPromptContinuation, isFalse);
+      expect(promptRow.hasSemanticPrompt, isTrue);
+
+      expect(continuationRow.isPrompt, isFalse);
+      expect(continuationRow.isPromptContinuation, isTrue);
+      expect(continuationRow.hasSemanticPrompt, isTrue);
+
+      expect(plainRow.isPrompt, isFalse);
+      expect(plainRow.isPromptContinuation, isFalse);
+      expect(plainRow.hasSemanticPrompt, isFalse);
+    });
   });
 }
