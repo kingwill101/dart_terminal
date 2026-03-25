@@ -237,11 +237,21 @@ String ghosttyTerminalPrintableText(
   required GhosttyTerminalModifierState modifiers,
 }) {
   final character = event.character ?? '';
-  if (character.isNotEmpty) {
-    return character;
-  }
+
   if (modifiers.blocksPrintableText) {
     return '';
+  }
+
+  if (modifiers.shiftPressed) {
+    final shifted =
+        _shiftedPhysicalPrintableFallbacks[event.physicalKey] ??
+        _shiftedPrintableFallbacks[event.logicalKey];
+    if (shifted != null) {
+      return shifted;
+    }
+  }
+  if (character.isNotEmpty) {
+    return character;
   }
   final fallback =
       _printablePhysicalFallbacks[event.physicalKey] ??

@@ -28,10 +28,19 @@ final class GhosttyTerminalShellLaunch {
     this.setupCommand,
   });
 
+  /// User-facing label shown in shell selectors and diagnostics.
   final String label;
+
+  /// Executable path or command used to start the shell.
   final String shell;
+
+  /// Arguments passed to [shell] when launching.
   final List<String> arguments;
+
+  /// Environment variables applied to the launched shell.
   final Map<String, String>? environment;
+
+  /// Optional bootstrap commands written after launch to normalize the shell.
   final String? setupCommand;
 
   /// Human-readable shell command for diagnostics and example UIs.

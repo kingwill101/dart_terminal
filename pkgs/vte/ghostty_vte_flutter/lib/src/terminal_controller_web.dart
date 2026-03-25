@@ -3,6 +3,7 @@ import 'package:ghostty_vte/ghostty_vte.dart';
 
 import 'pty_session.dart';
 import 'shell_launch.dart';
+import 'terminal_render_model.dart';
 import 'terminal_snapshot.dart';
 import 'terminal_surface_contract.dart';
 
@@ -27,11 +28,19 @@ class GhosttyTerminalController extends ChangeNotifier
        _cols = initialCols,
        _rows = initialRows;
 
+  /// Maximum retained line count in the formatted terminal snapshot.
   final int maxLines;
+
+  /// Maximum terminal scrollback depth retained by [VtTerminal].
   final int maxScrollback;
+
+  /// Initial terminal width in cells before the view reports a real size.
   final int initialCols;
+
+  /// Initial terminal height in cells before the view reports a real size.
   final int initialRows;
 
+  /// Optional shell hint for transport-backed terminals.
   /// Placeholder for API parity with native controller construction.
   final bool preferPty;
 
@@ -42,6 +51,7 @@ class GhosttyTerminalController extends ChangeNotifier
   VtTerminalFormatter? _plainFormatter;
   VtTerminalFormatter? _styledFormatter;
   VtKeyEncoder? _encoder;
+  VtMouseEncoder? _mouseEncoder;
   GhosttyTerminalShellLaunch? _activeShellLaunch;
 
   final List<String> _lines = <String>[''];
@@ -53,23 +63,78 @@ class GhosttyTerminalController extends ChangeNotifier
   int _cols;
   int _rows;
 
+  /// Monotonic value that increments whenever buffered output/state changes.
   @override
   int get revision => _revision;
+
+  /// Terminal title derived from OSC title updates when present.
   @override
   String get title => _title;
+
+  /// Whether the controller currently considers the remote session active.
   @override
   bool get isRunning => _running;
+
+  /// Current terminal width in cells.
   @override
   int get cols => _cols;
+
+  /// Current terminal height in cells.
   @override
   int get rows => _rows;
+
+  /// Live VT terminal state backing this controller.
   VtTerminal get terminal => _ensureTerminal();
+
+  /// Current formatted plain-text terminal snapshot.
   String get plainText => _plainText;
+
+  /// Current styled terminal snapshot used by [GhosttyTerminalView].
   GhosttyTerminalSnapshot get snapshot => _snapshot;
+
+  /// Web does not expose a native Ghostty render-state snapshot.
+  GhosttyTerminalRenderSnapshot? get renderSnapshot => null;
+
+  /// Current buffered terminal lines.
   List<String> get lines => List<String>.unmodifiable(_lines);
+
+  /// Number of buffered lines.
   int get lineCount => _lines.length;
+
+  /// Most recent launch metadata associated with this controller.
   GhosttyTerminalShellLaunch? get activeShellLaunch => _activeShellLaunch;
+
+  /// Web does not expose a local PTY session.
   GhosttyTerminalPtySession? get ptySession => null;
+
+  /// Optional observer callback invoked whenever the VT engine needs to send
+  /// data back to the PTY (e.g. DSR responses, DA replies).
+  ///
+  /// On web this is never called since the web controller does not wire
+  /// [VtTerminal.onWritePty]. It exists for API parity with the native
+  /// controller.
+  void Function(Uint8List data)? onWritePtyData;
+
+  /// Not called on web — exists for API parity with the native controller.
+  void Function()? onBellData;
+
+  /// Not called on web — exists for API parity with the native controller.
+  void Function()? onTitleChangedData;
+
+  /// Not called on web — exists for API parity with the native controller.
+  VtSizeReportSize? Function()? onSizeQueryData;
+
+  /// Not called on web — exists for API parity with the native controller.
+  GhosttyColorScheme? Function()? onColorSchemeQueryData;
+
+  /// Not called on web — exists for API parity with the native controller.
+  VtDeviceAttributes? Function()? onDeviceAttributesQueryData;
+
+  /// Not called on web — exists for API parity with the native controller.
+  Uint8List Function()? onEnquiryData;
+
+  /// Not called on web — exists for API parity with the native controller.
+  String Function()? onXtversionData;
 
   VtTerminal _ensureTerminal() {
     final existing = _terminal;
@@ -87,15 +152,7 @@ class GhosttyTerminalController extends ChangeNotifier
       const VtFormatterTerminalOptions(
         emit: GhosttyFormatterFormat.GHOSTTY_FORMATTER_FORMAT_VT,
         trim: false,
-        extra: VtFormatterTerminalExtra(
-          screen: VtFormatterScreenExtra(
-            cursor: true,
-            style: true,
-            hyperlink: true,
-            protection: true,
-            charsets: true,
-          ),
-        ),
+        extra: VtFormatterTerminalExtra.all(),
       ),
     );
     _terminal = terminal;
@@ -105,6 +162,7 @@ class GhosttyTerminalController extends ChangeNotifier
     return terminal;
   }
 
+  /// Returns a formatted terminal snapshot using the requested formatter mode.
   String formatTerminal({
     GhosttyFormatterFormat emit =
         GhosttyFormatterFormat.GHOSTTY_FORMATTER_FORMAT_PLAIN,
@@ -128,6 +186,7 @@ class GhosttyTerminalController extends ChangeNotifier
     }
   }
 
+  /// Marks the transport session as started and records launch metadata.
   Future<void> start({
     String? shell,
     List<String> arguments = const <String>[],
@@ -196,6 +255,7 @@ class GhosttyTerminalController extends ChangeNotifier
     return activeShellLaunch;
   }
 
+  /// Marks the remote session inactive without clearing terminal contents.
   Future<void> stop() async {
     if (!_running) {
       return;
@@ -204,6 +264,7 @@ class GhosttyTerminalController extends ChangeNotifier
     _markDirty();
   }
 
+  /// Clears terminal contents and scrollback while preserving dimensions.
   void clear() {
     final terminal = _terminal;
     if (terminal == null) {
@@ -220,8 +281,14 @@ class GhosttyTerminalController extends ChangeNotifier
     _markDirty();
   }
 
+  /// Resizes the VT grid.
   @override
-  void resize({required int cols, required int rows}) {
+  void resize({
+    required int cols,
+    required int rows,
+    int cellWidthPx = 0,
+    int cellHeightPx = 0,
+  }) {
     final checkedCols = cols.clamp(1, 0xFFFF);
     final checkedRows = rows.clamp(1, 0xFFFF);
     if (checkedCols == _cols && checkedRows == _rows) {
@@ -233,12 +300,20 @@ class GhosttyTerminalController extends ChangeNotifier
 
     final terminal = _terminal;
     if (terminal != null) {
-      terminal.resize(cols: checkedCols, rows: checkedRows);
+      terminal.resize(
+        cols: checkedCols,
+        rows: checkedRows,
+        cellWidthPx: cellWidthPx,
+        cellHeightPx: cellHeightPx,
+      );
       _refreshSnapshot();
     }
     _markDirty();
   }
 
+  /// Forwards text input to the remote transport abstraction.
+  ///
+  /// When [sanitizePaste] is true, unsafe multi-line paste payloads are rejected.
   @override
   bool write(String text, {bool sanitizePaste = false}) {
     if (!_running) {
@@ -252,6 +327,7 @@ class GhosttyTerminalController extends ChangeNotifier
     return true;
   }
 
+  /// Forwards already-encoded bytes to the remote transport abstraction.
   @override
   bool writeBytes(List<int> bytes) {
     if (!_running) {
@@ -260,6 +336,10 @@ class GhosttyTerminalController extends ChangeNotifier
     return true;
   }
 
+  /// Encodes a key event using Ghostty's keyboard protocol rules.
+  ///
+  /// The encoded bytes are returned to the caller indirectly as a success flag;
+  /// a real transport is expected to send them to the remote endpoint.
   bool sendKey({
     required GhosttyKey key,
     GhosttyKeyAction action = GhosttyKeyAction.GHOSTTY_KEY_ACTION_PRESS,
@@ -292,6 +372,58 @@ class GhosttyTerminalController extends ChangeNotifier
     return encoded.isNotEmpty;
   }
 
+  /// Encodes a mouse event using Ghostty's mouse protocol rules.
+  bool sendMouse({
+    required GhosttyMouseAction action,
+    GhosttyMouseButton? button,
+    int mods = 0,
+    required VtMousePosition position,
+    required VtMouseEncoderSize size,
+    GhosttyMouseTrackingMode? trackingMode,
+    GhosttyMouseFormat? format,
+    bool? anyButtonPressed,
+    bool? trackLastCell,
+  }) {
+    if (!_running) {
+      return false;
+    }
+
+    _mouseEncoder ??= VtMouseEncoder();
+    final terminal = _terminal;
+    if (terminal != null) {
+      _mouseEncoder!.setOptionsFromTerminal(terminal);
+    }
+    if (trackingMode != null ||
+        format != null ||
+        anyButtonPressed != null ||
+        trackLastCell != null) {
+      VtMouseEncoderOptions(
+        trackingMode:
+            trackingMode ??
+            GhosttyMouseTrackingMode.GHOSTTY_MOUSE_TRACKING_NORMAL,
+        format: format ?? GhosttyMouseFormat.GHOSTTY_MOUSE_FORMAT_SGR,
+        size: size,
+        anyButtonPressed: anyButtonPressed ?? false,
+        trackLastCell: trackLastCell ?? true,
+      ).applyTo(_mouseEncoder!);
+    } else {
+      _mouseEncoder!.size = size;
+    }
+
+    final event = VtMouseEvent()
+      ..action = action
+      ..button = button
+      ..mods = mods
+      ..position = position;
+    final encoded = _mouseEncoder!.encode(event);
+    event.close();
+    return encoded.isNotEmpty;
+  }
+
+  /// Injects decoded terminal output directly into the VT model.
+  ///
+  /// This is primarily intended for demos and tests that emulate a remote
+  /// terminal transport in memory.
   void appendDebugOutput(String text) {
     if (text.isEmpty) {
       return;
@@ -360,6 +492,7 @@ class GhosttyTerminalController extends ChangeNotifier
   @override
   void dispose() {
     _encoder?.close();
+    _mouseEncoder?.close();
     _styledFormatter?.close();
     _plainFormatter?.close();
     _terminal?.close();

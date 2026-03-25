@@ -129,8 +129,13 @@ final class GhosttyTerminalCopyOptions {
     this.wrappedLineJoiner = '',
   });
 
+  /// Removes trailing spaces from each selected line before copying.
   final bool trimTrailingSpaces;
+
+  /// Merges soft-wrapped terminal lines into a single copied line.
   final bool joinWrappedLines;
+
+  /// Separator inserted when [joinWrappedLines] merges wrapped rows.
   final String wrappedLineJoiner;
 
   @override
@@ -154,7 +159,10 @@ final class GhosttyTerminalWordBoundaryPolicy {
     this.treatNonAsciiAsWord = true,
   });
 
+  /// Additional ASCII characters that should be considered part of a word.
   final String extraWordCharacters;
+
+  /// Whether non-ASCII code points should extend word selections.
   final bool treatNonAsciiAsWord;
 
   @override
@@ -176,7 +184,10 @@ final class GhosttyTerminalSelectionContent<SelectionT> {
     required this.text,
   });
 
+  /// Selection object associated with [text].
   final SelectionT selection;
+
+  /// Extracted plain text for [selection].
   final String text;
 
   @override
@@ -196,7 +207,10 @@ final class GhosttyTerminalCellPosition
     implements Comparable<GhosttyTerminalCellPosition> {
   const GhosttyTerminalCellPosition({required this.row, required this.col});
 
+  /// Zero-based row index in the visible terminal transcript.
   final int row;
+
+  /// Zero-based column index within [row].
   final int col;
 
   @override
@@ -221,9 +235,13 @@ final class GhosttyTerminalCellPosition
 final class GhosttyTerminalSelection {
   const GhosttyTerminalSelection({required this.base, required this.extent});
 
+  /// Anchor cell where the selection gesture started.
   final GhosttyTerminalCellPosition base;
+
+  /// Active edge of the selection, inclusive.
   final GhosttyTerminalCellPosition extent;
 
+  /// Returns this selection ordered from top-left to bottom-right.
   GhosttyTerminalSelection get normalized {
     if (base.compareTo(extent) <= 0) {
       return this;
@@ -231,11 +249,16 @@ final class GhosttyTerminalSelection {
     return GhosttyTerminalSelection(base: extent, extent: base);
   }
 
+  /// Inclusive first cell of the normalized selection.
   GhosttyTerminalCellPosition get start => normalized.base;
+
+  /// Inclusive last cell of the normalized selection.
   GhosttyTerminalCellPosition get end => normalized.extent;
 
+  /// Whether the selection covers exactly one cell.
   bool get isCollapsed => base == extent;
 
+  /// Returns whether the inclusive selection covers the given cell.
   bool contains(int row, int col) {
     final current = GhosttyTerminalCellPosition(row: row, col: col);
     final normalized = this.normalized;

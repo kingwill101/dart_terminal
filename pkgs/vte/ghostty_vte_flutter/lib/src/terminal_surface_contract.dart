@@ -13,7 +13,12 @@ abstract interface class GhosttyTerminalSessionController
   int get cols;
   int get rows;
 
-  void resize({required int cols, required int rows});
+  void resize({
+    required int cols,
+    required int rows,
+    int cellWidthPx = 0,
+    int cellHeightPx = 0,
+  });
   bool write(String text, {bool sanitizePaste = false});
   bool writeBytes(List<int> bytes);
 }

@@ -30,6 +30,21 @@ enum GhosttyTerminalRendererMode {
   renderState,
 }
 
+/// Resolves conflicts between text selection and terminal mouse reporting.
+enum GhosttyTerminalInteractionPolicy {
+  /// Prefer normal terminal text interactions unless Ghostty mouse reporting is
+  /// enabled by the running application.
+  auto,
+
+  /// Always prefer Flutter-side text selection, hover, and local viewport
+  /// scrolling even if the terminal enables mouse reporting.
+  selectionFirst,
+
+  /// Always prefer terminal mouse reporting and suppress Flutter-side
+  /// selection, hyperlink activation, and local wheel scrolling.
+  terminalMouseFirst,
+}
+
 /// Painter-based terminal widget that renders lines from [GhosttyTerminalController].
 ///
 /// The controller now keeps a real [VtTerminal] alive, and this widget sizes
@@ -60,6 +75,7 @@ class GhosttyTerminalView extends StatefulWidget {
     this.copyOptions = const GhosttyTerminalCopyOptions(),
     this.wordBoundaryPolicy = const GhosttyTerminalWordBoundaryPolicy(),
     this.selectionAutoScrollEdgeInset = 28,
+    this.interactionPolicy = GhosttyTerminalInteractionPolicy.auto,
     this.onSelectionChanged,
     this.onSelectionContentChanged,
     this.onCopySelection,
@@ -67,35 +83,92 @@ class GhosttyTerminalView extends StatefulWidget {
     this.onOpenHyperlink,
   });
 
+  /// Session controller that owns the live VT terminal and process transport.
   final GhosttyTerminalController controller;
+
+  /// Whether the view should request focus automatically when inserted.
   final bool autofocus;
+
+  /// Optional externally-managed focus node for keyboard input.
   final FocusNode? focusNode;
+
+  /// Terminal background color used for unstyled cells.
   final Color backgroundColor;
+
+  /// Default foreground color used for unstyled text.
   final Color foregroundColor;
+
+  /// Accent color used for terminal chrome such as headers and borders.
   final Color chromeColor;
+
+  /// Base font size in logical pixels for each terminal cell.
   final double fontSize;
+
+  /// Line height multiplier applied to terminal rows.
   final double lineHeight;
+
+  /// Preferred monospace font family for terminal text.
   final String? fontFamily;
+
+  /// Fallback font families used when [fontFamily] lacks required glyphs.
   final List<String>? fontFamilyFallback;
+
+  /// Optional package that provides [fontFamily].
   final String? fontPackage;
+
+  /// Extra tracking applied to terminal glyph layout.
   final double letterSpacing;
+
+  /// Horizontal cell scaling factor used when measuring character advances.
   final double cellWidthScale;
+
+  /// Paint backend used to render terminal cells.
   final GhosttyTerminalRendererMode renderer;
+
+  /// Inner padding between the widget bounds and the terminal grid.
   final EdgeInsets padding;
+
+  /// ANSI and 256-color palette used to resolve terminal color tokens.
   final GhosttyTerminalPalette palette;
+
+  /// Cursor fill or stroke color, depending on cursor style.
   final Color cursorColor;
+
+  /// Overlay color used for interactive text selection highlights.
   final Color selectionColor;
+
+  /// Fallback color used when hyperlinks do not specify their own style.
   final Color hyperlinkColor;
+
+  /// Controls how selected cells are converted back into plain text.
   final GhosttyTerminalCopyOptions copyOptions;
+
+  /// Controls how double-click and word-based selections expand.
   final GhosttyTerminalWordBoundaryPolicy wordBoundaryPolicy;
+
+  /// Distance from the viewport edge that triggers auto-scroll during drag selection.
   final double selectionAutoScrollEdgeInset;
+
+  /// Controls whether Flutter-side selection or terminal mouse reporting wins
+  /// when both could handle the same pointer input.
+  final GhosttyTerminalInteractionPolicy interactionPolicy;
+
+  /// Called whenever the active terminal selection changes.
   final ValueChanged<GhosttyTerminalSelection?>? onSelectionChanged;
+
+  /// Called whenever selection text is recomputed for the active selection.
   final ValueChanged<
     GhosttyTerminalSelectionContent<GhosttyTerminalSelection>?
   >?
   onSelectionContentChanged;
+
+  /// Override for copy behavior. When omitted the view writes to the clipboard directly.
   final Future<void> Function(String text)? onCopySelection;
+
+  /// Optional paste callback used instead of reading from the system clipboard.
   final Future<String?> Function()? onPasteRequest;
+
+  /// Callback used when the user activates a hyperlink inside the terminal.
   final Future<void> Function(String uri)? onOpenHyperlink;
 
   @override
@@ -113,6 +186,8 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
       GhosttyTerminalSelectionSession<GhosttyTerminalSelection>();
   final GhosttyTerminalAutoScrollSession<_TerminalMetrics> _autoScrollSession =
       GhosttyTerminalAutoScrollSession<_TerminalMetrics>();
+  final _TerminalTextPainterCache _nativeRunPainterCache =
+      _TerminalTextPainterCache(maxEntries: 512);
   late final GhosttyTerminalGestureCoordinator<
     GhosttyTerminalCellPosition,
     GhosttyTerminalSelection
@@ -383,7 +458,12 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
       if (!mounted) {
         return;
       }
-      widget.controller.resize(cols: cols, rows: rows);
+      widget.controller.resize(
+        cols: cols,
+        rows: rows,
+        cellWidthPx: metrics.charWidth.round(),
+        cellHeightPx: metrics.linePixels.round(),
+      );
     });
   }
 
@@ -393,6 +473,31 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     _TerminalMetrics metrics,
   ) {
     if (event is! PointerScrollEvent) {
+      return;
+    }
+
+    if (_terminalMouseReportingEnabled) {
+      final scrollUp = event.scrollDelta.dy < 0;
+      if (!scrollUp && event.scrollDelta.dy <= 0) {
+        return;
+      }
+      final button = scrollUp
+          ? GhosttyMouseButton.GHOSTTY_MOUSE_BUTTON_FOUR
+          : GhosttyMouseButton.GHOSTTY_MOUSE_BUTTON_FIVE;
+      _sendMouseEvent(
+        GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_PRESS,
+        event,
+        size,
+        metrics,
+        button: button,
+      );
+      _sendMouseEvent(
+        GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_RELEASE,
+        event,
+        size,
+        metrics,
+        button: button,
+      );
       return;
     }
 
@@ -407,6 +512,112 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
         _maxScrollOffset(size, metrics),
       );
     });
+  }
+
+  VtMouseEncoderSize _mouseEncoderSize(Size size, _TerminalMetrics metrics) {
+    return VtMouseEncoderSize(
+      screenWidth: math.max(1, size.width.round()),
+      screenHeight: math.max(1, size.height.round()),
+      cellWidth: math.max(1, metrics.charWidth.round()),
+      cellHeight: math.max(1, metrics.linePixels.round()),
+      paddingTop: widget.padding.top.round(),
+      paddingBottom: widget.padding.bottom.round(),
+      paddingRight: widget.padding.right.round(),
+      paddingLeft: widget.padding.left.round(),
+    );
+  }
+
+  GhosttyMouseButton? _mouseButtonFromButtons(int buttons) {
+    if ((buttons & kPrimaryMouseButton) != 0) {
+      return GhosttyMouseButton.GHOSTTY_MOUSE_BUTTON_LEFT;
+    }
+    if ((buttons & kSecondaryMouseButton) != 0) {
+      return GhosttyMouseButton.GHOSTTY_MOUSE_BUTTON_RIGHT;
+    }
+    if ((buttons & kMiddleMouseButton) != 0) {
+      return GhosttyMouseButton.GHOSTTY_MOUSE_BUTTON_MIDDLE;
+    }
+    return null;
+  }
+
+  bool get _terminalMouseReportingEnabled => switch (widget.interactionPolicy) {
+    GhosttyTerminalInteractionPolicy.selectionFirst => false,
+    GhosttyTerminalInteractionPolicy.terminalMouseFirst => true,
+    GhosttyTerminalInteractionPolicy.auto =>
+      _safeTerminalMode(VtModes.x10Mouse) ||
+          _safeTerminalMode(VtModes.normalMouse) ||
+          _safeTerminalMode(VtModes.buttonMouse) ||
+          _safeTerminalMode(VtModes.anyMouse),
+  };
+
+  bool _safeTerminalMode(VtMode mode) {
+    try {
+      return widget.controller.terminal.getMode(mode);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  GhosttyMouseTrackingMode? get _terminalMouseTrackingMode {
+    if (_safeTerminalMode(VtModes.anyMouse)) {
+      return GhosttyMouseTrackingMode.GHOSTTY_MOUSE_TRACKING_ANY;
+    }
+    if (_safeTerminalMode(VtModes.buttonMouse)) {
+      return GhosttyMouseTrackingMode.GHOSTTY_MOUSE_TRACKING_BUTTON;
+    }
+    if (_safeTerminalMode(VtModes.normalMouse)) {
+      return GhosttyMouseTrackingMode.GHOSTTY_MOUSE_TRACKING_NORMAL;
+    }
+    if (_safeTerminalMode(VtModes.x10Mouse)) {
+      return GhosttyMouseTrackingMode.GHOSTTY_MOUSE_TRACKING_X10;
+    }
+    return null;
+  }
+
+  GhosttyMouseFormat? get _terminalMouseFormat {
+    if (!_terminalMouseReportingEnabled) {
+      return null;
+    }
+    if (_safeTerminalMode(VtModes.sgrPixelsMouse)) {
+      return GhosttyMouseFormat.GHOSTTY_MOUSE_FORMAT_SGR_PIXELS;
+    }
+    if (_safeTerminalMode(VtModes.sgrMouse)) {
+      return GhosttyMouseFormat.GHOSTTY_MOUSE_FORMAT_SGR;
+    }
+    if (_safeTerminalMode(VtModes.urxvtMouse)) {
+      return GhosttyMouseFormat.GHOSTTY_MOUSE_FORMAT_URXVT;
+    }
+    if (_safeTerminalMode(VtModes.utf8Mouse)) {
+      return GhosttyMouseFormat.GHOSTTY_MOUSE_FORMAT_UTF8;
+    }
+    return GhosttyMouseFormat.GHOSTTY_MOUSE_FORMAT_X10;
+  }
+
+  void _sendMouseEvent(
+    GhosttyMouseAction action,
+    PointerEvent event,
+    Size size,
+    _TerminalMetrics metrics, {
+    GhosttyMouseButton? button,
+  }) {
+    if (!_terminalMouseReportingEnabled) {
+      return;
+    }
+
+    widget.controller.sendMouse(
+      action: action,
+      button: button ?? _mouseButtonFromButtons(event.buttons),
+      mods: GhosttyTerminalModifierState.fromHardwareKeyboard().ghosttyMask,
+      position: VtMousePosition(
+        x: event.localPosition.dx,
+        y: event.localPosition.dy,
+      ),
+      size: _mouseEncoderSize(size, metrics),
+      trackingMode: _terminalMouseTrackingMode,
+      format: _terminalMouseFormat,
+      anyButtonPressed: event.buttons != 0,
+      trackLastCell: true,
+    );
   }
 
   int _maxScrollOffset(Size size, _TerminalMetrics metrics) {
@@ -612,6 +823,9 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
 
   void _handleTapUp(Offset localPosition, Size size, _TerminalMetrics metrics) {
     FocusScope.of(context).requestFocus(_focusNode);
+    if (_terminalMouseReportingEnabled) {
+      return;
+    }
     final position = _positionForOffset(localPosition, size, metrics);
     final resolution =
         ghosttyTerminalResolveTap<
@@ -637,6 +851,9 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     Size size,
     _TerminalMetrics metrics,
   ) {
+    if (_terminalMouseReportingEnabled) {
+      return;
+    }
     final position = _positionForOffset(localPosition, size, metrics);
     final selection = _gestureCoordinator.beginSelection(
       position: position,
@@ -656,6 +873,9 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     Size size,
     _TerminalMetrics metrics,
   ) {
+    if (_terminalMouseReportingEnabled) {
+      return;
+    }
     final position = _positionForOffset(
       localPosition,
       size,
@@ -680,6 +900,9 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
   }
 
   void _selectWord(Offset localPosition, Size size, _TerminalMetrics metrics) {
+    if (_terminalMouseReportingEnabled) {
+      return;
+    }
     final position = _positionForOffset(localPosition, size, metrics);
     final selection = _gestureCoordinator.selectWord(
       position: position,
@@ -699,6 +922,9 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     Size size,
     _TerminalMetrics metrics,
   ) {
+    if (_terminalMouseReportingEnabled) {
+      return;
+    }
     final position = _positionForOffset(localPosition, size, metrics);
     final selection = _gestureCoordinator.beginLineSelection(
       position: position,
@@ -739,9 +965,36 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
                 setState(() {});
               }
             },
-            onHover: (event) =>
-                _updateHoveredHyperlink(event.localPosition, size, metrics),
+            onHover: (event) {
+              if (!_terminalMouseReportingEnabled) {
+                _updateHoveredHyperlink(event.localPosition, size, metrics);
+              }
+              _sendMouseEvent(
+                GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_MOTION,
+                event,
+                size,
+                metrics,
+              );
+            },
             child: Listener(
+              onPointerDown: (event) => _sendMouseEvent(
+                GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_PRESS,
+                event,
+                size,
+                metrics,
+              ),
+              onPointerMove: (event) => _sendMouseEvent(
+                GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_MOTION,
+                event,
+                size,
+                metrics,
+              ),
+              onPointerUp: (event) => _sendMouseEvent(
+                GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_RELEASE,
+                event,
+                size,
+                metrics,
+              ),
               onPointerSignal: (event) =>
                   _handlePointerSignal(event, size, metrics),
               child: GestureDetector(
@@ -791,6 +1044,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
                       letterSpacing: widget.letterSpacing,
                       padding: widget.padding,
                       selection: _selection,
+                      nativeRunPainterCache: _nativeRunPainterCache,
                     ),
                     child: const SizedBox.expand(),
                   ),
@@ -805,7 +1059,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
 }
 
 class _GhosttyTerminalPainter extends CustomPainter {
-  const _GhosttyTerminalPainter({
+  _GhosttyTerminalPainter({
     required this.revision,
     required this.title,
     required this.snapshot,
@@ -833,6 +1087,7 @@ class _GhosttyTerminalPainter extends CustomPainter {
     required this.letterSpacing,
     required this.padding,
     required this.selection,
+    required this.nativeRunPainterCache,
   });
 
   final int revision;
@@ -862,6 +1117,7 @@ class _GhosttyTerminalPainter extends CustomPainter {
   final double letterSpacing;
   final EdgeInsets padding;
   final GhosttyTerminalSelection? selection;
+  final _TerminalTextPainterCache nativeRunPainterCache;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -945,8 +1201,10 @@ class _GhosttyTerminalPainter extends CustomPainter {
         canvas,
         contentTop: contentTop,
         visibleStartLine: start,
-        defaultForeground: nativeRender.foregroundColor,
-        defaultBackground: nativeRender.backgroundColor,
+        defaultForeground: foregroundColor,
+        defaultBackground: backgroundColor,
+        nativeDefaultForeground: nativeRender.foregroundColor,
+        nativeDefaultBackground: nativeRender.backgroundColor,
         linePixels: linePixels,
         rowsData: nativeRender.rowsData,
       );
@@ -1019,17 +1277,46 @@ class _GhosttyTerminalPainter extends CustomPainter {
         var textX = x;
         final graphemes = _splitTerminalCells(run.text).toList(growable: false);
         final cellWidths = _measureTerminalCellWidths(run.text, run.cells);
-        for (var index = 0; index < graphemes.length; index++) {
-          final character = graphemes[index];
-          final widthCells = cellWidths[index];
-          final width = widthCells * charWidth;
-          final painter = TextPainter(
-            text: TextSpan(text: character, style: textStyle),
-            textDirection: TextDirection.ltr,
-            maxLines: 1,
-          )..layout(minWidth: width, maxWidth: width);
-          painter.paint(canvas, Offset(textX, y));
-          textX += width;
+        final canPaintAsSingleRun =
+            graphemes.length == run.cells &&
+            cellWidths.every((widthCells) => widthCells == 1);
+        if (canPaintAsSingleRun) {
+          final rect = Rect.fromLTWH(x, y, run.cells * charWidth, linePixels);
+          final painter = nativeRunPainterCache.resolve(
+            _TerminalTextPainterKey(
+              text: run.text,
+              width: rect.width,
+              fontSize: fontSize,
+              lineHeight: linePixels / fontSize,
+              fontFamily: fontFamily,
+              fontFamilyFallback: fontFamilyFallback,
+              fontPackage: fontPackage,
+              letterSpacing: letterSpacing,
+              color: style.foreground,
+              fontWeight: style.fontWeight,
+              fontStyle: style.fontStyle,
+              decoration: style.decoration,
+              decorationStyle: style.decorationStyle,
+              decorationColor: style.decorationColor,
+            ),
+          );
+          canvas.save();
+          canvas.clipRect(rect);
+          painter.paint(canvas, Offset(rect.left, y));
+          canvas.restore();
+        } else {
+          for (var index = 0; index < graphemes.length; index++) {
+            final character = graphemes[index];
+            final widthCells = cellWidths[index];
+            final width = widthCells * charWidth;
+            final painter = TextPainter(
+              text: TextSpan(text: character, style: textStyle),
+              textDirection: TextDirection.ltr,
+              maxLines: 1,
+            )..layout(minWidth: width, maxWidth: width);
+            painter.paint(canvas, Offset(textX, y));
+            textX += width;
+          }
         }
         x += run.cells * charWidth;
       }
@@ -1111,6 +1398,8 @@ class _GhosttyTerminalPainter extends CustomPainter {
     required int visibleStartLine,
     required Color defaultForeground,
     required Color defaultBackground,
+    required Color nativeDefaultForeground,
+    required Color nativeDefaultBackground,
     required double linePixels,
     required List<GhosttyTerminalRenderRow> rowsData,
   }) {
@@ -1122,6 +1411,8 @@ class _GhosttyTerminalPainter extends CustomPainter {
         row.cells,
         defaultForeground: defaultForeground,
         defaultBackground: defaultBackground,
+        nativeDefaultForeground: nativeDefaultForeground,
+        nativeDefaultBackground: nativeDefaultBackground,
       );
       for (final run in runs) {
         if (run.width <= 0) {
@@ -1147,7 +1438,12 @@ class _GhosttyTerminalPainter extends CustomPainter {
             style: run.style,
             defaultForeground: defaultForeground,
             defaultBackground: defaultBackground,
-            metadataColor: run.metadataBackground,
+            nativeDefaultForeground: nativeDefaultForeground,
+            nativeDefaultBackground: nativeDefaultBackground,
+            metadataColor: _resolveMetadataBackgroundColor(
+              metadata: run.metadata,
+              fallback: run.metadataBackground,
+            ),
             hasHyperlink: run.hasHyperlink,
           );
           final textForeground =
@@ -1181,25 +1477,62 @@ class _GhosttyTerminalPainter extends CustomPainter {
             run.text,
           ).toList(growable: false);
           if (graphemes.isNotEmpty) {
-            final graphemeWidths = _measureTerminalCellWidths(
-              run.text,
-              run.width,
-            );
-            var textX = rect.left;
-            for (var index = 0; index < graphemes.length; index++) {
-              final character = graphemes[index];
-              final widthCells = index < graphemeWidths.length
-                  ? graphemeWidths[index]
-                  : 1;
-              final cellWidth = widthCells * charWidth;
-              final painter = TextPainter(
-                text: TextSpan(text: character, style: textStyle),
-                textDirection: TextDirection.ltr,
-                maxLines: 1,
-              )..layout(minWidth: cellWidth, maxWidth: cellWidth);
-              final dy = y + (linePixels - painter.height) / 2;
-              painter.paint(canvas, Offset(textX, dy));
-              textX += cellWidth;
+            final graphemeWidths =
+                run.graphemeCellWidths.length == graphemes.length
+                ? run.graphemeCellWidths
+                : _measureTerminalCellWidths(run.text, run.width);
+            final canPaintAsSingleRun =
+                graphemes.length == run.width &&
+                graphemeWidths.every((widthCells) => widthCells == 1);
+            if (canPaintAsSingleRun) {
+              final painter = nativeRunPainterCache.resolve(
+                _TerminalTextPainterKey(
+                  text: run.text,
+                  width: rect.width,
+                  fontSize: fontSize,
+                  lineHeight: linePixels / fontSize,
+                  fontFamily: fontFamily,
+                  fontFamilyFallback: fontFamilyFallback,
+                  fontPackage: fontPackage,
+                  letterSpacing: letterSpacing,
+                  color: textForeground,
+                  fontWeight: run.style.bold
+                      ? FontWeight.w700
+                      : FontWeight.w400,
+                  fontStyle: run.style.italic
+                      ? FontStyle.italic
+                      : FontStyle.normal,
+                  decoration: _nativeTextDecoration(
+                    style: run.style,
+                    hasHyperlink: run.hasHyperlink,
+                  ),
+                  decorationStyle: _nativeDecorationStyle(
+                    underline: run.style.underline,
+                    hasHyperlink: run.hasHyperlink,
+                  ),
+                  decorationColor: decorationColor,
+                ),
+              );
+              canvas.save();
+              canvas.clipRect(rect);
+              painter.paint(canvas, Offset(rect.left, y));
+              canvas.restore();
+            } else {
+              var textX = rect.left;
+              for (var index = 0; index < graphemes.length; index++) {
+                final character = graphemes[index];
+                final widthCells = index < graphemeWidths.length
+                    ? graphemeWidths[index]
+                    : 1;
+                final cellWidth = widthCells * charWidth;
+                final painter = TextPainter(
+                  text: TextSpan(text: character, style: textStyle),
+                  textDirection: TextDirection.ltr,
+                  maxLines: 1,
+                )..layout(minWidth: cellWidth, maxWidth: cellWidth);
+                painter.paint(canvas, Offset(textX, y));
+                textX += cellWidth;
+              }
             }
           }
         }
@@ -1297,6 +1630,8 @@ class _GhosttyTerminalPainter extends CustomPainter {
     List<GhosttyTerminalRenderCell> cells, {
     required Color defaultForeground,
     required Color defaultBackground,
+    required Color nativeDefaultForeground,
+    required Color nativeDefaultBackground,
   }) {
     if (cells.isEmpty) {
       return const <_NativeRenderRun>[];
@@ -1306,13 +1641,19 @@ class _GhosttyTerminalPainter extends CustomPainter {
     var runStartCol = 0;
     var runWidth = 0;
     final runText = StringBuffer();
+    final runGraphemeCellWidths = <int>[];
     void flushCurrentRun() {
       final firstCell = cells[runStart];
       final firstStyleColors = _resolveNativeStyleColors(
         style: firstCell.style,
         defaultForeground: defaultForeground,
         defaultBackground: defaultBackground,
-        metadataColor: firstCell.metadata.backgroundColor,
+        nativeDefaultForeground: nativeDefaultForeground,
+        nativeDefaultBackground: nativeDefaultBackground,
+        metadataColor: _resolveMetadataBackgroundColor(
+          metadata: firstCell.metadata,
+          fallback: firstCell.metadata.backgroundColor,
+        ),
       );
       final firstBackground = firstStyleColors.background;
       final text = runText.toString();
@@ -1320,10 +1661,12 @@ class _GhosttyTerminalPainter extends CustomPainter {
         _NativeRenderRun(
           style: firstCell.style,
           background: firstBackground,
+          metadata: firstCell.metadata,
           metadataBackground: firstCell.metadata.backgroundColor,
           startCol: runStartCol,
           width: runWidth,
           text: text,
+          graphemeCellWidths: List<int>.unmodifiable(runGraphemeCellWidths),
           hasHyperlink: firstCell.hasHyperlink,
           hasRenderableText: text.isNotEmpty,
         ),
@@ -1331,6 +1674,7 @@ class _GhosttyTerminalPainter extends CustomPainter {
       runStartCol += runWidth;
       runWidth = 0;
       runText.clear();
+      runGraphemeCellWidths.clear();
     }
 
     for (var index = 0; index < cells.length; index++) {
@@ -1342,6 +1686,8 @@ class _GhosttyTerminalPainter extends CustomPainter {
             currentCell,
             defaultForeground: defaultForeground,
             defaultBackground: defaultBackground,
+            nativeDefaultForeground: nativeDefaultForeground,
+            nativeDefaultBackground: nativeDefaultBackground,
           );
       if (shouldStartNewRun) {
         flushCurrentRun();
@@ -1351,6 +1697,7 @@ class _GhosttyTerminalPainter extends CustomPainter {
       runWidth += currentCell.width;
       if (currentCell.text.isNotEmpty) {
         runText.write(currentCell.text);
+        runGraphemeCellWidths.add(currentCell.width);
       }
 
       if (index == cells.length - 1) {
@@ -1366,19 +1713,31 @@ class _GhosttyTerminalPainter extends CustomPainter {
     GhosttyTerminalRenderCell next, {
     required Color defaultForeground,
     required Color defaultBackground,
+    required Color nativeDefaultForeground,
+    required Color nativeDefaultBackground,
   }) {
     return _nativeRenderStyleEquals(previous.style, next.style) &&
         _resolvedNativeBackground(
-              metadataColor: previous.metadata.backgroundColor,
+              metadataColor: _resolveMetadataBackgroundColor(
+                metadata: previous.metadata,
+                fallback: previous.metadata.backgroundColor,
+              ),
               style: previous.style,
               defaultForeground: defaultForeground,
               defaultBackground: defaultBackground,
+              nativeDefaultForeground: nativeDefaultForeground,
+              nativeDefaultBackground: nativeDefaultBackground,
             ) ==
             _resolvedNativeBackground(
-              metadataColor: next.metadata.backgroundColor,
+              metadataColor: _resolveMetadataBackgroundColor(
+                metadata: next.metadata,
+                fallback: next.metadata.backgroundColor,
+              ),
               style: next.style,
               defaultForeground: defaultForeground,
               defaultBackground: defaultBackground,
+              nativeDefaultForeground: nativeDefaultForeground,
+              nativeDefaultBackground: nativeDefaultBackground,
             ) &&
         previous.hasHyperlink == next.hasHyperlink;
   }
@@ -1387,6 +1746,8 @@ class _GhosttyTerminalPainter extends CustomPainter {
     required GhosttyTerminalResolvedStyle style,
     required Color defaultForeground,
     required Color defaultBackground,
+    required Color nativeDefaultForeground,
+    required Color nativeDefaultBackground,
     Color? metadataColor,
     required bool hasHyperlink,
   }) {
@@ -1394,6 +1755,8 @@ class _GhosttyTerminalPainter extends CustomPainter {
       style: style,
       defaultForeground: defaultForeground,
       defaultBackground: defaultBackground,
+      nativeDefaultForeground: nativeDefaultForeground,
+      nativeDefaultBackground: nativeDefaultBackground,
       metadataColor: metadataColor,
     );
     if (hasHyperlink && !style.hasExplicitForeground) {
@@ -1406,14 +1769,54 @@ class _GhosttyTerminalPainter extends CustomPainter {
     required GhosttyTerminalResolvedStyle style,
     required Color defaultForeground,
     required Color defaultBackground,
+    required Color nativeDefaultForeground,
+    required Color nativeDefaultBackground,
     Color? metadataColor,
   }) {
-    return GhosttyTerminalResolvedStyle.resolveNativeStyleColors(
+    final resolved = GhosttyTerminalResolvedStyle.resolveNativeStyleColors(
       style: style,
       defaultForeground: defaultForeground,
       defaultBackground: defaultBackground,
       metadataColor: metadataColor,
     );
+    final resolvedForeground = _resolvePaletteAwareNativeColor(
+      style.foregroundToken,
+      fallback: resolved.foreground,
+    );
+    final resolvedBackground = _resolvePaletteAwareNativeColor(
+      style.backgroundToken,
+      fallback: resolved.background,
+    );
+    final foreground = style.foreground == nativeDefaultForeground
+        ? defaultForeground
+        : resolvedForeground;
+    final background =
+        metadataColor == null && style.background == nativeDefaultBackground
+        ? Colors.transparent
+        : resolvedBackground;
+    return (foreground: foreground, background: background);
+  }
+
+  Color _resolvePaletteAwareNativeColor(
+    GhosttyTerminalColor? token, {
+    required Color fallback,
+  }) {
+    if (token == null) {
+      return fallback;
+    }
+    final rgb = token.rgb;
+    if (rgb != null) {
+      return Color.fromARGB(
+        0xFF,
+        (rgb >> 16) & 0xFF,
+        (rgb >> 8) & 0xFF,
+        rgb & 0xFF,
+      );
+    }
+    if (token.paletteIndex != null) {
+      return palette.resolve(token, fallback: fallback);
+    }
+    return fallback;
   }
 
   Color _resolvedNativeBackground({
@@ -1421,13 +1824,31 @@ class _GhosttyTerminalPainter extends CustomPainter {
     required GhosttyTerminalResolvedStyle style,
     required Color defaultForeground,
     required Color defaultBackground,
+    required Color nativeDefaultForeground,
+    required Color nativeDefaultBackground,
   }) {
     return _resolveNativeStyleColors(
       style: style,
       defaultForeground: defaultForeground,
       defaultBackground: defaultBackground,
+      nativeDefaultForeground: nativeDefaultForeground,
+      nativeDefaultBackground: nativeDefaultBackground,
       metadataColor: metadataColor,
     ).background;
+  }
+
+  Color? _resolveMetadataBackgroundColor({
+    required GhosttyTerminalRenderCellMetadata metadata,
+    Color? fallback,
+  }) {
+    final paletteIndex = metadata.colorPaletteIndex;
+    if (paletteIndex != null) {
+      return palette.resolve(
+        GhosttyTerminalColor.palette(paletteIndex),
+        fallback: fallback ?? backgroundColor,
+      );
+    }
+    return metadata.backgroundColor ?? fallback;
   }
 
   bool _nativeRenderStyleEquals(
@@ -1606,20 +2027,24 @@ final class _NativeRenderRun {
   const _NativeRenderRun({
     required this.style,
     required this.background,
+    required this.metadata,
     required this.metadataBackground,
     required this.startCol,
     required this.width,
     required this.text,
+    required this.graphemeCellWidths,
     required this.hasRenderableText,
     required this.hasHyperlink,
   });
 
   final GhosttyTerminalResolvedStyle style;
   final Color background;
+  final GhosttyTerminalRenderCellMetadata metadata;
   final Color? metadataBackground;
   final int startCol;
   final int width;
   final String text;
+  final List<int> graphemeCellWidths;
   final bool hasRenderableText;
   final bool hasHyperlink;
 }
@@ -1720,6 +2145,121 @@ final class _ResolvedTerminalStyle {
       decorationStyle: decorationStyle,
       decorationColor: decorationColor,
     );
+  }
+}
+
+final class _TerminalTextPainterKey {
+  const _TerminalTextPainterKey({
+    required this.text,
+    required this.width,
+    required this.fontSize,
+    required this.lineHeight,
+    required this.fontFamily,
+    required this.fontFamilyFallback,
+    required this.fontPackage,
+    required this.letterSpacing,
+    required this.color,
+    required this.fontWeight,
+    required this.fontStyle,
+    required this.decoration,
+    required this.decorationStyle,
+    required this.decorationColor,
+  });
+
+  final String text;
+  final double width;
+  final double fontSize;
+  final double lineHeight;
+  final String fontFamily;
+  final List<String>? fontFamilyFallback;
+  final String? fontPackage;
+  final double letterSpacing;
+  final Color color;
+  final FontWeight fontWeight;
+  final FontStyle fontStyle;
+  final TextDecoration decoration;
+  final TextDecorationStyle decorationStyle;
+  final Color decorationColor;
+
+  @override
+  bool operator ==(Object other) {
+    return other is _TerminalTextPainterKey &&
+        text == other.text &&
+        width == other.width &&
+        fontSize == other.fontSize &&
+        lineHeight == other.lineHeight &&
+        fontFamily == other.fontFamily &&
+        listEquals(fontFamilyFallback, other.fontFamilyFallback) &&
+        fontPackage == other.fontPackage &&
+        letterSpacing == other.letterSpacing &&
+        color == other.color &&
+        fontWeight == other.fontWeight &&
+        fontStyle == other.fontStyle &&
+        decoration == other.decoration &&
+        decorationStyle == other.decorationStyle &&
+        decorationColor == other.decorationColor;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    text,
+    width,
+    fontSize,
+    lineHeight,
+    fontFamily,
+    Object.hashAll(fontFamilyFallback ?? const <String>[]),
+    fontPackage,
+    letterSpacing,
+    color,
+    fontWeight,
+    fontStyle,
+    decoration,
+    decorationStyle,
+    decorationColor,
+  );
+}
+
+final class _TerminalTextPainterCache {
+  _TerminalTextPainterCache({required this.maxEntries});
+
+  final int maxEntries;
+  final Map<_TerminalTextPainterKey, TextPainter> _painters =
+      <_TerminalTextPainterKey, TextPainter>{};
+
+  TextPainter resolve(_TerminalTextPainterKey key) {
+    final cached = _painters.remove(key);
+    if (cached != null) {
+      _painters[key] = cached;
+      return cached;
+    }
+
+    final painter = TextPainter(
+      text: TextSpan(
+        text: key.text,
+        style: TextStyle(
+          color: key.color,
+          fontFamily: key.fontFamily,
+          fontFamilyFallback: key.fontFamilyFallback,
+          package: key.fontPackage,
+          fontSize: key.fontSize,
+          height: key.lineHeight,
+          letterSpacing: key.letterSpacing,
+          fontWeight: key.fontWeight,
+          fontStyle: key.fontStyle,
+          decoration: key.decoration,
+          decorationStyle: key.decorationStyle,
+          decorationColor: key.decorationColor,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout(maxWidth: key.width);
+
+    _painters[key] = painter;
+    if (_painters.length > maxEntries) {
+      _painters.remove(_painters.keys.first);
+    }
+    return painter;
   }
 }
 

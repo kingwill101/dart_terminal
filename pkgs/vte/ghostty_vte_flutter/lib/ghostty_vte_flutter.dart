@@ -23,6 +23,7 @@ export 'src/terminal_controller.dart';
 
 /// Styled terminal snapshot and palette types used by the controller and view.
 export 'src/terminal_snapshot.dart';
+export 'src/terminal_render_model.dart';
 
 /// Shared mutable selection state for terminal widgets.
 export 'src/terminal_selection_session.dart';
