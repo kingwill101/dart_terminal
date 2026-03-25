@@ -1,3 +1,18 @@
+## 0.1.0
+
+- **BREAKING**: `resize()` now requires `cellWidthPx` and `cellHeightPx`
+  parameters (matching ghostty's updated 5-arg `ghostty_terminal_resize`).
+- Updated ghostty submodule from `efb352359` to `bebca8466` (162 upstream
+  commits) with major API expansion.
+- Regenerated FFI bindings (4747 → 5484 lines).
+- All 8 terminal effect callbacks via `NativeCallable.isolateLocal`:
+  `onBell`, `onWritePty`, `onTitleChanged`, `onSize`, `onColorScheme`,
+  `onDeviceAttributes`, `onEnquiry`, `onXtversion`.
+- Terminal data getters: `title`, `pwd`, `mouseTracking`, `totalRows`,
+  `scrollbackRows`, `widthPx`, `heightPx`.
+- New types: `VtDeviceAttributes`, `VtColorScheme`, `VtSizeReportSize`.
+- Updated zig build step from `lib-vt` to `-Demit-lib-vt=true`.
+
 ## 0.0.3+1
 
 - Auto-download prebuilt native libraries from GitHub Releases during

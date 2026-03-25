@@ -13,7 +13,9 @@ void main() {
     final attrs = parser.parseParams(params);
     print('params=$params');
     for (final attr in attrs) {
-      print('  tag=${attr.tag} underline=${attr.underline} palette=${attr.paletteIndex}');
+      print(
+        '  tag=${attr.tag} underline=${attr.underline} palette=${attr.paletteIndex}',
+      );
     }
   }
   parser.close();

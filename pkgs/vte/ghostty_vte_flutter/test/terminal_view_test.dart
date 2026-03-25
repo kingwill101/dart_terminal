@@ -607,99 +607,101 @@ void main() {
       expect(controller.lastUnshiftedCodepoint, 0);
     });
 
-    testWidgets('pointer interaction does not forward mouse events by default', (
-      tester,
-    ) async {
-      final controller = _RecordingTerminalController();
-      addTearDown(controller.dispose);
+    testWidgets(
+      'pointer interaction does not forward mouse events by default',
+      (tester) async {
+        final controller = _RecordingTerminalController();
+        addTearDown(controller.dispose);
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: SizedBox(
-              width: 600,
-              height: 400,
-              child: GhosttyTerminalView(
-                controller: controller,
-                autofocus: true,
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 600,
+                height: 400,
+                child: GhosttyTerminalView(
+                  controller: controller,
+                  autofocus: true,
+                ),
               ),
             ),
           ),
-        ),
-      );
-      await tester.pumpAndSettle();
+        );
+        await tester.pumpAndSettle();
 
-      final gesture = await tester.startGesture(const Offset(100, 100));
-      await tester.pump();
-      await gesture.moveTo(const Offset(140, 120));
-      await tester.pump();
-      await gesture.up();
-      await tester.pump(const Duration(milliseconds: 300));
+        final gesture = await tester.startGesture(const Offset(100, 100));
+        await tester.pump();
+        await gesture.moveTo(const Offset(140, 120));
+        await tester.pump();
+        await gesture.up();
+        await tester.pump(const Duration(milliseconds: 300));
 
-      expect(controller.mouseEvents, isEmpty);
-    });
+        expect(controller.mouseEvents, isEmpty);
+      },
+    );
 
     testWidgets(
-        'pointer interaction forwards Ghostty mouse events when reporting is enabled',
-        (tester) async {
-      if (!_hasNativeTerminal) {
-        return;
-      }
+      'pointer interaction forwards Ghostty mouse events when reporting is enabled',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
 
-      final controller = _RecordingTerminalController();
-      addTearDown(controller.dispose);
-      controller.appendDebugOutput('hello world');
-      controller.terminal.setMode(VtModes.normalMouse, true);
-      controller.terminal.setMode(VtModes.sgrMouse, true);
+        final controller = _RecordingTerminalController();
+        addTearDown(controller.dispose);
+        controller.appendDebugOutput('hello world');
+        controller.terminal.setMode(VtModes.normalMouse, true);
+        controller.terminal.setMode(VtModes.sgrMouse, true);
 
-      GhosttyTerminalSelection? currentSelection;
+        GhosttyTerminalSelection? currentSelection;
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: SizedBox(
-              width: 600,
-              height: 400,
-              child: GhosttyTerminalView(
-                controller: controller,
-                autofocus: true,
-                onSelectionChanged: (selection) {
-                  currentSelection = selection;
-                },
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 600,
+                height: 400,
+                child: GhosttyTerminalView(
+                  controller: controller,
+                  autofocus: true,
+                  onSelectionChanged: (selection) {
+                    currentSelection = selection;
+                  },
+                ),
               ),
             ),
           ),
-        ),
-      );
-      await tester.pumpAndSettle();
+        );
+        await tester.pumpAndSettle();
 
-      final gesture = await tester.startGesture(const Offset(100, 100));
-      await tester.pump();
-      await gesture.moveTo(const Offset(140, 120));
-      await tester.pump();
-      await gesture.up();
-      await tester.pump(const Duration(milliseconds: 300));
+        final gesture = await tester.startGesture(const Offset(100, 100));
+        await tester.pump();
+        await gesture.moveTo(const Offset(140, 120));
+        await tester.pump();
+        await gesture.up();
+        await tester.pump(const Duration(milliseconds: 300));
 
-      expect(controller.mouseEvents, isNotEmpty);
-      expect(
-        controller.mouseEvents.map((event) => event.action),
-        contains(GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_PRESS),
-      );
-      expect(
-        controller.mouseEvents.map((event) => event.action),
-        contains(GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_MOTION),
-      );
-      expect(
-        controller.mouseEvents.map((event) => event.action),
-        contains(GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_RELEASE),
-      );
-      expect(controller.mouseEvents.first.size.screenWidth, greaterThan(0));
-      expect(
-        controller.mouseEvents.first.button,
-        GhosttyMouseButton.GHOSTTY_MOUSE_BUTTON_LEFT,
-      );
-      expect(currentSelection, isNull);
-    });
+        expect(controller.mouseEvents, isNotEmpty);
+        expect(
+          controller.mouseEvents.map((event) => event.action),
+          contains(GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_PRESS),
+        );
+        expect(
+          controller.mouseEvents.map((event) => event.action),
+          contains(GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_MOTION),
+        );
+        expect(
+          controller.mouseEvents.map((event) => event.action),
+          contains(GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_RELEASE),
+        );
+        expect(controller.mouseEvents.first.size.screenWidth, greaterThan(0));
+        expect(
+          controller.mouseEvents.first.button,
+          GhosttyMouseButton.GHOSTTY_MOUSE_BUTTON_LEFT,
+        );
+        expect(currentSelection, isNull);
+      },
+    );
 
     testWidgets(
       'scroll wheel forwards Ghostty mouse buttons four and five when reporting is enabled',
@@ -742,8 +744,7 @@ void main() {
         final pressEvents = controller.mouseEvents
             .where(
               (event) =>
-                  event.action ==
-                  GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_PRESS,
+                  event.action == GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_PRESS,
             )
             .toList(growable: false);
         final releaseEvents = controller.mouseEvents
@@ -756,13 +757,10 @@ void main() {
 
         expect(pressEvents, hasLength(2));
         expect(releaseEvents, hasLength(2));
-        expect(
-          pressEvents.map((event) => event.button),
-          <GhosttyMouseButton?>[
-            GhosttyMouseButton.GHOSTTY_MOUSE_BUTTON_FOUR,
-            GhosttyMouseButton.GHOSTTY_MOUSE_BUTTON_FIVE,
-          ],
-        );
+        expect(pressEvents.map((event) => event.button), <GhosttyMouseButton?>[
+          GhosttyMouseButton.GHOSTTY_MOUSE_BUTTON_FOUR,
+          GhosttyMouseButton.GHOSTTY_MOUSE_BUTTON_FIVE,
+        ]);
         expect(
           releaseEvents.map((event) => event.button),
           <GhosttyMouseButton?>[

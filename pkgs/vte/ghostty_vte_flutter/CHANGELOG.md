@@ -1,3 +1,18 @@
+## 0.1.0
+
+- **BREAKING**: Removed regex-based OSC title tracking (`_consumeOscText`,
+  `_consumeOscPayload`). Title is now driven by native `onTitleChanged`
+  callback.
+- **BREAKING**: `resize()` now requires `cellWidthPx` and `cellHeightPx`.
+- 7 public callback properties on the controller: `onBell`,
+  `onTitleChanged`, `onSize`, `onColorScheme`, `onDeviceAttributes`,
+  `onEnquiry`, `onXtversion` (writePty handled internally).
+- Controller data getters: `title`, `pwd`, `mouseTracking`, `totalRows`,
+  `scrollbackRows`, `widthPx`, `heightPx`.
+- New `TerminalRenderModel` abstraction (211 lines).
+- Expanded example app with all 8 effect callbacks and live state display.
+- Bumped `ghostty_vte` dependency to `^0.1.0`.
+
 ## 0.0.3+1
 
 - Bumped `ghostty_vte` dependency to `^0.0.3` for auto-download support.

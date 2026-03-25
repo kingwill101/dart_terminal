@@ -44,7 +44,9 @@ void main() {
     );
   });
 
-  testWidgets('toggles ghostty interaction policy', (WidgetTester tester) async {
+  testWidgets('toggles ghostty interaction policy', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(const TerminalSuiteApp(autoInspect: false));
     await tester.pumpAndSettle();
 

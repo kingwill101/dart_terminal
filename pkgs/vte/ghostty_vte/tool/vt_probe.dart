@@ -14,7 +14,9 @@ void main() {
       ),
     ),
   );
-  final plain = terminal.createFormatter(const VtFormatterTerminalOptions(trim: false));
+  final plain = terminal.createFormatter(
+    const VtFormatterTerminalOptions(trim: false),
+  );
   print('PLAIN>>>');
   print(plain.formatText().replaceAll(' ', '.').replaceAll('\x1b', '<ESC>'));
   print('VT>>>');

@@ -13,7 +13,7 @@ Future<void> main(List<String> args) async {
 
   final buildArgs = <String>[
     'build',
-    'lib-vt',
+    '-Demit-lib-vt=true',
     '-Dtarget=wasm32-freestanding',
     '-Doptimize=ReleaseFast',
     '-Dsimd=false',

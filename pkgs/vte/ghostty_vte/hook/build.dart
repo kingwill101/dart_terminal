@@ -322,7 +322,7 @@ Future<void> _buildFromSource(
 
   final zigArgs = <String>[
     'build',
-    'lib-vt',
+    '-Demit-lib-vt=true',
     '-Dtarget=$target',
     '-Doptimize=ReleaseFast',
     '-Dsimd=false',

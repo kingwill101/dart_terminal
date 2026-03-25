@@ -632,7 +632,10 @@ class _TerminalSuiteHomeState extends State<TerminalSuiteHome>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Text('Mouse Encoder', style: Theme.of(context).textTheme.titleMedium),
+            Text(
+              'Mouse Encoder',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
             const SizedBox(height: 8),
             DropdownButtonFormField<GhosttyMouseAction>(
               initialValue: _selectedMouseAction,
@@ -802,7 +805,9 @@ class _TerminalSuiteHomeState extends State<TerminalSuiteHome>
             ),
             SelectableText('mouse hex: ${_hexBytes(_lastMouseEncodedBytes)}'),
             const SizedBox(height: 4),
-            SelectableText('mouse escaped: ${_escaped(_lastMouseEncodedBytes)}'),
+            SelectableText(
+              'mouse escaped: ${_escaped(_lastMouseEncodedBytes)}',
+            ),
             const SizedBox(height: 8),
             OutlinedButton(
               onPressed: _sendEncodedMouseToPty,
@@ -1085,23 +1090,25 @@ class _TerminalSuiteHomeState extends State<TerminalSuiteHome>
               ),
               const SizedBox(height: 8),
               SegmentedButton<GhosttyTerminalInteractionPolicy>(
-                segments: const <ButtonSegment<GhosttyTerminalInteractionPolicy>>[
-                  ButtonSegment<GhosttyTerminalInteractionPolicy>(
-                    value: GhosttyTerminalInteractionPolicy.auto,
-                    label: Text('Auto'),
-                    icon: Icon(Icons.tune),
-                  ),
-                  ButtonSegment<GhosttyTerminalInteractionPolicy>(
-                    value: GhosttyTerminalInteractionPolicy.selectionFirst,
-                    label: Text('Selection First'),
-                    icon: Icon(Icons.select_all),
-                  ),
-                  ButtonSegment<GhosttyTerminalInteractionPolicy>(
-                    value: GhosttyTerminalInteractionPolicy.terminalMouseFirst,
-                    label: Text('Terminal Mouse'),
-                    icon: Icon(Icons.mouse),
-                  ),
-                ],
+                segments:
+                    const <ButtonSegment<GhosttyTerminalInteractionPolicy>>[
+                      ButtonSegment<GhosttyTerminalInteractionPolicy>(
+                        value: GhosttyTerminalInteractionPolicy.auto,
+                        label: Text('Auto'),
+                        icon: Icon(Icons.tune),
+                      ),
+                      ButtonSegment<GhosttyTerminalInteractionPolicy>(
+                        value: GhosttyTerminalInteractionPolicy.selectionFirst,
+                        label: Text('Selection First'),
+                        icon: Icon(Icons.select_all),
+                      ),
+                      ButtonSegment<GhosttyTerminalInteractionPolicy>(
+                        value:
+                            GhosttyTerminalInteractionPolicy.terminalMouseFirst,
+                        label: Text('Terminal Mouse'),
+                        icon: Icon(Icons.mouse),
+                      ),
+                    ],
                 selected: <GhosttyTerminalInteractionPolicy>{
                   _ghosttyInteractionPolicy,
                 },
@@ -1144,13 +1151,12 @@ class _TerminalSuiteHomeState extends State<TerminalSuiteHome>
                 selected: <_DemoMouseTrackingProfile>{
                   _ghosttyMouseTrackingProfile,
                 },
-                onSelectionChanged:
-                    (Set<_DemoMouseTrackingProfile> modes) {
-                      setState(() {
-                        _ghosttyMouseTrackingProfile = modes.first;
-                      });
-                      _applyGhosttyMouseModes();
-                    },
+                onSelectionChanged: (Set<_DemoMouseTrackingProfile> modes) {
+                  setState(() {
+                    _ghosttyMouseTrackingProfile = modes.first;
+                  });
+                  _applyGhosttyMouseModes();
+                },
               ),
               const SizedBox(height: 8),
               const Text('Ghostty Mouse Format'),
@@ -1178,13 +1184,12 @@ class _TerminalSuiteHomeState extends State<TerminalSuiteHome>
                   ),
                 ],
                 selected: <_DemoMouseFormatProfile>{_ghosttyMouseFormatProfile},
-                onSelectionChanged:
-                    (Set<_DemoMouseFormatProfile> modes) {
-                      setState(() {
-                        _ghosttyMouseFormatProfile = modes.first;
-                      });
-                      _applyGhosttyMouseModes();
-                    },
+                onSelectionChanged: (Set<_DemoMouseFormatProfile> modes) {
+                  setState(() {
+                    _ghosttyMouseFormatProfile = modes.first;
+                  });
+                  _applyGhosttyMouseModes();
+                },
               ),
               Wrap(
                 spacing: 12,
@@ -1272,7 +1277,10 @@ class _TerminalSuiteHomeState extends State<TerminalSuiteHome>
             : 320.0;
         return ListView(
           children: <Widget>[
-            _inspectorCard('Ghostty Formatter Extras', _formatterExtrasSummary()),
+            _inspectorCard(
+              'Ghostty Formatter Extras',
+              _formatterExtrasSummary(),
+            ),
             const SizedBox(height: 8),
             SizedBox(
               height: terminalHeight,
