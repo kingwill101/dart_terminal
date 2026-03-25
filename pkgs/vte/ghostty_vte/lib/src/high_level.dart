@@ -2719,6 +2719,8 @@ final class VtTerminal {
     _ensureOpen();
     final checkedCols = _checkPositiveUint16(cols, 'cols');
     final checkedRows = _checkPositiveUint16(rows, 'rows');
+    RangeError.checkNotNegative(cellWidthPx, 'cellWidthPx');
+    RangeError.checkNotNegative(cellHeightPx, 'cellHeightPx');
     final result = bindings.ghostty_terminal_resize(
       _handle,
       checkedCols,

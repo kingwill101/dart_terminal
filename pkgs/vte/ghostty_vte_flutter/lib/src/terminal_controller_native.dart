@@ -79,6 +79,8 @@ class GhosttyTerminalController extends ChangeNotifier
   int _revision = 0;
   int _cols;
   int _rows;
+  int _cellWidthPx = 0;
+  int _cellHeightPx = 0;
 
   /// Monotonic value that increments whenever buffered output/state changes.
   @override
@@ -257,6 +259,10 @@ class GhosttyTerminalController extends ChangeNotifier
     );
 
     if (_canUsePtyBackend()) {
+      // Close any previous PTY session to avoid leaking file descriptors.
+      _ptySessionSub?.cancel();
+      _ptySession?.close();
+
       final session = GhosttyTerminalPtySession(
         config: GhosttyTerminalPtySessionConfig(rows: _rows, cols: _cols),
       );
@@ -415,12 +421,17 @@ class GhosttyTerminalController extends ChangeNotifier
   }) {
     final checkedCols = cols.clamp(1, 0xFFFF);
     final checkedRows = rows.clamp(1, 0xFFFF);
-    if (checkedCols == _cols && checkedRows == _rows) {
+    if (checkedCols == _cols &&
+        checkedRows == _rows &&
+        cellWidthPx == _cellWidthPx &&
+        cellHeightPx == _cellHeightPx) {
       return;
     }
 
     _cols = checkedCols;
     _rows = checkedRows;
+    _cellWidthPx = cellWidthPx;
+    _cellHeightPx = cellHeightPx;
 
     final terminal = _terminal;
     if (terminal != null) {
