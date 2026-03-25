@@ -31,7 +31,7 @@ resolution: workspace
 dependencies:
   flutter:
     sdk: flutter
-  ghostty_vte: ^0.0.1
+  ghostty_vte: ^0.1.0
   ghostty_vte_flutter:
     path: ../
 
