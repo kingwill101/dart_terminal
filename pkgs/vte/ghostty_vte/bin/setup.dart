@@ -1,7 +1,7 @@
 /// Downloads the prebuilt ghostty_vte native library for the host platform.
 ///
 /// Usage:
-///   dart run ghostty_vte:setup [--tag v0.0.2] [--platform linux-x64]
+///   dart run ghostty_vte:setup [--tag v0.1.0+1] [--platform linux-x64]
 ///
 /// The library is placed in `.prebuilt/<platform>/` at the project root,
 /// where the build hook will find it automatically.
@@ -9,8 +9,11 @@ library;
 
 import 'dart:io';
 
+import 'package:ghostty_vte/src/hook/build_cache.dart';
+import 'package:ghostty_vte/src/hook/dynamic_library.dart';
+
 const _repo = 'kingwill101/dart_terminal';
-const _defaultTag = 'v0.0.3';
+const _defaultTag = 'v0.1.0+1';
 
 const _artifacts = <String, String>{
   'linux-x64': 'vte-linux-x64.tar.gz',
@@ -75,6 +78,10 @@ Future<void> main(List<String> args) async {
 
   try {
     await _downloadAndExtract(tag, artifact, outDir);
+    final clearedCaches = clearGhosttyVteHookCache(projectRoot);
+    for (final path in clearedCaches) {
+      stdout.writeln('  Cleared cache: $path');
+    }
     stdout.writeln('Done. The build hook will use this library automatically.');
   } on Exception catch (e) {
     stderr.writeln('Failed: $e');
@@ -148,6 +155,30 @@ Future<void> _downloadAndExtract(
   if (files.isEmpty) {
     throw Exception('Archive extracted but no files found in ${outDir.path}');
   }
+
+  final platformLabel = filename
+      .replaceFirst('vte-', '')
+      .replaceFirst('.tar.gz', '');
+  final canonicalName = dynamicLibraryNameForPlatform(
+    platformLabel,
+    'ghostty-vt',
+  );
+  final selected = selectDynamicLibraryEntity(
+    files,
+    canonicalName: canonicalName,
+  );
+  if (selected == null) {
+    throw Exception(
+      'Archive extracted but no matching dynamic library was found for '
+      '$platformLabel in ${outDir.path}',
+    );
+  }
+  ensureDynamicLibraryFile(
+    File(selected.path),
+    canonicalName: canonicalName,
+    sourceDescription: 'release artifact $filename',
+  );
+
   for (final f in files) {
     stdout.writeln('  Extracted: ${f.path}');
   }
