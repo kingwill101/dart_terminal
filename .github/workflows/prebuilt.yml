@@ -80,7 +80,8 @@ jobs:
         working-directory: pkgs/vte/ghostty_vte/third_party/ghostty
         run: |
           mkdir -p ${{ github.workspace }}/build-prefix
-          zig build lib-vt \
+          zig build \
+            -Demit-lib-vt=true \
             -Dtarget=${{ matrix.target }} \
             -Doptimize=ReleaseFast \
             -Dsimd=false \
@@ -131,7 +132,8 @@ jobs:
         working-directory: pkgs/vte/ghostty_vte/third_party/ghostty
         run: |
           mkdir -p ${{ github.workspace }}/build-prefix
-          zig build lib-vt \
+          zig build \
+            -Demit-lib-vt=true \
             -Dtarget=wasm32-freestanding \
             -Doptimize=ReleaseFast \
             -Dsimd=false \
