@@ -16,6 +16,8 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 
+import '../pkgs/vte/ghostty_vte/lib/src/hook/dynamic_library.dart';
+
 const _repo = 'kingwill101/dart_terminal';
 
 const _vteArtifacts = <String, String>{
@@ -165,8 +167,12 @@ Future<Map<String, String>> _downloadAndHash(
     File(tarPath).deleteSync();
 
     // Find and hash the extracted library.
+    final canonicalName = packagePrefix == 'vte'
+        ? dynamicLibraryNameForPlatform(platform, 'ghostty-vt')
+        : null;
+
     final files = artifactDir
-        .listSync()
+        .listSync(recursive: true)
         .whereType<File>()
         .where((f) => !f.path.endsWith('.tar.gz'))
         .toList();
@@ -175,7 +181,26 @@ Future<Map<String, String>> _downloadAndHash(
       continue;
     }
 
-    final libFile = files.first;
+    final libFile = canonicalName == null
+        ? files.first
+        : switch (selectDynamicLibraryEntity(
+            files,
+            canonicalName: canonicalName,
+          )) {
+            final FileSystemEntity entity => File(entity.path),
+            null => throw StateError(
+              'No matching dynamic library found for $platform in ${artifactDir.path}',
+            ),
+          };
+
+    if (canonicalName != null) {
+      ensureDynamicLibraryFile(
+        libFile,
+        canonicalName: canonicalName,
+        sourceDescription: tarball,
+      );
+    }
+
     final hash = (await libFile.openRead().transform(sha256).first).toString();
     hashes[platform] = hash;
     stdout.writeln('$hash');

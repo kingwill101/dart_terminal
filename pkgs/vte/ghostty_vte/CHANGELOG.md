@@ -1,3 +1,11 @@
+## 0.1.0+1-wip
+
+- Fixed Linux/macOS/Windows prebuilt artifact selection to only package the
+  real dynamic library, not the similarly named static archive.
+- Added dynamic-library header validation in the build hook and setup tooling
+  so broken release artifacts fail fast instead of surfacing as runtime FFI
+  load errors.
+
 ## 0.1.0
 
 - **BREAKING**: `resize()` now requires `cellWidthPx` and `cellHeightPx`

@@ -8,6 +8,11 @@ on:
         description: "Release tag (e.g. v0.0.1). If empty, artifacts are uploaded but no release is created."
         required: false
         type: string
+      prerelease:
+        description: "Mark the GitHub release as a prerelease."
+        required: false
+        default: false
+        type: boolean
 
   # Also run on tags
   push:
@@ -91,15 +96,42 @@ jobs:
       - name: Locate artifact
         id: locate
         run: |
-          # Zig produces versioned names like libghostty-vt.so.0.1.0
-          LIB=$(find ${{ github.workspace }}/build-prefix/lib -name '*ghostty-vt*' -type f | head -1)
+          # Zig may emit an unversioned symlink plus a versioned real file.
+          LIB=$(
+            find ${{ github.workspace }}/build-prefix/lib \
+              \( -type f -o -type l \) \
+              \( -name '${{ matrix.artifact }}' -o -name '${{ matrix.artifact }}.*' \) \
+              | sort \
+              | head -1
+          )
           if [ -z "$LIB" ]; then
             echo "::error::Could not find any ghostty-vt library"
             find ${{ github.workspace }}/build-prefix -type f
             exit 1
           fi
+          KIND=$(file -b "$LIB")
+          case "${{ matrix.artifact }}" in
+            *.so)
+              echo "$KIND" | grep -q 'ELF' || {
+                echo "::error::Expected an ELF shared library, got: $KIND"
+                exit 1
+              }
+              ;;
+            *.dylib)
+              echo "$KIND" | grep -q 'Mach-O' || {
+                echo "::error::Expected a Mach-O dylib, got: $KIND"
+                exit 1
+              }
+              ;;
+            *.dll)
+              echo "$KIND" | grep -q 'PE32' || {
+                echo "::error::Expected a PE DLL, got: $KIND"
+                exit 1
+              }
+              ;;
+          esac
           echo "path=$LIB" >> "$GITHUB_OUTPUT"
-          echo "Found: $LIB ($(wc -c < "$LIB") bytes)"
+          echo "Found: $LIB ($(wc -c < "$LIB") bytes, $KIND)"
 
       - name: Package artifact
         run: |
@@ -287,6 +319,9 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.tag != ''
     needs: [vte-native, vte-wasm, pty-native]
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -296,21 +331,35 @@ jobs:
       - name: List artifacts
         run: find artifacts -type f | sort
 
-      - name: Determine tag
-        id: tag
+      - name: Determine release metadata
+        id: meta
         run: |
           if [ -n "${{ github.event.inputs.tag }}" ]; then
-            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+            TAG="${{ github.event.inputs.tag }}"
           else
-            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+            TAG="${GITHUB_REF#refs/tags/}"
           fi
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            PRERELEASE="${{ github.event.inputs.prerelease }}"
+          elif printf '%s' "$TAG" | grep -q -- '-'; then
+            PRERELEASE=true
+          else
+            PRERELEASE=false
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "Tag: $TAG"
+          echo "Prerelease: $PRERELEASE"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: "${{ steps.tag.outputs.tag }}"
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: "${{ steps.meta.outputs.tag }}"
           generate_release_notes: true
+          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
           files: |
             artifacts/**/*.tar.gz
 
@@ -319,6 +368,7 @@ jobs:
   # ════════════════════════════════════════════════════════════════════
   update-hashes:
     name: Update Asset Hashes
+    if: needs.release.outputs.prerelease != 'true'
     needs: [release]
     runs-on: ubuntu-latest
     permissions:
@@ -336,17 +386,8 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Determine tag
-        id: tag
-        run: |
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Generate asset hashes
-        run: dart run tool/write_asset_hashes.dart --tag ${{ steps.tag.outputs.tag }}
+        run: dart run tool/write_asset_hashes.dart --tag ${{ needs.release.outputs.tag }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

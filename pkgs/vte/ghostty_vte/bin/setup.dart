@@ -9,6 +9,8 @@ library;
 
 import 'dart:io';
 
+import 'package:ghostty_vte/src/hook/dynamic_library.dart';
+
 const _repo = 'kingwill101/dart_terminal';
 const _defaultTag = 'v0.0.3';
 
@@ -148,6 +150,30 @@ Future<void> _downloadAndExtract(
   if (files.isEmpty) {
     throw Exception('Archive extracted but no files found in ${outDir.path}');
   }
+
+  final platformLabel = filename
+      .replaceFirst('vte-', '')
+      .replaceFirst('.tar.gz', '');
+  final canonicalName = dynamicLibraryNameForPlatform(
+    platformLabel,
+    'ghostty-vt',
+  );
+  final selected = selectDynamicLibraryEntity(
+    files,
+    canonicalName: canonicalName,
+  );
+  if (selected == null) {
+    throw Exception(
+      'Archive extracted but no matching dynamic library was found for '
+      '$platformLabel in ${outDir.path}',
+    );
+  }
+  ensureDynamicLibraryFile(
+    File(selected.path),
+    canonicalName: canonicalName,
+    sourceDescription: 'release artifact $filename',
+  );
+
   for (final f in files) {
     stdout.writeln('  Extracted: ${f.path}');
   }

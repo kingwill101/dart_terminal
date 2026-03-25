@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:hooks/hooks.dart';
 import 'package:path/path.dart' as p;
 
+import 'package:ghostty_vte/src/hook/dynamic_library.dart';
 import 'package:ghostty_vte/src/hook/asset_hashes.dart';
 
 const _repo = 'kingwill101/dart_terminal';
@@ -31,6 +32,11 @@ void main(List<String> args) async {
     if (envPath != null && envPath.isNotEmpty) {
       final f = File(envPath);
       if (f.existsSync()) {
+        ensureDynamicLibraryFile(
+          f,
+          canonicalName: dylibName,
+          sourceDescription: 'GHOSTTY_VTE_PREBUILT',
+        );
         stderr.writeln('Using prebuilt VTE library from env: ${f.path}');
         await f.copy(File.fromUri(bundledLibUri).path);
         _addAsset(output, input.packageName, bundledLibUri);
@@ -46,6 +52,11 @@ void main(List<String> args) async {
     // ── 2. Try .prebuilt/ directory (manual or setup script) ──
     final prebuilt = _findLocalPrebuilt(input, platformLabel, dylibName);
     if (prebuilt != null) {
+      ensureDynamicLibraryFile(
+        prebuilt,
+        canonicalName: dylibName,
+        sourceDescription: 'local prebuilt cache',
+      );
       stderr.writeln('Using prebuilt VTE library: ${prebuilt.path}');
       await prebuilt.copy(File.fromUri(bundledLibUri).path);
       _addAsset(output, input.packageName, bundledLibUri);
@@ -121,6 +132,11 @@ Future<File> _downloadPrebuilt(
   if (cachedFile.existsSync()) {
     final actualHash = await cachedFile.openRead().transform(sha256).first;
     if (actualHash.toString() == assetInfo.hash) {
+      ensureDynamicLibraryFile(
+        cachedFile,
+        canonicalName: dylibName,
+        sourceDescription: 'download cache',
+      );
       return cachedFile;
     }
     stderr.writeln('Cached file hash mismatch, re-downloading...');
@@ -213,20 +229,23 @@ Future<void> _extractAndVerify(
 
   // The extracted file should be the dylib. Find it.
   if (!targetFile.existsSync()) {
-    // Look for any file matching ghostty-vt in the extracted contents.
-    final files = cacheDir
-        .listSync()
-        .whereType<File>()
-        .where((f) => p.basename(f.path).contains('ghostty-vt'))
-        .toList();
-    if (files.isEmpty) {
+    final selected = selectDynamicLibraryEntity(
+      cacheDir.listSync(recursive: true),
+      canonicalName: dylibName,
+    );
+    if (selected == null) {
       throw StateError(
         'Archive extracted but no ghostty-vt library found in ${cacheDir.path}',
       );
     }
-    // Rename to the expected name.
-    files.first.renameSync(targetFile.path);
+    await File(selected.path).copy(targetFile.path);
   }
+
+  ensureDynamicLibraryFile(
+    targetFile,
+    canonicalName: dylibName,
+    sourceDescription: 'downloaded artifact',
+  );
 
   // Verify SHA256.
   final actualHash = await targetFile.openRead().transform(sha256).first;
@@ -531,6 +550,11 @@ String _zigTarget(OS os, Architecture arch) {
 Uri _resolveBuiltLibrary(Directory prefixDir, String dylibName) {
   final direct = File.fromUri(prefixDir.uri.resolve('lib/$dylibName'));
   if (direct.existsSync()) {
+    ensureDynamicLibraryFile(
+      direct,
+      canonicalName: dylibName,
+      sourceDescription: 'source build output',
+    );
     return direct.uri;
   }
 
@@ -539,21 +563,20 @@ Uri _resolveBuiltLibrary(Directory prefixDir, String dylibName) {
     throw StateError('Expected library directory: ${libDir.path}');
   }
 
-  final matches = libDir
-      .listSync()
-      .whereType<FileSystemEntity>()
-      .where((e) => e.path.contains('ghostty-vt'))
-      .toList();
-  if (matches.isEmpty) {
+  final selected = selectDynamicLibraryEntity(
+    libDir.listSync(),
+    canonicalName: dylibName,
+  );
+  if (selected == null) {
     throw StateError(
       'Could not find built ghostty-vt library in ${libDir.path}',
     );
   }
-
-  // Prefer the unversioned symlink/name if it exists, otherwise first match.
-  final preferred = matches.where((e) => e.path.endsWith(dylibName));
-  if (preferred.isNotEmpty) {
-    return preferred.first.uri;
-  }
-  return matches.first.uri;
+  final file = File(selected.path);
+  ensureDynamicLibraryFile(
+    file,
+    canonicalName: dylibName,
+    sourceDescription: 'source build output',
+  );
+  return file.uri;
 }
