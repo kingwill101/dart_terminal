@@ -96,9 +96,11 @@ jobs:
       - name: Locate artifact
         id: locate
         run: |
-          # Zig may emit an unversioned symlink plus a versioned real file.
+          # Zig installs platform artifacts under different prefixes:
+          # shared libraries in lib/ on Unix-like targets and DLLs in bin/ on Windows.
+          # It may also emit an unversioned symlink plus a versioned real file.
           LIB=$(
-            find ${{ github.workspace }}/build-prefix/lib \
+            find ${{ github.workspace }}/build-prefix \
               \( -type f -o -type l \) \
               \( -name '${{ matrix.artifact }}' -o -name '${{ matrix.artifact }}.*' \) \
               | sort \
