@@ -11,7 +11,9 @@ Future<void> main() async {
 }
 
 class TerminalSuiteApp extends StatelessWidget {
-  const TerminalSuiteApp({super.key});
+  const TerminalSuiteApp({super.key, this.autoInspect = true});
+
+  final bool autoInspect;
 
   @override
   Widget build(BuildContext context) {
@@ -25,15 +27,21 @@ class TerminalSuiteApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: const TerminalSuiteHome(),
+      home: TerminalSuiteHome(autoInspect: autoInspect),
     );
   }
 }
 
 enum _RemoteTransportMode { webSocket, webTransport }
 
+enum _DemoMouseTrackingProfile { disabled, x10, normal, button, any }
+
+enum _DemoMouseFormatProfile { x10, utf8, sgr, urxvt, sgrPixels }
+
 class TerminalSuiteHome extends StatefulWidget {
-  const TerminalSuiteHome({super.key});
+  const TerminalSuiteHome({super.key, this.autoInspect = true});
+
+  final bool autoInspect;
 
   @override
   State<TerminalSuiteHome> createState() => _TerminalSuiteHomeState();
@@ -69,6 +77,14 @@ class _TerminalSuiteHomeState extends State<TerminalSuiteHome>
   bool _sanitizePaste = true;
   GhosttyTerminalRendererMode _ghosttyRendererMode =
       GhosttyTerminalRendererMode.formatter;
+  GhosttyTerminalInteractionPolicy _ghosttyInteractionPolicy =
+      GhosttyTerminalInteractionPolicy.auto;
+  _DemoMouseTrackingProfile _ghosttyMouseTrackingProfile =
+      _DemoMouseTrackingProfile.disabled;
+  _DemoMouseFormatProfile _ghosttyMouseFormatProfile =
+      _DemoMouseFormatProfile.sgr;
+  bool _ghosttyMouseFocusEvents = false;
+  bool _ghosttyMouseAltScroll = false;
 
   int _ptyReads = 0;
   int _ptyBytesRead = 0;
@@ -85,6 +101,17 @@ class _TerminalSuiteHomeState extends State<TerminalSuiteHome>
   GhosttyKeyAction _selectedAction = GhosttyKeyAction.GHOSTTY_KEY_ACTION_PRESS;
   final Set<int> _mods = <int>{};
   final Set<int> _consumedMods = <int>{};
+  GhosttyMouseAction _selectedMouseAction =
+      GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_PRESS;
+  GhosttyMouseButton? _selectedMouseButton =
+      GhosttyMouseButton.GHOSTTY_MOUSE_BUTTON_LEFT;
+  GhosttyMouseTrackingMode _mouseTrackingMode =
+      GhosttyMouseTrackingMode.GHOSTTY_MOUSE_TRACKING_NORMAL;
+  GhosttyMouseFormat _mouseFormat = GhosttyMouseFormat.GHOSTTY_MOUSE_FORMAT_SGR;
+  bool _mouseAnyButtonPressed = false;
+  bool _mouseTrackLastCell = true;
+  double _mouseX = 48;
+  double _mouseY = 32;
 
   bool _keyComposing = false;
   bool _cursorKeyApplication = false;
@@ -98,6 +125,7 @@ class _TerminalSuiteHomeState extends State<TerminalSuiteHome>
   final Set<int> _kittyFlags = <int>{};
 
   Uint8List _lastEncodedBytes = Uint8List(0);
+  Uint8List _lastMouseEncodedBytes = Uint8List(0);
   final List<String> _activity = <String>[];
 
   @override
@@ -123,7 +151,14 @@ class _TerminalSuiteHomeState extends State<TerminalSuiteHome>
 
     _pty = _createPtyController()..addListener(_onPtyChange);
 
-    _recomputeParsers();
+    if (widget.autoInspect) {
+      _recomputeParsers();
+    } else {
+      _oscError = 'OSC parser unavailable without native assets.';
+      _sgrError = 'SGR parser unavailable without native assets.';
+      _lastEncodedBytes = Uint8List(0);
+      _lastMouseEncodedBytes = Uint8List(0);
+    }
     _appendActivity('Initialized terminal suite');
   }
 
@@ -178,10 +213,91 @@ class _TerminalSuiteHomeState extends State<TerminalSuiteHome>
     }
   }
 
+  bool _safeGhosttyMode(VtMode mode) {
+    try {
+      return _ghostty.terminal.getMode(mode);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  void _applyGhosttyMouseModes() {
+    try {
+      final terminal = _ghostty.terminal;
+      terminal.setMode(VtModes.x10Mouse, false);
+      terminal.setMode(VtModes.normalMouse, false);
+      terminal.setMode(VtModes.buttonMouse, false);
+      terminal.setMode(VtModes.anyMouse, false);
+      terminal.setMode(VtModes.utf8Mouse, false);
+      terminal.setMode(VtModes.sgrMouse, false);
+      terminal.setMode(VtModes.urxvtMouse, false);
+      terminal.setMode(VtModes.sgrPixelsMouse, false);
+
+      switch (_ghosttyMouseTrackingProfile) {
+        case _DemoMouseTrackingProfile.disabled:
+          break;
+        case _DemoMouseTrackingProfile.x10:
+          terminal.setMode(VtModes.x10Mouse, true);
+        case _DemoMouseTrackingProfile.normal:
+          terminal.setMode(VtModes.normalMouse, true);
+        case _DemoMouseTrackingProfile.button:
+          terminal.setMode(VtModes.buttonMouse, true);
+        case _DemoMouseTrackingProfile.any:
+          terminal.setMode(VtModes.anyMouse, true);
+      }
+
+      switch (_ghosttyMouseFormatProfile) {
+        case _DemoMouseFormatProfile.x10:
+          break;
+        case _DemoMouseFormatProfile.utf8:
+          terminal.setMode(VtModes.utf8Mouse, true);
+        case _DemoMouseFormatProfile.sgr:
+          terminal.setMode(VtModes.sgrMouse, true);
+        case _DemoMouseFormatProfile.urxvt:
+          terminal.setMode(VtModes.urxvtMouse, true);
+        case _DemoMouseFormatProfile.sgrPixels:
+          terminal.setMode(VtModes.sgrPixelsMouse, true);
+      }
+
+      terminal.setMode(VtModes.focusEvent, _ghosttyMouseFocusEvents);
+      terminal.setMode(VtModes.altScroll, _ghosttyMouseAltScroll);
+    } catch (_) {}
+  }
+
+  void _syncGhosttyMouseModeControls() {
+    if (_safeGhosttyMode(VtModes.anyMouse)) {
+      _ghosttyMouseTrackingProfile = _DemoMouseTrackingProfile.any;
+    } else if (_safeGhosttyMode(VtModes.buttonMouse)) {
+      _ghosttyMouseTrackingProfile = _DemoMouseTrackingProfile.button;
+    } else if (_safeGhosttyMode(VtModes.normalMouse)) {
+      _ghosttyMouseTrackingProfile = _DemoMouseTrackingProfile.normal;
+    } else if (_safeGhosttyMode(VtModes.x10Mouse)) {
+      _ghosttyMouseTrackingProfile = _DemoMouseTrackingProfile.x10;
+    } else {
+      _ghosttyMouseTrackingProfile = _DemoMouseTrackingProfile.disabled;
+    }
+
+    if (_safeGhosttyMode(VtModes.sgrPixelsMouse)) {
+      _ghosttyMouseFormatProfile = _DemoMouseFormatProfile.sgrPixels;
+    } else if (_safeGhosttyMode(VtModes.sgrMouse)) {
+      _ghosttyMouseFormatProfile = _DemoMouseFormatProfile.sgr;
+    } else if (_safeGhosttyMode(VtModes.urxvtMouse)) {
+      _ghosttyMouseFormatProfile = _DemoMouseFormatProfile.urxvt;
+    } else if (_safeGhosttyMode(VtModes.utf8Mouse)) {
+      _ghosttyMouseFormatProfile = _DemoMouseFormatProfile.utf8;
+    } else {
+      _ghosttyMouseFormatProfile = _DemoMouseFormatProfile.x10;
+    }
+
+    _ghosttyMouseFocusEvents = _safeGhosttyMode(VtModes.focusEvent);
+    _ghosttyMouseAltScroll = _safeGhosttyMode(VtModes.altScroll);
+  }
+
   void _onGhosttyChange() {
     if (!mounted) {
       return;
     }
+    _syncGhosttyMouseModeControls();
     setState(() {});
   }
 
@@ -285,6 +401,7 @@ class _TerminalSuiteHomeState extends State<TerminalSuiteHome>
     }
 
     _encodeKey();
+    _encodeMouse();
   }
 
   void _encodeKey() {
@@ -297,16 +414,44 @@ class _TerminalSuiteHomeState extends State<TerminalSuiteHome>
       ..utf8Text = _keyUtf8Controller.text
       ..unshiftedCodepoint = _parseMaybeInt(_keyUnshiftedController.text);
 
-    final VtKeyEncoder encoder = GhosttyVt.newKeyEncoder()
-      ..cursorKeyApplication = _cursorKeyApplication
-      ..keypadKeyApplication = _keypadKeyApplication
-      ..ignoreKeypadWithNumLock = _ignoreKeypadWithNumLock
-      ..altEscPrefix = _altEscPrefix
-      ..modifyOtherKeysState2 = _modifyOtherKeysState2
-      ..kittyFlags = _maskFrom(_kittyFlags)
-      ..macosOptionAsAlt = _macosOptionAsAlt;
+    final VtKeyEncoder encoder = GhosttyVt.newKeyEncoder();
+    VtKeyEncoderOptions(
+      cursorKeyApplication: _cursorKeyApplication,
+      keypadKeyApplication: _keypadKeyApplication,
+      ignoreKeypadWithNumLock: _ignoreKeypadWithNumLock,
+      altEscPrefix: _altEscPrefix,
+      modifyOtherKeysState2: _modifyOtherKeysState2,
+      kittyFlags: _maskFrom(_kittyFlags),
+      macosOptionAsAlt: _macosOptionAsAlt,
+    ).applyTo(encoder);
 
     _lastEncodedBytes = encoder.encode(event);
+    encoder.close();
+    event.close();
+  }
+
+  void _encodeMouse() {
+    final VtMouseEvent event = GhosttyVt.newMouseEvent()
+      ..action = _selectedMouseAction
+      ..button = _selectedMouseButton
+      ..mods = _maskFrom(_mods)
+      ..position = VtMousePosition(x: _mouseX, y: _mouseY);
+
+    final VtMouseEncoder encoder = GhosttyVt.newMouseEncoder();
+    VtMouseEncoderOptions(
+      trackingMode: _mouseTrackingMode,
+      format: _mouseFormat,
+      size: const VtMouseEncoderSize(
+        screenWidth: 1280,
+        screenHeight: 720,
+        cellWidth: 10,
+        cellHeight: 20,
+      ),
+      anyButtonPressed: _mouseAnyButtonPressed,
+      trackLastCell: _mouseTrackLastCell,
+    ).applyTo(encoder);
+
+    _lastMouseEncodedBytes = encoder.encode(event);
     encoder.close();
     event.close();
   }
@@ -387,6 +532,288 @@ class _TerminalSuiteHomeState extends State<TerminalSuiteHome>
     }
   }
 
+  String _formatterExtrasSummary() {
+    final extra = const VtFormatterTerminalExtra.all();
+    return 'palette=${extra.palette}\n'
+        'modes=${extra.modes}\n'
+        'scrollingRegion=${extra.scrollingRegion}\n'
+        'tabstops=${extra.tabstops}\n'
+        'pwd=${extra.pwd}\n'
+        'keyboard=${extra.keyboard}\n'
+        'cursor=${extra.screen.cursor}\n'
+        'style=${extra.screen.style}\n'
+        'hyperlink=${extra.screen.hyperlink}\n'
+        'protection=${extra.screen.protection}\n'
+        'kittyKeyboard=${extra.screen.kittyKeyboard}\n'
+        'charsets=${extra.screen.charsets}';
+  }
+
+  String _ghosttyMouseProtocolSummary() {
+    try {
+      final state = _ghostty.terminal.mouseProtocolState;
+      if (!state.enabled) {
+        return 'Mouse reporting: disabled';
+      }
+      return 'Mouse reporting: ${state.trackingMode?.name ?? 'unknown'}'
+          ' • ${state.format?.name ?? 'unknown'}'
+          ' • focus ${state.focusEvents ? 'on' : 'off'}'
+          ' • altScroll ${state.altScroll ? 'on' : 'off'}';
+    } catch (_) {
+      return 'Mouse reporting unavailable before native terminal init.';
+    }
+  }
+
+  String _renderSemanticSummary() {
+    final snapshot = _ghostty.renderSnapshot;
+    if (snapshot == null || !snapshot.hasViewportData) {
+      return 'Render snapshot unavailable on this platform or before native viewport update.';
+    }
+
+    var promptRows = 0;
+    var continuationRows = 0;
+    var promptTextCells = 0;
+    var promptInputCells = 0;
+    var promptOutputCells = 0;
+
+    for (final row in snapshot.rowsData) {
+      if (row.isPrompt) {
+        promptRows += 1;
+      }
+      if (row.isPromptContinuation) {
+        continuationRows += 1;
+      }
+      for (final cell in row.cells) {
+        if (cell.isPromptText) {
+          promptTextCells += 1;
+        }
+        if (cell.isPromptInput) {
+          promptInputCells += 1;
+        }
+        if (cell.isPromptOutput) {
+          promptOutputCells += 1;
+        }
+      }
+    }
+
+    final cursor = snapshot.cursor;
+    return 'rows=${snapshot.rowsData.length}\n'
+        'promptRows=$promptRows\n'
+        'promptContinuationRows=$continuationRows\n'
+        'promptTextCells=$promptTextCells\n'
+        'promptInputCells=$promptInputCells\n'
+        'promptOutputCells=$promptOutputCells\n'
+        'cursorVisible=${cursor.visible}\n'
+        'cursorViewport=${cursor.hasViewportPosition ? '${cursor.row},${cursor.col}' : '(offscreen)'}';
+  }
+
+  Widget _inspectorCard(String title, String body) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(title, style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            SelectableText(
+              body,
+              style: const TextStyle(fontFamily: 'monospace', height: 1.3),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMouseEncoderCard() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text('Mouse Encoder', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<GhosttyMouseAction>(
+              initialValue: _selectedMouseAction,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                labelText: 'Mouse action',
+              ),
+              items: GhosttyMouseAction.values
+                  .map(
+                    (GhosttyMouseAction value) =>
+                        DropdownMenuItem<GhosttyMouseAction>(
+                          value: value,
+                          child: Text(value.name),
+                        ),
+                  )
+                  .toList(growable: false),
+              onChanged: (GhosttyMouseAction? value) {
+                if (value == null) {
+                  return;
+                }
+                setState(() {
+                  _selectedMouseAction = value;
+                  _encodeMouse();
+                });
+              },
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<GhosttyMouseButton?>(
+              initialValue: _selectedMouseButton,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                labelText: 'Mouse button',
+              ),
+              items: <DropdownMenuItem<GhosttyMouseButton?>>[
+                const DropdownMenuItem<GhosttyMouseButton?>(
+                  value: null,
+                  child: Text('none'),
+                ),
+                ...GhosttyMouseButton.values.map(
+                  (GhosttyMouseButton value) =>
+                      DropdownMenuItem<GhosttyMouseButton?>(
+                        value: value,
+                        child: Text(value.name),
+                      ),
+                ),
+              ],
+              onChanged: (GhosttyMouseButton? value) {
+                setState(() {
+                  _selectedMouseButton = value;
+                  _encodeMouse();
+                });
+              },
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: DropdownButtonFormField<GhosttyMouseTrackingMode>(
+                    initialValue: _mouseTrackingMode,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      labelText: 'Tracking mode',
+                    ),
+                    items: GhosttyMouseTrackingMode.values
+                        .map(
+                          (GhosttyMouseTrackingMode value) =>
+                              DropdownMenuItem<GhosttyMouseTrackingMode>(
+                                value: value,
+                                child: Text(value.name),
+                              ),
+                        )
+                        .toList(growable: false),
+                    onChanged: (GhosttyMouseTrackingMode? value) {
+                      if (value == null) {
+                        return;
+                      }
+                      setState(() {
+                        _mouseTrackingMode = value;
+                        _encodeMouse();
+                      });
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: DropdownButtonFormField<GhosttyMouseFormat>(
+                    initialValue: _mouseFormat,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      labelText: 'Mouse format',
+                    ),
+                    items: GhosttyMouseFormat.values
+                        .map(
+                          (GhosttyMouseFormat value) =>
+                              DropdownMenuItem<GhosttyMouseFormat>(
+                                value: value,
+                                child: Text(value.name),
+                              ),
+                        )
+                        .toList(growable: false),
+                    onChanged: (GhosttyMouseFormat? value) {
+                      if (value == null) {
+                        return;
+                      }
+                      setState(() {
+                        _mouseFormat = value;
+                        _encodeMouse();
+                      });
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('anyButtonPressed'),
+              value: _mouseAnyButtonPressed,
+              onChanged: (bool value) {
+                setState(() {
+                  _mouseAnyButtonPressed = value;
+                  _encodeMouse();
+                });
+              },
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('trackLastCell'),
+              value: _mouseTrackLastCell,
+              onChanged: (bool value) {
+                setState(() {
+                  _mouseTrackLastCell = value;
+                  _encodeMouse();
+                });
+              },
+            ),
+            Text(
+              'Mouse position (${_mouseX.toStringAsFixed(0)}, ${_mouseY.toStringAsFixed(0)})',
+            ),
+            Slider(
+              value: _mouseX,
+              min: 0,
+              max: 240,
+              label: _mouseX.toStringAsFixed(0),
+              onChanged: (double value) {
+                setState(() {
+                  _mouseX = value;
+                  _encodeMouse();
+                });
+              },
+            ),
+            Slider(
+              value: _mouseY,
+              min: 0,
+              max: 120,
+              label: _mouseY.toStringAsFixed(0),
+              onChanged: (double value) {
+                setState(() {
+                  _mouseY = value;
+                  _encodeMouse();
+                });
+              },
+            ),
+            SelectableText('mouse hex: ${_hexBytes(_lastMouseEncodedBytes)}'),
+            const SizedBox(height: 4),
+            SelectableText('mouse escaped: ${_escaped(_lastMouseEncodedBytes)}'),
+            const SizedBox(height: 8),
+            OutlinedButton(
+              onPressed: _sendEncodedMouseToPty,
+              child: const Text('Send encoded mouse bytes to PTY'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _sendText({required bool addNewLine}) {
     final String raw = _writeController.text;
     if (raw.isEmpty) {
@@ -415,6 +842,17 @@ class _TerminalSuiteHomeState extends State<TerminalSuiteHome>
       _ptyWrites += 1;
       _appendActivity(
         'Sent encoded key bytes to PTY (${_lastEncodedBytes.length})',
+      );
+      setState(() {});
+    }
+  }
+
+  void _sendEncodedMouseToPty() {
+    _encodeMouse();
+    if (_pty.writeBytes(_lastMouseEncodedBytes)) {
+      _ptyWrites += 1;
+      _appendActivity(
+        'Sent encoded mouse bytes to PTY (${_lastMouseEncodedBytes.length})',
       );
       setState(() {});
     }
@@ -646,6 +1084,136 @@ class _TerminalSuiteHomeState extends State<TerminalSuiteHome>
                 },
               ),
               const SizedBox(height: 8),
+              SegmentedButton<GhosttyTerminalInteractionPolicy>(
+                segments: const <ButtonSegment<GhosttyTerminalInteractionPolicy>>[
+                  ButtonSegment<GhosttyTerminalInteractionPolicy>(
+                    value: GhosttyTerminalInteractionPolicy.auto,
+                    label: Text('Auto'),
+                    icon: Icon(Icons.tune),
+                  ),
+                  ButtonSegment<GhosttyTerminalInteractionPolicy>(
+                    value: GhosttyTerminalInteractionPolicy.selectionFirst,
+                    label: Text('Selection First'),
+                    icon: Icon(Icons.select_all),
+                  ),
+                  ButtonSegment<GhosttyTerminalInteractionPolicy>(
+                    value: GhosttyTerminalInteractionPolicy.terminalMouseFirst,
+                    label: Text('Terminal Mouse'),
+                    icon: Icon(Icons.mouse),
+                  ),
+                ],
+                selected: <GhosttyTerminalInteractionPolicy>{
+                  _ghosttyInteractionPolicy,
+                },
+                onSelectionChanged:
+                    (Set<GhosttyTerminalInteractionPolicy> modes) {
+                      setState(() {
+                        _ghosttyInteractionPolicy = modes.first;
+                      });
+                    },
+              ),
+              const SizedBox(height: 4),
+              Text('Interaction: ${_ghosttyInteractionPolicy.name}'),
+              const SizedBox(height: 4),
+              Text(_ghosttyMouseProtocolSummary()),
+              const SizedBox(height: 8),
+              const Text('Ghostty Mouse Tracking'),
+              SegmentedButton<_DemoMouseTrackingProfile>(
+                segments: const <ButtonSegment<_DemoMouseTrackingProfile>>[
+                  ButtonSegment<_DemoMouseTrackingProfile>(
+                    value: _DemoMouseTrackingProfile.disabled,
+                    label: Text('Disabled'),
+                  ),
+                  ButtonSegment<_DemoMouseTrackingProfile>(
+                    value: _DemoMouseTrackingProfile.x10,
+                    label: Text('X10'),
+                  ),
+                  ButtonSegment<_DemoMouseTrackingProfile>(
+                    value: _DemoMouseTrackingProfile.normal,
+                    label: Text('Normal'),
+                  ),
+                  ButtonSegment<_DemoMouseTrackingProfile>(
+                    value: _DemoMouseTrackingProfile.button,
+                    label: Text('Button'),
+                  ),
+                  ButtonSegment<_DemoMouseTrackingProfile>(
+                    value: _DemoMouseTrackingProfile.any,
+                    label: Text('Any'),
+                  ),
+                ],
+                selected: <_DemoMouseTrackingProfile>{
+                  _ghosttyMouseTrackingProfile,
+                },
+                onSelectionChanged:
+                    (Set<_DemoMouseTrackingProfile> modes) {
+                      setState(() {
+                        _ghosttyMouseTrackingProfile = modes.first;
+                      });
+                      _applyGhosttyMouseModes();
+                    },
+              ),
+              const SizedBox(height: 8),
+              const Text('Ghostty Mouse Format'),
+              SegmentedButton<_DemoMouseFormatProfile>(
+                segments: const <ButtonSegment<_DemoMouseFormatProfile>>[
+                  ButtonSegment<_DemoMouseFormatProfile>(
+                    value: _DemoMouseFormatProfile.x10,
+                    label: Text('X10'),
+                  ),
+                  ButtonSegment<_DemoMouseFormatProfile>(
+                    value: _DemoMouseFormatProfile.utf8,
+                    label: Text('UTF8'),
+                  ),
+                  ButtonSegment<_DemoMouseFormatProfile>(
+                    value: _DemoMouseFormatProfile.sgr,
+                    label: Text('SGR'),
+                  ),
+                  ButtonSegment<_DemoMouseFormatProfile>(
+                    value: _DemoMouseFormatProfile.urxvt,
+                    label: Text('URXVT'),
+                  ),
+                  ButtonSegment<_DemoMouseFormatProfile>(
+                    value: _DemoMouseFormatProfile.sgrPixels,
+                    label: Text('SGR Pixels'),
+                  ),
+                ],
+                selected: <_DemoMouseFormatProfile>{_ghosttyMouseFormatProfile},
+                onSelectionChanged:
+                    (Set<_DemoMouseFormatProfile> modes) {
+                      setState(() {
+                        _ghosttyMouseFormatProfile = modes.first;
+                      });
+                      _applyGhosttyMouseModes();
+                    },
+              ),
+              Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: <Widget>[
+                  FilterChip(
+                    label: const Text('Focus Events'),
+                    selected: _ghosttyMouseFocusEvents,
+                    onSelected: (selected) {
+                      setState(() {
+                        _ghosttyMouseFocusEvents = selected;
+                      });
+                      _applyGhosttyMouseModes();
+                    },
+                  ),
+                  FilterChip(
+                    label: const Text('Alt Scroll'),
+                    selected: _ghosttyMouseAltScroll,
+                    onSelected: (selected) {
+                      setState(() {
+                        _ghosttyMouseAltScroll = selected;
+                      });
+                      _applyGhosttyMouseModes();
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
               if (kIsWeb) ...<Widget>[
                 const SizedBox(height: 8),
                 SegmentedButton<_RemoteTransportMode>(
@@ -697,59 +1265,70 @@ class _TerminalSuiteHomeState extends State<TerminalSuiteHome>
   }
 
   Widget _buildGhosttyTab() {
-    return Column(
-      children: <Widget>[
-        Expanded(
-          child: Card(
-            clipBehavior: Clip.hardEdge,
-            child: GhosttyTerminalView(
-              controller: _ghostty,
-              autofocus: false,
-              fontSize: 14,
-              lineHeight: 1.35,
-              renderer: _ghosttyRendererMode,
-            ),
-          ),
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          controller: _writeController,
-          decoration: const InputDecoration(
-            border: OutlineInputBorder(),
-            labelText: 'Input text',
-          ),
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final double terminalHeight = constraints.maxHeight.isFinite
+            ? (constraints.maxHeight * 0.52).clamp(220.0, 420.0)
+            : 320.0;
+        return ListView(
           children: <Widget>[
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Switch(
-                  value: _sanitizePaste,
-                  onChanged: (bool value) {
-                    setState(() {
-                      _sanitizePaste = value;
-                    });
-                  },
+            _inspectorCard('Ghostty Formatter Extras', _formatterExtrasSummary()),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: terminalHeight,
+              child: Card(
+                clipBehavior: Clip.hardEdge,
+                child: GhosttyTerminalView(
+                  controller: _ghostty,
+                  autofocus: false,
+                  fontSize: 14,
+                  lineHeight: 1.35,
+                  renderer: _ghosttyRendererMode,
+                  interactionPolicy: _ghosttyInteractionPolicy,
                 ),
-                const Text('sanitizePaste'),
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _writeController,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                labelText: 'Input text',
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: <Widget>[
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Switch(
+                      value: _sanitizePaste,
+                      onChanged: (bool value) {
+                        setState(() {
+                          _sanitizePaste = value;
+                        });
+                      },
+                    ),
+                    const Text('sanitizePaste'),
+                  ],
+                ),
+                FilledButton(
+                  onPressed: () => _sendText(addNewLine: false),
+                  child: const Text('Send'),
+                ),
+                OutlinedButton(
+                  onPressed: () => _sendText(addNewLine: true),
+                  child: const Text('Send + newline'),
+                ),
               ],
             ),
-            FilledButton(
-              onPressed: () => _sendText(addNewLine: false),
-              child: const Text('Send'),
-            ),
-            OutlinedButton(
-              onPressed: () => _sendText(addNewLine: true),
-              child: const Text('Send + newline'),
-            ),
           ],
-        ),
-      ],
+        );
+      },
     );
   }
 
@@ -804,6 +1383,7 @@ class _TerminalSuiteHomeState extends State<TerminalSuiteHome>
   Widget _buildParserTab() {
     return ListView(
       children: <Widget>[
+        _inspectorCard('Ghostty Render Semantics', _renderSemanticSummary()),
         Card(
           child: Padding(
             padding: const EdgeInsets.all(12),
@@ -1036,6 +1616,7 @@ class _TerminalSuiteHomeState extends State<TerminalSuiteHome>
             ),
           ),
         ),
+        _buildMouseEncoderCard(),
         Card(
           child: Padding(
             padding: const EdgeInsets.all(12),
