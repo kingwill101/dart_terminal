@@ -66,6 +66,7 @@ class GhosttyTerminalController extends ChangeNotifier
   VtTerminalFormatter? _styledFormatter;
   VtRenderState? _renderState;
   VtKeyEncoder? _encoder;
+  VtMouseEncoder? _mouseEncoder;
   GhosttyTerminalShellLaunch? _activeShellLaunch;
 
   final List<String> _lines = <String>[''];
@@ -120,6 +121,44 @@ class GhosttyTerminalController extends ChangeNotifier
   /// Active native PTY session when the shared PTY backend is in use.
   GhosttyTerminalPtySession? get ptySession => _ptySession;
 
+  /// Optional observer callback invoked whenever the VT engine needs to send
+  /// data back to the PTY (e.g. DSR responses, DA replies).
+  ///
+  /// This is called *after* the data has already been forwarded to the active
+  /// process/PTY session. The [data] buffer is a copy and safe to retain.
+  void Function(Uint8List data)? onWritePtyData;
+
+  /// Optional observer callback invoked when the terminal receives a BEL
+  /// character (0x07).
+  void Function()? onBellData;
+
+  /// Optional observer callback invoked when the terminal title changes
+  /// via escape sequences (e.g. OSC 0 or OSC 2).
+  void Function()? onTitleChangedData;
+
+  /// Optional observer callback invoked when the terminal requests its
+  /// size via XTWINOPS (CSI 14/16/18 t). Return a [VtSizeReportSize] to
+  /// respond, or `null` to silently ignore.
+  VtSizeReportSize? Function()? onSizeQueryData;
+
+  /// Optional observer callback invoked when the terminal requests its
+  /// color scheme via CSI ? 996 n. Return a [GhosttyColorScheme] to
+  /// respond, or `null` to silently ignore.
+  GhosttyColorScheme? Function()? onColorSchemeQueryData;
+
+  /// Optional observer callback invoked when the terminal requests device
+  /// attributes (DA1/DA2/DA3). Return a [VtDeviceAttributes] to respond,
+  /// or `null` to silently ignore.
+  VtDeviceAttributes? Function()? onDeviceAttributesQueryData;
+
+  /// Optional observer callback invoked when the terminal receives an ENQ
+  /// character (0x05). Return a [Uint8List] of response bytes.
+  Uint8List Function()? onEnquiryData;
+
+  /// Optional observer callback invoked when the terminal receives an
+  /// XTVERSION query (CSI > q). Return a version string.
+  String Function()? onXtversionData;
+
   /// Current buffered terminal lines.
   List<String> get lines => List<String>.unmodifiable(_lines);
 
@@ -137,20 +176,30 @@ class GhosttyTerminalController extends ChangeNotifier
       rows: _rows,
       maxScrollback: maxScrollback,
     );
+
+    // Forward terminal write-back data (DSR responses, mode queries, etc.)
+    // to the PTY or process stdin so the host shell receives the replies.
+    terminal.onWritePty = _onTerminalWritePty;
+
+    // Wire effect callbacks, forwarding to the public observer properties.
+    terminal.onBell = () => onBellData?.call();
+    terminal.onTitleChanged = () {
+      _title = terminal.title;
+      onTitleChangedData?.call();
+    };
+    terminal.onSizeQuery = () => onSizeQueryData?.call();
+    terminal.onColorSchemeQuery = () => onColorSchemeQueryData?.call();
+    terminal.onDeviceAttributesQuery = () =>
+        onDeviceAttributesQueryData?.call();
+    terminal.onEnquiry = () => onEnquiryData?.call() ?? Uint8List(0);
+    terminal.onXtversion = () => onXtversionData?.call() ?? '';
+
     final formatter = terminal.createFormatter();
     final styledFormatter = terminal.createFormatter(
       const VtFormatterTerminalOptions(
         emit: GhosttyFormatterFormat.GHOSTTY_FORMATTER_FORMAT_VT,
         trim: false,
-        extra: VtFormatterTerminalExtra(
-          screen: VtFormatterScreenExtra(
-            cursor: true,
-            style: true,
-            hyperlink: true,
-            protection: true,
-            charsets: true,
-          ),
-        ),
+        extra: VtFormatterTerminalExtra.all(),
       ),
     );
     _terminal = terminal;
@@ -353,8 +402,17 @@ class GhosttyTerminalController extends ChangeNotifier
   }
 
   /// Resizes the VT grid.
+  ///
+  /// When [cellWidthPx] and [cellHeightPx] are non-zero they inform Ghostty of
+  /// the physical pixel dimensions of each cell so that pixel-level size reports
+  /// (e.g. CSI 14 t) return accurate values.
   @override
-  void resize({required int cols, required int rows}) {
+  void resize({
+    required int cols,
+    required int rows,
+    int cellWidthPx = 0,
+    int cellHeightPx = 0,
+  }) {
     final checkedCols = cols.clamp(1, 0xFFFF);
     final checkedRows = rows.clamp(1, 0xFFFF);
     if (checkedCols == _cols && checkedRows == _rows) {
@@ -366,14 +424,21 @@ class GhosttyTerminalController extends ChangeNotifier
 
     final terminal = _terminal;
     if (terminal != null) {
-      terminal.resize(cols: checkedCols, rows: checkedRows);
+      terminal.resize(
+        cols: checkedCols,
+        rows: checkedRows,
+        cellWidthPx: cellWidthPx,
+        cellHeightPx: cellHeightPx,
+      );
       _ptySession?.resize(rows: checkedRows, cols: checkedCols);
       _refreshSnapshot();
     }
     _markDirty();
   }
 
-  /// Writes raw text to terminal stdin.
+  /// Writes text to terminal stdin.
+  ///
+  /// When [sanitizePaste] is true, unsafe multi-line paste payloads are rejected.
   @override
   bool write(String text, {bool sanitizePaste = false}) {
     if (sanitizePaste && !GhosttyVt.isPasteSafe(text)) {
@@ -393,7 +458,7 @@ class GhosttyTerminalController extends ChangeNotifier
     return true;
   }
 
-  /// Writes raw bytes directly to terminal stdin.
+  /// Writes already-encoded bytes directly to terminal stdin.
   @override
   bool writeBytes(List<int> bytes) {
     final session = _ptySession;
@@ -409,7 +474,7 @@ class GhosttyTerminalController extends ChangeNotifier
     return true;
   }
 
-  /// Encodes and sends a key event using Ghostty key encoding.
+  /// Encodes and sends a key event using Ghostty's keyboard protocol rules.
   bool sendKey({
     required GhosttyKey key,
     GhosttyKeyAction action = GhosttyKeyAction.GHOSTTY_KEY_ACTION_PRESS,
@@ -446,45 +511,96 @@ class GhosttyTerminalController extends ChangeNotifier
     }
   }
 
-  /// Test/debug helper to inject terminal output text directly.
+  /// Encodes and sends a mouse event using Ghostty's mouse protocol rules.
+  bool sendMouse({
+    required GhosttyMouseAction action,
+    GhosttyMouseButton? button,
+    int mods = 0,
+    required VtMousePosition position,
+    required VtMouseEncoderSize size,
+    GhosttyMouseTrackingMode? trackingMode,
+    GhosttyMouseFormat? format,
+    bool? anyButtonPressed,
+    bool? trackLastCell,
+  }) {
+    if (_process == null && _ptySession == null) {
+      return false;
+    }
+
+    _mouseEncoder ??= VtMouseEncoder();
+    final terminal = _terminal;
+    if (terminal != null) {
+      _mouseEncoder!.setOptionsFromTerminal(terminal);
+    }
+    if (trackingMode != null ||
+        format != null ||
+        anyButtonPressed != null ||
+        trackLastCell != null) {
+      VtMouseEncoderOptions(
+        trackingMode:
+            trackingMode ??
+            GhosttyMouseTrackingMode.GHOSTTY_MOUSE_TRACKING_NORMAL,
+        format: format ?? GhosttyMouseFormat.GHOSTTY_MOUSE_FORMAT_SGR,
+        size: size,
+        anyButtonPressed: anyButtonPressed ?? false,
+        trackLastCell: trackLastCell ?? true,
+      ).applyTo(_mouseEncoder!);
+    } else {
+      _mouseEncoder!.size = size;
+    }
+
+    final event = VtMouseEvent();
+    try {
+      event
+        ..action = action
+        ..button = button
+        ..mods = mods
+        ..position = position;
+      final encoded = _mouseEncoder!.encode(event);
+      return writeBytes(encoded);
+    } finally {
+      event.close();
+    }
+  }
+
+  /// Injects decoded terminal output directly into the VT model.
+  ///
+  /// This is primarily intended for demos and tests that need to simulate
+  /// process output without a live subprocess.
   void appendDebugOutput(String text) {
-    _ingestBytes(utf8.encode(text), decodedText: text);
+    _ingestBytes(utf8.encode(text));
   }
 
   void _onProcessBytes(List<int> bytes) {
-    _ingestBytes(bytes, decodedText: utf8.decode(bytes, allowMalformed: true));
+    _ingestBytes(bytes);
   }
 
-  void _ingestBytes(List<int> bytes, {required String decodedText}) {
+  /// Callback invoked by the VT engine when the terminal needs to send data
+  /// back to the PTY (e.g. DSR responses, mode queries, DA replies).
+  ///
+  /// The [data] buffer is only valid for the duration of this call.
+  void _onTerminalWritePty(Uint8List data) {
+    final session = _ptySession;
+    if (session != null) {
+      session.writeBytes(Uint8List.fromList(data));
+    } else {
+      final process = _process;
+      if (process != null) {
+        process.stdin.add(data);
+      }
+    }
+
+    onWritePtyData?.call(Uint8List.fromList(data));
+  }
+
+  void _ingestBytes(List<int> bytes) {
     if (bytes.isEmpty) {
       return;
     }
 
-    _consumeOscText(decodedText);
     _ensureTerminal().writeBytes(bytes);
     _refreshSnapshot();
     _markDirty();
-  }
-
-  void _consumeOscText(String text) {
-    for (final match in _oscRegex.allMatches(text)) {
-      final payload = match.group(1);
-      if (payload != null && payload.isNotEmpty) {
-        _consumeOscPayload(payload);
-      }
-    }
-  }
-
-  void _consumeOscPayload(String payload) {
-    final separator = payload.indexOf(';');
-    if (separator <= 0 || separator >= payload.length - 1) {
-      return;
-    }
-    final code = payload.substring(0, separator);
-    final data = payload.substring(separator + 1);
-    if ((code == '0' || code == '2') && data.isNotEmpty) {
-      _title = data;
-    }
   }
 
   void _refreshSnapshot() {
@@ -578,6 +694,8 @@ class GhosttyTerminalController extends ChangeNotifier
     await stop();
     _encoder?.close();
     _encoder = null;
+    _mouseEncoder?.close();
+    _mouseEncoder = null;
     _renderState?.close();
     _renderState = null;
     _plainFormatter?.close();
@@ -596,38 +714,10 @@ class GhosttyTerminalController extends ChangeNotifier
   }
 }
 
-final RegExp _oscRegex = RegExp(r'\x1b\]([^\x07\x1b]*)(?:\x07|\x1b\\)');
-
 GhosttyTerminalRenderSnapshot _toRenderSnapshot(VtRenderSnapshot snapshot) {
   Color toColor(VtRgbColor color) =>
       Color.fromARGB(0xFF, color.r, color.g, color.b);
 
-  Color resolveStyleColor(
-    VtStyleColor? color, {
-    required Color fallback,
-    required List<Color> palette,
-  }) {
-    if (color == null || !color.isSet) {
-      return fallback;
-    }
-    final rgb = color.rgb;
-    if (rgb != null) {
-      return toColor(rgb);
-    }
-    final index = color.paletteIndex;
-    if (index == null) {
-      return fallback;
-    }
-    if (index >= 0 && index < palette.length) {
-      return palette[index];
-    }
-    return GhosttyTerminalPalette.xterm.resolve(
-      GhosttyTerminalColor.palette(index),
-      fallback: fallback,
-    );
-  }
-
-  final palette = snapshot.colors.palette.map(toColor).toList(growable: false);
   final defaultForeground = toColor(snapshot.colors.foreground);
   final defaultBackground = toColor(snapshot.colors.background);
   final cursorColor = snapshot.colors.cursor == null
@@ -641,8 +731,8 @@ GhosttyTerminalRenderSnapshot _toRenderSnapshot(VtRenderSnapshot snapshot) {
       if (paletteIndex == null) {
         return null;
       }
-      if (paletteIndex >= 0 && paletteIndex < palette.length) {
-        return palette[paletteIndex];
+      if (paletteIndex >= 0 && paletteIndex < snapshot.colors.palette.length) {
+        return toColor(snapshot.colors.paletteAt(paletteIndex));
       }
       return GhosttyTerminalPalette.xterm.resolve(
         GhosttyTerminalColor.palette(paletteIndex),
@@ -655,45 +745,6 @@ GhosttyTerminalRenderSnapshot _toRenderSnapshot(VtRenderSnapshot snapshot) {
       return null;
     }
     return toColor(rawCell.colorRgb!);
-  }
-
-  GhosttyTerminalResolvedStyle resolveStyle(VtStyle style) {
-    var foreground = resolveStyleColor(
-      style.foreground,
-      fallback: defaultForeground,
-      palette: palette,
-    );
-    var background = resolveStyleColor(
-      style.background,
-      fallback: defaultBackground,
-      palette: palette,
-    );
-    if (style.inverse) {
-      final swappedForeground = background;
-      background = foreground;
-      foreground = swappedForeground;
-    }
-    if (style.invisible) {
-      foreground = background;
-    }
-    if (style.faint) {
-      foreground = foreground.withValues(alpha: 0.72);
-    }
-    return GhosttyTerminalResolvedStyle(
-      foreground: foreground,
-      background: background,
-      underlineColor: resolveStyleColor(
-        style.underlineColor,
-        fallback: foreground,
-        palette: palette,
-      ),
-      blink: style.blink,
-      bold: style.bold,
-      italic: style.italic,
-      overline: style.overline,
-      strikethrough: style.strikethrough,
-      underline: style.underline,
-    );
   }
 
   final rows = snapshot.rowsData
@@ -738,7 +789,11 @@ GhosttyTerminalRenderSnapshot _toRenderSnapshot(VtRenderSnapshot snapshot) {
                       backgroundColor: bgColor,
                     );
                   }(),
-                  style: resolveStyle(cell.style),
+                  style:
+                      GhosttyTerminalResolvedStyle.fromNativeStyleWithRenderColors(
+                        style: cell.style,
+                        colors: snapshot.colors,
+                      ),
                 ),
               )
               .toList(growable: false),
