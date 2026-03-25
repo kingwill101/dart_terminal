@@ -109,7 +109,8 @@ jobs:
             find ${{ github.workspace }}/build-prefix -type f
             exit 1
           fi
-          KIND=$(file -b "$LIB")
+          TARGET=$(readlink -f "$LIB" || printf '%s' "$LIB")
+          KIND=$(file -b "$TARGET")
           case "${{ matrix.artifact }}" in
             *.so)
               echo "$KIND" | grep -q 'ELF' || {
@@ -131,13 +132,13 @@ jobs:
               ;;
           esac
           echo "path=$LIB" >> "$GITHUB_OUTPUT"
-          echo "Found: $LIB ($(wc -c < "$LIB") bytes, $KIND)"
+          echo "Found: $LIB -> $TARGET ($(wc -c < "$TARGET") bytes, $KIND)"
 
       - name: Package artifact
         run: |
           mkdir -p staging
           # Rename to canonical unversioned name for consumers
-          cp "${{ steps.locate.outputs.path }}" staging/${{ matrix.artifact }}
+          cp -L "${{ steps.locate.outputs.path }}" staging/${{ matrix.artifact }}
           cd staging
           tar czf ../vte-${{ matrix.os_label }}.tar.gz ${{ matrix.artifact }}
 
