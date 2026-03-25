@@ -44,6 +44,12 @@ Future<void> main() async {
       exit,
     );
   }
+
+  _postProcessGeneratedBindings(
+    File.fromUri(
+      packageRoot.uri.resolve('lib/ghostty_vte_bindings_generated.dart'),
+    ),
+  );
 }
 
 Directory _packageRoot() {
@@ -145,4 +151,15 @@ String _renderConfig({
 
 String _yamlQuote(String value) {
   return value.replaceAll('\\', '/').replaceAll("'", "''");
+}
+
+void _postProcessGeneratedBindings(File file) {
+  final original = file.readAsStringSync();
+  final patched = original.replaceAll(
+    'GhosttyColorRgb[256]',
+    '`GhosttyColorRgb[256]`',
+  );
+  if (patched != original) {
+    file.writeAsStringSync(patched);
+  }
 }

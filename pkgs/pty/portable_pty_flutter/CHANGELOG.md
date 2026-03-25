@@ -1,3 +1,7 @@
+## 0.0.3+1
+
+- Bumped `portable_pty` dependency to `^0.0.3` for auto-download support.
+
 ## 0.0.2
 
 - Bumped `portable_pty` dependency to `^0.0.3` for SIGCHLD exit code fix.

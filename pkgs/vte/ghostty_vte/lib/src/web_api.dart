@@ -9,7 +9,8 @@ import 'dart:typed_data';
 enum GhosttyResult {
   GHOSTTY_SUCCESS(0),
   GHOSTTY_OUT_OF_MEMORY(-1),
-  GHOSTTY_INVALID_VALUE(-2);
+  GHOSTTY_INVALID_VALUE(-2),
+  GHOSTTY_OUT_OF_SPACE(-3);
 
   const GhosttyResult(this.value);
   final int value;
@@ -18,6 +19,7 @@ enum GhosttyResult {
     0 => GHOSTTY_SUCCESS,
     -1 => GHOSTTY_OUT_OF_MEMORY,
     -2 => GHOSTTY_INVALID_VALUE,
+    -3 => GHOSTTY_OUT_OF_SPACE,
     _ => throw ArgumentError('Unknown value for GhosttyResult: $value'),
   };
 }
@@ -86,30 +88,29 @@ enum GhosttySgrAttributeTag {
   GHOSTTY_SGR_ATTR_RESET_ITALIC(5),
   GHOSTTY_SGR_ATTR_FAINT(6),
   GHOSTTY_SGR_ATTR_UNDERLINE(7),
-  GHOSTTY_SGR_ATTR_RESET_UNDERLINE(8),
-  GHOSTTY_SGR_ATTR_UNDERLINE_COLOR(9),
-  GHOSTTY_SGR_ATTR_UNDERLINE_COLOR_256(10),
-  GHOSTTY_SGR_ATTR_RESET_UNDERLINE_COLOR(11),
-  GHOSTTY_SGR_ATTR_OVERLINE(12),
-  GHOSTTY_SGR_ATTR_RESET_OVERLINE(13),
-  GHOSTTY_SGR_ATTR_BLINK(14),
-  GHOSTTY_SGR_ATTR_RESET_BLINK(15),
-  GHOSTTY_SGR_ATTR_INVERSE(16),
-  GHOSTTY_SGR_ATTR_RESET_INVERSE(17),
-  GHOSTTY_SGR_ATTR_INVISIBLE(18),
-  GHOSTTY_SGR_ATTR_RESET_INVISIBLE(19),
-  GHOSTTY_SGR_ATTR_STRIKETHROUGH(20),
-  GHOSTTY_SGR_ATTR_RESET_STRIKETHROUGH(21),
-  GHOSTTY_SGR_ATTR_DIRECT_COLOR_FG(22),
-  GHOSTTY_SGR_ATTR_DIRECT_COLOR_BG(23),
-  GHOSTTY_SGR_ATTR_BG_8(24),
-  GHOSTTY_SGR_ATTR_FG_8(25),
-  GHOSTTY_SGR_ATTR_RESET_FG(26),
-  GHOSTTY_SGR_ATTR_RESET_BG(27),
-  GHOSTTY_SGR_ATTR_BRIGHT_BG_8(28),
-  GHOSTTY_SGR_ATTR_BRIGHT_FG_8(29),
-  GHOSTTY_SGR_ATTR_BG_256(30),
-  GHOSTTY_SGR_ATTR_FG_256(31);
+  GHOSTTY_SGR_ATTR_UNDERLINE_COLOR(8),
+  GHOSTTY_SGR_ATTR_UNDERLINE_COLOR_256(9),
+  GHOSTTY_SGR_ATTR_RESET_UNDERLINE_COLOR(10),
+  GHOSTTY_SGR_ATTR_OVERLINE(11),
+  GHOSTTY_SGR_ATTR_RESET_OVERLINE(12),
+  GHOSTTY_SGR_ATTR_BLINK(13),
+  GHOSTTY_SGR_ATTR_RESET_BLINK(14),
+  GHOSTTY_SGR_ATTR_INVERSE(15),
+  GHOSTTY_SGR_ATTR_RESET_INVERSE(16),
+  GHOSTTY_SGR_ATTR_INVISIBLE(17),
+  GHOSTTY_SGR_ATTR_RESET_INVISIBLE(18),
+  GHOSTTY_SGR_ATTR_STRIKETHROUGH(19),
+  GHOSTTY_SGR_ATTR_RESET_STRIKETHROUGH(20),
+  GHOSTTY_SGR_ATTR_DIRECT_COLOR_FG(21),
+  GHOSTTY_SGR_ATTR_DIRECT_COLOR_BG(22),
+  GHOSTTY_SGR_ATTR_BG_8(23),
+  GHOSTTY_SGR_ATTR_FG_8(24),
+  GHOSTTY_SGR_ATTR_RESET_FG(25),
+  GHOSTTY_SGR_ATTR_RESET_BG(26),
+  GHOSTTY_SGR_ATTR_BRIGHT_BG_8(27),
+  GHOSTTY_SGR_ATTR_BRIGHT_FG_8(28),
+  GHOSTTY_SGR_ATTR_BG_256(29),
+  GHOSTTY_SGR_ATTR_FG_256(30);
 
   const GhosttySgrAttributeTag(this.value);
   final int value;
@@ -144,6 +145,329 @@ enum GhosttySgrUnderline {
     }
     throw ArgumentError('Unknown value for GhosttySgrUnderline: $value');
   }
+}
+
+/// Focus event types for focus reporting mode (mode 1004).
+enum GhosttyFocusEvent {
+  GHOSTTY_FOCUS_GAINED(0),
+  GHOSTTY_FOCUS_LOST(1);
+
+  const GhosttyFocusEvent(this.value);
+  final int value;
+
+  static GhosttyFocusEvent fromValue(int value) => switch (value) {
+    0 => GHOSTTY_FOCUS_GAINED,
+    1 => GHOSTTY_FOCUS_LOST,
+    _ => throw ArgumentError('Unknown value for GhosttyFocusEvent: $value'),
+  };
+}
+
+/// DECRPM report state values.
+enum GhosttyModeReportState {
+  GHOSTTY_MODE_REPORT_NOT_RECOGNIZED(0),
+  GHOSTTY_MODE_REPORT_SET(1),
+  GHOSTTY_MODE_REPORT_RESET(2),
+  GHOSTTY_MODE_REPORT_PERMANENTLY_SET(3),
+  GHOSTTY_MODE_REPORT_PERMANENTLY_RESET(4);
+
+  const GhosttyModeReportState(this.value);
+  final int value;
+
+  static GhosttyModeReportState fromValue(int value) => switch (value) {
+    0 => GHOSTTY_MODE_REPORT_NOT_RECOGNIZED,
+    1 => GHOSTTY_MODE_REPORT_SET,
+    2 => GHOSTTY_MODE_REPORT_RESET,
+    3 => GHOSTTY_MODE_REPORT_PERMANENTLY_SET,
+    4 => GHOSTTY_MODE_REPORT_PERMANENTLY_RESET,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyModeReportState: $value',
+    ),
+  };
+}
+
+/// Cell content tag.
+enum GhosttyCellContentTag {
+  GHOSTTY_CELL_CONTENT_CODEPOINT(0),
+  GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME(1),
+  GHOSTTY_CELL_CONTENT_BG_COLOR_PALETTE(2),
+  GHOSTTY_CELL_CONTENT_BG_COLOR_RGB(3);
+
+  const GhosttyCellContentTag(this.value);
+  final int value;
+
+  static GhosttyCellContentTag fromValue(int value) => switch (value) {
+    0 => GHOSTTY_CELL_CONTENT_CODEPOINT,
+    1 => GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME,
+    2 => GHOSTTY_CELL_CONTENT_BG_COLOR_PALETTE,
+    3 => GHOSTTY_CELL_CONTENT_BG_COLOR_RGB,
+    _ => throw ArgumentError('Unknown value for GhosttyCellContentTag: $value'),
+  };
+}
+
+/// Cell wide property.
+enum GhosttyCellWide {
+  GHOSTTY_CELL_WIDE_NARROW(0),
+  GHOSTTY_CELL_WIDE_WIDE(1),
+  GHOSTTY_CELL_WIDE_SPACER_TAIL(2),
+  GHOSTTY_CELL_WIDE_SPACER_HEAD(3);
+
+  const GhosttyCellWide(this.value);
+  final int value;
+
+  static GhosttyCellWide fromValue(int value) => switch (value) {
+    0 => GHOSTTY_CELL_WIDE_NARROW,
+    1 => GHOSTTY_CELL_WIDE_WIDE,
+    2 => GHOSTTY_CELL_WIDE_SPACER_TAIL,
+    3 => GHOSTTY_CELL_WIDE_SPACER_HEAD,
+    _ => throw ArgumentError('Unknown value for GhosttyCellWide: $value'),
+  };
+}
+
+/// Semantic content type of a cell.
+enum GhosttyCellSemanticContent {
+  GHOSTTY_CELL_SEMANTIC_OUTPUT(0),
+  GHOSTTY_CELL_SEMANTIC_INPUT(1),
+  GHOSTTY_CELL_SEMANTIC_PROMPT(2);
+
+  const GhosttyCellSemanticContent(this.value);
+  final int value;
+
+  static GhosttyCellSemanticContent fromValue(int value) => switch (value) {
+    0 => GHOSTTY_CELL_SEMANTIC_OUTPUT,
+    1 => GHOSTTY_CELL_SEMANTIC_INPUT,
+    2 => GHOSTTY_CELL_SEMANTIC_PROMPT,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyCellSemanticContent: $value',
+    ),
+  };
+}
+
+/// Row semantic prompt state.
+enum GhosttyRowSemanticPrompt {
+  GHOSTTY_ROW_SEMANTIC_NONE(0),
+  GHOSTTY_ROW_SEMANTIC_PROMPT(1),
+  GHOSTTY_ROW_SEMANTIC_PROMPT_CONTINUATION(2);
+
+  const GhosttyRowSemanticPrompt(this.value);
+  final int value;
+
+  static GhosttyRowSemanticPrompt fromValue(int value) => switch (value) {
+    0 => GHOSTTY_ROW_SEMANTIC_NONE,
+    1 => GHOSTTY_ROW_SEMANTIC_PROMPT,
+    2 => GHOSTTY_ROW_SEMANTIC_PROMPT_CONTINUATION,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyRowSemanticPrompt: $value',
+    ),
+  };
+}
+
+/// Style color tags.
+enum GhosttyStyleColorTag {
+  GHOSTTY_STYLE_COLOR_NONE(0),
+  GHOSTTY_STYLE_COLOR_PALETTE(1),
+  GHOSTTY_STYLE_COLOR_RGB(2);
+
+  const GhosttyStyleColorTag(this.value);
+  final int value;
+
+  static GhosttyStyleColorTag fromValue(int value) => switch (value) {
+    0 => GHOSTTY_STYLE_COLOR_NONE,
+    1 => GHOSTTY_STYLE_COLOR_PALETTE,
+    2 => GHOSTTY_STYLE_COLOR_RGB,
+    _ => throw ArgumentError('Unknown value for GhosttyStyleColorTag: $value'),
+  };
+}
+
+/// Point reference tag.
+enum GhosttyPointTag {
+  GHOSTTY_POINT_TAG_ACTIVE(0),
+  GHOSTTY_POINT_TAG_VIEWPORT(1),
+  GHOSTTY_POINT_TAG_SCREEN(2),
+  GHOSTTY_POINT_TAG_HISTORY(3);
+
+  const GhosttyPointTag(this.value);
+  final int value;
+
+  static GhosttyPointTag fromValue(int value) => switch (value) {
+    0 => GHOSTTY_POINT_TAG_ACTIVE,
+    1 => GHOSTTY_POINT_TAG_VIEWPORT,
+    2 => GHOSTTY_POINT_TAG_SCREEN,
+    3 => GHOSTTY_POINT_TAG_HISTORY,
+    _ => throw ArgumentError('Unknown value for GhosttyPointTag: $value'),
+  };
+}
+
+/// Terminal screen identifier.
+enum GhosttyTerminalScreen {
+  GHOSTTY_TERMINAL_SCREEN_PRIMARY(0),
+  GHOSTTY_TERMINAL_SCREEN_ALTERNATE(1);
+
+  const GhosttyTerminalScreen(this.value);
+  final int value;
+
+  static GhosttyTerminalScreen fromValue(int value) => switch (value) {
+    0 => GHOSTTY_TERMINAL_SCREEN_PRIMARY,
+    1 => GHOSTTY_TERMINAL_SCREEN_ALTERNATE,
+    _ => throw ArgumentError('Unknown value for GhosttyTerminalScreen: $value'),
+  };
+}
+
+/// Dirty state of a render state after update.
+enum GhosttyRenderStateDirty {
+  GHOSTTY_RENDER_STATE_DIRTY_FALSE(0),
+  GHOSTTY_RENDER_STATE_DIRTY_PARTIAL(1),
+  GHOSTTY_RENDER_STATE_DIRTY_FULL(2);
+
+  const GhosttyRenderStateDirty(this.value);
+  final int value;
+
+  static GhosttyRenderStateDirty fromValue(int value) => switch (value) {
+    0 => GHOSTTY_RENDER_STATE_DIRTY_FALSE,
+    1 => GHOSTTY_RENDER_STATE_DIRTY_PARTIAL,
+    2 => GHOSTTY_RENDER_STATE_DIRTY_FULL,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyRenderStateDirty: $value',
+    ),
+  };
+}
+
+/// Visual style of the cursor.
+enum GhosttyRenderStateCursorVisualStyle {
+  GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR(0),
+  GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK(1),
+  GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE(2),
+  GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW(3);
+
+  const GhosttyRenderStateCursorVisualStyle(this.value);
+  final int value;
+
+  static GhosttyRenderStateCursorVisualStyle fromValue(int value) =>
+      switch (value) {
+        0 => GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR,
+        1 => GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK,
+        2 => GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE,
+        3 => GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW,
+        _ => throw ArgumentError(
+          'Unknown value for GhosttyRenderStateCursorVisualStyle: $value',
+        ),
+      };
+}
+
+/// Mouse event action type.
+enum GhosttyMouseAction {
+  GHOSTTY_MOUSE_ACTION_PRESS(0),
+  GHOSTTY_MOUSE_ACTION_RELEASE(1),
+  GHOSTTY_MOUSE_ACTION_MOTION(2);
+
+  const GhosttyMouseAction(this.value);
+  final int value;
+
+  static GhosttyMouseAction fromValue(int value) => switch (value) {
+    0 => GHOSTTY_MOUSE_ACTION_PRESS,
+    1 => GHOSTTY_MOUSE_ACTION_RELEASE,
+    2 => GHOSTTY_MOUSE_ACTION_MOTION,
+    _ => throw ArgumentError('Unknown value for GhosttyMouseAction: $value'),
+  };
+}
+
+/// Mouse button identity.
+enum GhosttyMouseButton {
+  GHOSTTY_MOUSE_BUTTON_UNKNOWN(0),
+  GHOSTTY_MOUSE_BUTTON_LEFT(1),
+  GHOSTTY_MOUSE_BUTTON_RIGHT(2),
+  GHOSTTY_MOUSE_BUTTON_MIDDLE(3),
+  GHOSTTY_MOUSE_BUTTON_FOUR(4),
+  GHOSTTY_MOUSE_BUTTON_FIVE(5),
+  GHOSTTY_MOUSE_BUTTON_SIX(6),
+  GHOSTTY_MOUSE_BUTTON_SEVEN(7),
+  GHOSTTY_MOUSE_BUTTON_EIGHT(8),
+  GHOSTTY_MOUSE_BUTTON_NINE(9),
+  GHOSTTY_MOUSE_BUTTON_TEN(10),
+  GHOSTTY_MOUSE_BUTTON_ELEVEN(11);
+
+  const GhosttyMouseButton(this.value);
+  final int value;
+
+  static GhosttyMouseButton fromValue(int value) => switch (value) {
+    0 => GHOSTTY_MOUSE_BUTTON_UNKNOWN,
+    1 => GHOSTTY_MOUSE_BUTTON_LEFT,
+    2 => GHOSTTY_MOUSE_BUTTON_RIGHT,
+    3 => GHOSTTY_MOUSE_BUTTON_MIDDLE,
+    4 => GHOSTTY_MOUSE_BUTTON_FOUR,
+    5 => GHOSTTY_MOUSE_BUTTON_FIVE,
+    6 => GHOSTTY_MOUSE_BUTTON_SIX,
+    7 => GHOSTTY_MOUSE_BUTTON_SEVEN,
+    8 => GHOSTTY_MOUSE_BUTTON_EIGHT,
+    9 => GHOSTTY_MOUSE_BUTTON_NINE,
+    10 => GHOSTTY_MOUSE_BUTTON_TEN,
+    11 => GHOSTTY_MOUSE_BUTTON_ELEVEN,
+    _ => throw ArgumentError('Unknown value for GhosttyMouseButton: $value'),
+  };
+}
+
+/// Mouse tracking mode.
+enum GhosttyMouseTrackingMode {
+  GHOSTTY_MOUSE_TRACKING_NONE(0),
+  GHOSTTY_MOUSE_TRACKING_X10(1),
+  GHOSTTY_MOUSE_TRACKING_NORMAL(2),
+  GHOSTTY_MOUSE_TRACKING_BUTTON(3),
+  GHOSTTY_MOUSE_TRACKING_ANY(4);
+
+  const GhosttyMouseTrackingMode(this.value);
+  final int value;
+
+  static GhosttyMouseTrackingMode fromValue(int value) => switch (value) {
+    0 => GHOSTTY_MOUSE_TRACKING_NONE,
+    1 => GHOSTTY_MOUSE_TRACKING_X10,
+    2 => GHOSTTY_MOUSE_TRACKING_NORMAL,
+    3 => GHOSTTY_MOUSE_TRACKING_BUTTON,
+    4 => GHOSTTY_MOUSE_TRACKING_ANY,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyMouseTrackingMode: $value',
+    ),
+  };
+}
+
+/// Mouse output format.
+enum GhosttyMouseFormat {
+  GHOSTTY_MOUSE_FORMAT_X10(0),
+  GHOSTTY_MOUSE_FORMAT_UTF8(1),
+  GHOSTTY_MOUSE_FORMAT_SGR(2),
+  GHOSTTY_MOUSE_FORMAT_URXVT(3),
+  GHOSTTY_MOUSE_FORMAT_SGR_PIXELS(4);
+
+  const GhosttyMouseFormat(this.value);
+  final int value;
+
+  static GhosttyMouseFormat fromValue(int value) => switch (value) {
+    0 => GHOSTTY_MOUSE_FORMAT_X10,
+    1 => GHOSTTY_MOUSE_FORMAT_UTF8,
+    2 => GHOSTTY_MOUSE_FORMAT_SGR,
+    3 => GHOSTTY_MOUSE_FORMAT_URXVT,
+    4 => GHOSTTY_MOUSE_FORMAT_SGR_PIXELS,
+    _ => throw ArgumentError('Unknown value for GhosttyMouseFormat: $value'),
+  };
+}
+
+/// Size report style.
+enum GhosttySizeReportStyle {
+  GHOSTTY_SIZE_REPORT_MODE_2048(0),
+  GHOSTTY_SIZE_REPORT_CSI_14_T(1),
+  GHOSTTY_SIZE_REPORT_CSI_16_T(2),
+  GHOSTTY_SIZE_REPORT_CSI_18_T(3);
+
+  const GhosttySizeReportStyle(this.value);
+  final int value;
+
+  static GhosttySizeReportStyle fromValue(int value) => switch (value) {
+    0 => GHOSTTY_SIZE_REPORT_MODE_2048,
+    1 => GHOSTTY_SIZE_REPORT_CSI_14_T,
+    2 => GHOSTTY_SIZE_REPORT_CSI_16_T,
+    3 => GHOSTTY_SIZE_REPORT_CSI_18_T,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttySizeReportStyle: $value',
+    ),
+  };
 }
 
 /// Key event action enum used by the key encoder.
@@ -262,6 +586,16 @@ enum GhosttyOptionAsAlt {
   GHOSTTY_OPTION_AS_ALT_RIGHT(3);
 
   const GhosttyOptionAsAlt(this.value);
+  final int value;
+}
+
+/// Output format emitted by a terminal formatter.
+enum GhosttyFormatterFormat {
+  GHOSTTY_FORMATTER_FORMAT_PLAIN(0),
+  GHOSTTY_FORMATTER_FORMAT_VT(1),
+  GHOSTTY_FORMATTER_FORMAT_HTML(2);
+
+  const GhosttyFormatterFormat(this.value);
   final int value;
 }
 
@@ -412,6 +746,10 @@ final class _GhosttyWasmRuntime {
     _data.setUint32(ptr, value, Endian.little);
   }
 
+  void writeI32(int ptr, int value) {
+    _data.setInt32(ptr, value, Endian.little);
+  }
+
   String readCString(int ptr) {
     if (ptr == 0) {
       return '';
@@ -506,6 +844,98 @@ void _checkResult(int result, String operation) {
   }
 }
 
+const int _ghosttyTerminalOptionsSize = 8;
+const int _ghosttyFormatterScreenExtraSize = 12;
+const int _ghosttyFormatterTerminalExtraSize = 24;
+const int _ghosttyFormatterTerminalOptionsSize = 36;
+const int _ghosttyTerminalScrollViewportSize = 24;
+
+int _checkPositiveUint16(int value, String name) {
+  if (value < 1 || value > 0xFFFF) {
+    throw RangeError.range(value, 1, 0xFFFF, name);
+  }
+  return value;
+}
+
+int _checkNonNegative(int value, String name) {
+  if (value < 0) {
+    throw RangeError.range(value, 0, null, name);
+  }
+  return value;
+}
+
+_GhosttyWasmRuntime _requireTerminalRuntime(String member) {
+  final rt = _runtime();
+  if (rt == null) {
+    throw StateError(
+      '$member requires GhosttyVtWasm.initializeFromBytes() on web.',
+    );
+  }
+  return rt;
+}
+
+int _allocU8ArrayOrThrow(_GhosttyWasmRuntime rt, int len, String operation) {
+  if (len == 0) {
+    return 0;
+  }
+  final ptr = rt.allocU8Array(len);
+  if (ptr == 0) {
+    throw GhosttyVtError(operation, GhosttyResult.GHOSTTY_OUT_OF_MEMORY);
+  }
+  rt.u8View(ptr, len).fillRange(0, len, 0);
+  return ptr;
+}
+
+int _allocOpaqueOrThrow(_GhosttyWasmRuntime rt, String operation) {
+  final ptr = rt.allocOpaque();
+  if (ptr == 0) {
+    throw GhosttyVtError(operation, GhosttyResult.GHOSTTY_OUT_OF_MEMORY);
+  }
+  return ptr;
+}
+
+void _writeBoolByte(_GhosttyWasmRuntime rt, int ptr, int offset, bool value) {
+  rt.writeU8(ptr + offset, value ? 1 : 0);
+}
+
+void _writeTerminalOptions(
+  _GhosttyWasmRuntime rt,
+  int ptr, {
+  required int cols,
+  required int rows,
+  required int maxScrollback,
+}) {
+  rt.writeU16(ptr, _checkPositiveUint16(cols, 'cols'));
+  rt.writeU16(ptr + 2, _checkPositiveUint16(rows, 'rows'));
+  rt.writeU32(ptr + 4, _checkNonNegative(maxScrollback, 'maxScrollback'));
+}
+
+void _writeFormatterTerminalOptions(
+  _GhosttyWasmRuntime rt,
+  int ptr,
+  VtFormatterTerminalOptions options,
+) {
+  final screen = options.extra.screen;
+  rt.writeU32(ptr, _ghosttyFormatterTerminalOptionsSize);
+  rt.writeU32(ptr + 4, options.emit.value);
+  _writeBoolByte(rt, ptr, 8, options.unwrap);
+  _writeBoolByte(rt, ptr, 9, options.trim);
+  rt.writeU32(ptr + 12, _ghosttyFormatterTerminalExtraSize);
+  _writeBoolByte(rt, ptr, 16, options.extra.palette);
+  _writeBoolByte(rt, ptr, 17, options.extra.modes);
+  _writeBoolByte(rt, ptr, 18, options.extra.scrollingRegion);
+  _writeBoolByte(rt, ptr, 19, options.extra.tabstops);
+  _writeBoolByte(rt, ptr, 20, options.extra.pwd);
+  _writeBoolByte(rt, ptr, 21, options.extra.keyboard);
+  rt.writeU32(ptr + 24, _ghosttyFormatterScreenExtraSize);
+  _writeBoolByte(rt, ptr, 28, screen.cursor);
+  _writeBoolByte(rt, ptr, 29, screen.style);
+  _writeBoolByte(rt, ptr, 30, screen.hyperlink);
+  _writeBoolByte(rt, ptr, 31, screen.protection);
+  _writeBoolByte(rt, ptr, 32, screen.kittyKeyboard);
+  _writeBoolByte(rt, ptr, 33, screen.charsets);
+}
+
 final class GhosttyModsMask {
   const GhosttyModsMask._();
 
@@ -563,6 +993,348 @@ final class VtRgbColor {
 
   @override
   String toString() => 'VtRgbColor(r: $r, g: $g, b: $b)';
+}
+
+final class VtMode {
+  const VtMode(this.mode, {this.ansi = false})
+    : assert(mode >= 0 && mode <= 0x7FFF);
+
+  final int mode;
+  final bool ansi;
+
+  int get packed => (mode & 0x7FFF) | (ansi ? 0x8000 : 0);
+}
+
+final class VtPoint {
+  const VtPoint.active(this.x, this.y)
+    : tag = GhosttyPointTag.GHOSTTY_POINT_TAG_ACTIVE;
+
+  const VtPoint.viewport(this.x, this.y)
+    : tag = GhosttyPointTag.GHOSTTY_POINT_TAG_VIEWPORT;
+
+  const VtPoint.screen(this.x, this.y)
+    : tag = GhosttyPointTag.GHOSTTY_POINT_TAG_SCREEN;
+
+  const VtPoint.history(this.x, this.y)
+    : tag = GhosttyPointTag.GHOSTTY_POINT_TAG_HISTORY;
+
+  final GhosttyPointTag tag;
+  final int x;
+  final int y;
+}
+
+final class VtStyleColor {
+  const VtStyleColor._({required this.tag, this.paletteIndex, this.rgb});
+
+  const VtStyleColor.none()
+    : this._(tag: GhosttyStyleColorTag.GHOSTTY_STYLE_COLOR_NONE);
+
+  const VtStyleColor.palette(int index)
+    : this._(
+        tag: GhosttyStyleColorTag.GHOSTTY_STYLE_COLOR_PALETTE,
+        paletteIndex: index,
+      );
+
+  const VtStyleColor.rgb(VtRgbColor value)
+    : this._(tag: GhosttyStyleColorTag.GHOSTTY_STYLE_COLOR_RGB, rgb: value);
+
+  final GhosttyStyleColorTag tag;
+  final int? paletteIndex;
+  final VtRgbColor? rgb;
+
+  bool get isSet => tag != GhosttyStyleColorTag.GHOSTTY_STYLE_COLOR_NONE;
+}
+
+final class VtStyle {
+  const VtStyle({
+    required this.foreground,
+    required this.background,
+    required this.underlineColor,
+    required this.bold,
+    required this.italic,
+    required this.faint,
+    required this.blink,
+    required this.inverse,
+    required this.invisible,
+    required this.strikethrough,
+    required this.overline,
+    required this.underline,
+  });
+
+  final VtStyleColor foreground;
+  final VtStyleColor background;
+  final VtStyleColor underlineColor;
+  final bool bold;
+  final bool italic;
+  final bool faint;
+  final bool blink;
+  final bool inverse;
+  final bool invisible;
+  final bool strikethrough;
+  final bool overline;
+  final GhosttySgrUnderline underline;
+}
+
+final class VtTerminalScrollbar {
+  const VtTerminalScrollbar({
+    required this.total,
+    required this.offset,
+    required this.length,
+  });
+
+  final int total;
+  final int offset;
+  final int length;
+}
+
+final class VtRowSnapshot {
+  const VtRowSnapshot({
+    required this.wrap,
+    required this.wrapContinuation,
+    required this.hasGrapheme,
+    required this.styled,
+    required this.hasHyperlink,
+    required this.semanticPrompt,
+    required this.kittyVirtualPlaceholder,
+    required this.dirty,
+  });
+
+  final bool wrap;
+  final bool wrapContinuation;
+  final bool hasGrapheme;
+  final bool styled;
+  final bool hasHyperlink;
+  final GhosttyRowSemanticPrompt semanticPrompt;
+  final bool kittyVirtualPlaceholder;
+  final bool dirty;
+}
+
+final class VtCellSnapshot {
+  const VtCellSnapshot({
+    required this.codepoint,
+    required this.contentTag,
+    required this.wide,
+    required this.hasText,
+    required this.hasStyling,
+    required this.styleId,
+    required this.hasHyperlink,
+    required this.isProtected,
+    required this.semanticContent,
+    this.colorPaletteIndex,
+    this.colorRgb,
+  });
+
+  final int codepoint;
+  final GhosttyCellContentTag contentTag;
+  final GhosttyCellWide wide;
+  final bool hasText;
+  final bool hasStyling;
+  final int styleId;
+  final bool hasHyperlink;
+  final bool isProtected;
+  final GhosttyCellSemanticContent semanticContent;
+  final int? colorPaletteIndex;
+  final VtRgbColor? colorRgb;
+
+  String get text => codepoint == 0 ? '' : String.fromCharCode(codepoint);
+}
+
+final class VtGridRefSnapshot {
+  const VtGridRefSnapshot({
+    required this.x,
+    required this.y,
+    required this.cell,
+    required this.row,
+    required this.style,
+    required this.graphemes,
+  });
+
+  final int x;
+  final int y;
+  final VtCellSnapshot cell;
+  final VtRowSnapshot row;
+  final VtStyle style;
+  final String graphemes;
+}
+
+final class VtRenderColors {
+  const VtRenderColors({
+    required this.background,
+    required this.foreground,
+    required this.cursor,
+    required this.palette,
+  });
+
+  final VtRgbColor background;
+  final VtRgbColor foreground;
+  final VtRgbColor? cursor;
+  final List<VtRgbColor> palette;
+}
+
+final class VtRenderCursorSnapshot {
+  const VtRenderCursorSnapshot({
+    required this.visualStyle,
+    required this.visible,
+    required this.blinking,
+    required this.passwordInput,
+    required this.hasViewportPosition,
+    this.viewportX,
+    this.viewportY,
+    this.onWideTail,
+  });
+
+  final GhosttyRenderStateCursorVisualStyle visualStyle;
+  final bool visible;
+  final bool blinking;
+  final bool passwordInput;
+  final bool hasViewportPosition;
+  final int? viewportX;
+  final int? viewportY;
+  final bool? onWideTail;
+}
+
+final class VtRenderCellSnapshot {
+  const VtRenderCellSnapshot({
+    required this.raw,
+    required this.style,
+    required this.graphemes,
+  });
+
+  final VtCellSnapshot raw;
+  final VtStyle style;
+  final String graphemes;
+}
+
+final class VtRenderRowSnapshot {
+  const VtRenderRowSnapshot({
+    required this.dirty,
+    required this.raw,
+    required this.cells,
+  });
+
+  final bool dirty;
+  final VtRowSnapshot raw;
+  final List<VtRenderCellSnapshot> cells;
+}
+
+final class VtRenderSnapshot {
+  const VtRenderSnapshot({
+    required this.cols,
+    required this.rows,
+    required this.dirty,
+    required this.colors,
+    required this.cursor,
+    required this.rowsData,
+  });
+
+  final int cols;
+  final int rows;
+  final GhosttyRenderStateDirty dirty;
+  final VtRenderColors colors;
+  final VtRenderCursorSnapshot cursor;
+  final List<VtRenderRowSnapshot> rowsData;
+}
+
+final class VtSizeReportSize {
+  const VtSizeReportSize({
+    required this.rows,
+    required this.columns,
+    required this.cellWidth,
+    required this.cellHeight,
+  });
+
+  final int rows;
+  final int columns;
+  final int cellWidth;
+  final int cellHeight;
+}
+
+/// Color scheme variants for the terminal.
+enum GhosttyColorScheme {
+  GHOSTTY_COLOR_SCHEME_LIGHT(0),
+  GHOSTTY_COLOR_SCHEME_DARK(1);
+
+  final int value;
+  const GhosttyColorScheme(this.value);
+
+  static GhosttyColorScheme fromValue(int value) => switch (value) {
+    0 => GHOSTTY_COLOR_SCHEME_LIGHT,
+    1 => GHOSTTY_COLOR_SCHEME_DARK,
+    _ => throw ArgumentError('Unknown value for GhosttyColorScheme: $value'),
+  };
+}
+
+/// Primary device attributes (DA1) response data.
+final class VtDeviceAttributesPrimary {
+  const VtDeviceAttributesPrimary({
+    required this.conformanceLevel,
+    this.features = const [],
+  });
+
+  final int conformanceLevel;
+  final List<int> features;
+}
+
+/// Secondary device attributes (DA2) response data.
+final class VtDeviceAttributesSecondary {
+  const VtDeviceAttributesSecondary({
+    required this.deviceType,
+    required this.firmwareVersion,
+    this.romCartridge = 0,
+  });
+
+  final int deviceType;
+  final int firmwareVersion;
+  final int romCartridge;
+}
+
+/// Tertiary device attributes (DA3) response data.
+final class VtDeviceAttributesTertiary {
+  const VtDeviceAttributesTertiary({required this.unitId});
+
+  final int unitId;
+}
+
+/// Device attributes response data for all three DA levels.
+final class VtDeviceAttributes {
+  const VtDeviceAttributes({
+    required this.primary,
+    required this.secondary,
+    required this.tertiary,
+  });
+
+  final VtDeviceAttributesPrimary primary;
+  final VtDeviceAttributesSecondary secondary;
+  final VtDeviceAttributesTertiary tertiary;
+}
+
+final class VtMousePosition {
+  const VtMousePosition({required this.x, required this.y});
+
+  final double x;
+  final double y;
+}
+
+final class VtMouseEncoderSize {
+  const VtMouseEncoderSize({
+    required this.screenWidth,
+    required this.screenHeight,
+    required this.cellWidth,
+    required this.cellHeight,
+    this.paddingTop = 0,
+    this.paddingBottom = 0,
+    this.paddingRight = 0,
+    this.paddingLeft = 0,
+  });
+
+  final int screenWidth;
+  final int screenHeight;
+  final int cellWidth;
+  final int cellHeight;
+  final int paddingTop;
+  final int paddingBottom;
+  final int paddingRight;
+  final int paddingLeft;
 }
 
 final class VtOscCommand {
@@ -995,7 +1767,8 @@ final class VtSgrParser {
         );
       case 24:
         return const VtSgrAttributeData(
-          tag: GhosttySgrAttributeTag.GHOSTTY_SGR_ATTR_RESET_UNDERLINE,
+          tag: GhosttySgrAttributeTag.GHOSTTY_SGR_ATTR_UNDERLINE,
+          underline: GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_NONE,
         );
       case 25:
         return const VtSgrAttributeData(
@@ -1621,6 +2394,22 @@ final class VtKeyEncoder {
     }
   }
 
+  void setOptionsFromTerminal(VtTerminal terminal) {
+    _ensureOpen();
+    terminal._ensureOpen();
+    final rt = _wasm;
+    if (rt == null || !identical(rt, terminal._wasm)) {
+      throw StateError(
+        'VtKeyEncoder.setOptionsFromTerminal requires the encoder and '
+        'terminal to use the same initialized wasm runtime.',
+      );
+    }
+    rt.callInt('ghostty_key_encoder_setopt_from_terminal', <Object>[
+      _handle,
+      terminal._handle,
+    ]);
+  }
+
   Uint8List encode(VtKeyEvent event) {
     _ensureOpen();
     final rt = _wasm;
@@ -1864,6 +2653,720 @@ final class VtKeyEncoder {
   }
 }
 
+Never _unsupportedTerminalApi(String member) {
+  throw UnsupportedError(
+    '$member is not available on web yet. '
+    'The wasm runtime currently supports OSC, SGR, key encoding, VT '
+    'terminals, and formatters, but this newer VT surface has not been '
+    'bridged yet.',
+  );
+}
+
+final class VtTerminalScrollViewport {
+  const VtTerminalScrollViewport._(this._tag, {this.delta = 0});
+
+  const VtTerminalScrollViewport.top() : this._(0);
+
+  const VtTerminalScrollViewport.bottom() : this._(1);
+
+  const VtTerminalScrollViewport.delta(int delta) : this._(2, delta: delta);
+
+  final int _tag;
+  final int delta;
+}
+
+final class VtFormatterScreenExtra {
+  const VtFormatterScreenExtra({
+    this.cursor = false,
+    this.style = false,
+    this.hyperlink = false,
+    this.protection = false,
+    this.kittyKeyboard = false,
+    this.charsets = false,
+  });
+
+  final bool cursor;
+  final bool style;
+  final bool hyperlink;
+  final bool protection;
+  final bool kittyKeyboard;
+  final bool charsets;
+}
+
+final class VtFormatterTerminalExtra {
+  const VtFormatterTerminalExtra({
+    this.palette = false,
+    this.modes = false,
+    this.scrollingRegion = false,
+    this.tabstops = false,
+    this.pwd = false,
+    this.keyboard = false,
+    this.screen = const VtFormatterScreenExtra(),
+  });
+
+  final bool palette;
+  final bool modes;
+  final bool scrollingRegion;
+  final bool tabstops;
+  final bool pwd;
+  final bool keyboard;
+  final VtFormatterScreenExtra screen;
+}
+
+final class VtFormatterTerminalOptions {
+  const VtFormatterTerminalOptions({
+    this.emit = GhosttyFormatterFormat.GHOSTTY_FORMATTER_FORMAT_PLAIN,
+    this.unwrap = false,
+    this.trim = true,
+    this.extra = const VtFormatterTerminalExtra(),
+  });
+
+  final GhosttyFormatterFormat emit;
+  final bool unwrap;
+  final bool trim;
+  final VtFormatterTerminalExtra extra;
+}
+
+final class VtAllocator {
+  VtAllocator._();
+
+  static final VtAllocator dartMalloc = VtAllocator._();
+
+  Never get pointer => _unsupportedTerminalApi('VtAllocator.pointer');
+
+  Uint8List copyBytesAndFree(Object ptr, int len) {
+    _unsupportedTerminalApi('VtAllocator.copyBytesAndFree');
+  }
+
+  void freePointer(Object ptr) {
+    _unsupportedTerminalApi('VtAllocator.freePointer');
+  }
+}
+
+final class VtRenderState {
+  VtRenderState._(this._terminal);
+
+  final VtTerminal _terminal;
+  bool _closed = false;
+
+  void _ensureOpen() {
+    if (_closed) {
+      throw StateError('VtRenderState is already closed.');
+    }
+  }
+
+  void update() {
+    _ensureOpen();
+    _terminal._ensureOpen();
+    _unsupportedTerminalApi('VtRenderState.update');
+  }
+
+  VtRenderSnapshot snapshot() {
+    _ensureOpen();
+    _terminal._ensureOpen();
+    _unsupportedTerminalApi('VtRenderState.snapshot');
+  }
+
+  void close() {
+    _closed = true;
+  }
+}
+
+final class VtMouseEvent {
+  GhosttyMouseAction action = GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_PRESS;
+  GhosttyMouseButton? button;
+  int mods = 0;
+  VtMousePosition position = const VtMousePosition(x: 0, y: 0);
+  bool _closed = false;
+
+  void _ensureOpen() {
+    if (_closed) {
+      throw StateError('VtMouseEvent is already closed.');
+    }
+  }
+
+  void close() {
+    _closed = true;
+  }
+}
+
+final class VtMouseEncoder {
+  GhosttyMouseTrackingMode trackingMode =
+      GhosttyMouseTrackingMode.GHOSTTY_MOUSE_TRACKING_NONE;
+  GhosttyMouseFormat format = GhosttyMouseFormat.GHOSTTY_MOUSE_FORMAT_SGR;
+  VtMouseEncoderSize size = const VtMouseEncoderSize(
+    screenWidth: 1,
+    screenHeight: 1,
+    cellWidth: 1,
+    cellHeight: 1,
+  );
+  bool anyButtonPressed = false;
+  bool trackLastCell = false;
+  bool _closed = false;
+
+  void _ensureOpen() {
+    if (_closed) {
+      throw StateError('VtMouseEncoder is already closed.');
+    }
+  }
+
+  void setOptionsFromTerminal(VtTerminal terminal) {
+    _ensureOpen();
+    terminal._ensureOpen();
+    _unsupportedTerminalApi('VtMouseEncoder.setOptionsFromTerminal');
+  }
+
+  void reset() {
+    _ensureOpen();
+  }
+
+  Uint8List encode(VtMouseEvent event) {
+    _ensureOpen();
+    event._ensureOpen();
+    _unsupportedTerminalApi('VtMouseEncoder.encode');
+  }
+
+  void close() {
+    _closed = true;
+  }
+}
+
+final class VtTerminal {
+  VtTerminal({required int cols, required int rows, int maxScrollback = 10_000})
+    : _cols = _checkPositiveUint16(cols, 'cols'),
+      _rows = _checkPositiveUint16(rows, 'rows'),
+      _maxScrollback = _checkNonNegative(maxScrollback, 'maxScrollback'),
+      _wasm = _requireTerminalRuntime('VtTerminal') {
+    final out = _allocOpaqueOrThrow(_wasm, 'ghostty_wasm_alloc_opaque');
+    final optionsPtr = _allocU8ArrayOrThrow(
+      _wasm,
+      _ghosttyTerminalOptionsSize,
+      'ghostty_wasm_alloc_u8_array',
+    );
+    try {
+      _writeTerminalOptions(
+        _wasm,
+        optionsPtr,
+        cols: _cols,
+        rows: _rows,
+        maxScrollback: _maxScrollback,
+      );
+      final result = _wasm.callInt('ghostty_terminal_new', <Object>[
+        0,
+        out,
+        optionsPtr,
+      ]);
+      _checkResult(result, 'ghostty_terminal_new');
+      _handle = _wasm.readPtr(out);
+    } finally {
+      _wasm.freeU8Array(optionsPtr, _ghosttyTerminalOptionsSize);
+      _wasm.freeOpaque(out);
+    }
+  }
+
+  final _GhosttyWasmRuntime _wasm;
+  final Set<VtTerminalFormatter> _formatters = <VtTerminalFormatter>{};
+  int _handle = 0;
+  bool _closed = false;
+  int _cols;
+  int _rows;
+  final int _maxScrollback;
+
+  /// Not yet supported on the web platform.
+  // ignore: use_setters_to_change_properties
+  set onWritePty(void Function(Uint8List data)? callback) {
+    _unsupportedTerminalApi('VtTerminal.onWritePty');
+  }
+
+  /// Not yet supported on the web platform.
+  void Function(Uint8List data)? get onWritePty =>
+      _unsupportedTerminalApi('VtTerminal.onWritePty');
+
+  /// Not yet supported on the web platform.
+  // ignore: use_setters_to_change_properties
+  set onBell(void Function()? callback) {
+    _unsupportedTerminalApi('VtTerminal.onBell');
+  }
+
+  /// Not yet supported on the web platform.
+  void Function()? get onBell => _unsupportedTerminalApi('VtTerminal.onBell');
+
+  /// Not yet supported on the web platform.
+  // ignore: use_setters_to_change_properties
+  set onTitleChanged(void Function()? callback) {
+    _unsupportedTerminalApi('VtTerminal.onTitleChanged');
+  }
+
+  /// Not yet supported on the web platform.
+  void Function()? get onTitleChanged =>
+      _unsupportedTerminalApi('VtTerminal.onTitleChanged');
+
+  /// Not yet supported on the web platform.
+  // ignore: use_setters_to_change_properties
+  set onSizeQuery(VtSizeReportSize? Function()? callback) {
+    _unsupportedTerminalApi('VtTerminal.onSizeQuery');
+  }
+
+  /// Not yet supported on the web platform.
+  VtSizeReportSize? Function()? get onSizeQuery =>
+      _unsupportedTerminalApi('VtTerminal.onSizeQuery');
+
+  /// Not yet supported on the web platform.
+  // ignore: use_setters_to_change_properties
+  set onColorSchemeQuery(GhosttyColorScheme? Function()? callback) {
+    _unsupportedTerminalApi('VtTerminal.onColorSchemeQuery');
+  }
+
+  /// Not yet supported on the web platform.
+  GhosttyColorScheme? Function()? get onColorSchemeQuery =>
+      _unsupportedTerminalApi('VtTerminal.onColorSchemeQuery');
+
+  /// Not yet supported on the web platform.
+  // ignore: use_setters_to_change_properties
+  set onDeviceAttributesQuery(VtDeviceAttributes? Function()? callback) {
+    _unsupportedTerminalApi('VtTerminal.onDeviceAttributesQuery');
+  }
+
+  /// Not yet supported on the web platform.
+  VtDeviceAttributes? Function()? get onDeviceAttributesQuery =>
+      _unsupportedTerminalApi('VtTerminal.onDeviceAttributesQuery');
+
+  /// Not yet supported on the web platform.
+  // ignore: use_setters_to_change_properties
+  set onEnquiry(Uint8List Function()? callback) {
+    _unsupportedTerminalApi('VtTerminal.onEnquiry');
+  }
+
+  /// Not yet supported on the web platform.
+  Uint8List Function()? get onEnquiry =>
+      _unsupportedTerminalApi('VtTerminal.onEnquiry');
+
+  /// Not yet supported on the web platform.
+  // ignore: use_setters_to_change_properties
+  set onXtversion(String Function()? callback) {
+    _unsupportedTerminalApi('VtTerminal.onXtversion');
+  }
+
+  /// Not yet supported on the web platform.
+  String Function()? get onXtversion =>
+      _unsupportedTerminalApi('VtTerminal.onXtversion');
+
+  void _ensureOpen() {
+    if (_closed) {
+      throw StateError('VtTerminal is already closed.');
+    }
+  }
+
+  void _detachFormatter(VtTerminalFormatter formatter) {
+    _formatters.remove(formatter);
+  }
+
+  int get cols {
+    _ensureOpen();
+    return _cols;
+  }
+
+  int get rows {
+    _ensureOpen();
+    return _rows;
+  }
+
+  int get maxScrollback {
+    _ensureOpen();
+    return _maxScrollback;
+  }
+
+  int get cursorX {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.cursorX');
+  }
+
+  int get cursorY {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.cursorY');
+  }
+
+  bool get cursorPendingWrap {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.cursorPendingWrap');
+  }
+
+  GhosttyTerminalScreen get activeScreen {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.activeScreen');
+  }
+
+  bool get cursorVisible {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.cursorVisible');
+  }
+
+  String get title {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.title');
+  }
+
+  String get pwd {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.pwd');
+  }
+
+  bool get mouseTracking {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.mouseTracking');
+  }
+
+  int get totalRows {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.totalRows');
+  }
+
+  int get scrollbackRows {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.scrollbackRows');
+  }
+
+  int get widthPx {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.widthPx');
+  }
+
+  int get heightPx {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.heightPx');
+  }
+
+  int get kittyKeyboardFlags {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.kittyKeyboardFlags');
+  }
+
+  VtTerminalScrollbar get scrollbar {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.scrollbar');
+  }
+
+  VtStyle get cursorStyle {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.cursorStyle');
+  }
+
+  void writeBytes(List<int> bytes) {
+    _ensureOpen();
+    if (bytes.isEmpty) {
+      return;
+    }
+    final dataPtr = _allocU8ArrayOrThrow(
+      _wasm,
+      bytes.length,
+      'ghostty_wasm_alloc_u8_array',
+    );
+    try {
+      _wasm.u8View(dataPtr, bytes.length).setAll(0, bytes);
+      _wasm.callInt('ghostty_terminal_vt_write', <Object>[
+        _handle,
+        dataPtr,
+        bytes.length,
+      ]);
+    } finally {
+      _wasm.freeU8Array(dataPtr, bytes.length);
+    }
+  }
+
+  void write(String text, {Encoding encoding = utf8}) {
+    writeBytes(encoding.encode(text));
+  }
+
+  void reset() {
+    _ensureOpen();
+    _wasm.callInt('ghostty_terminal_reset', <Object>[_handle]);
+  }
+
+  /// Resizes the terminal to the given cell dimensions.
+  ///
+  /// [cellWidthPx] and [cellHeightPx] specify the pixel dimensions of a
+  /// single cell, used for pixel-based size reporting. They default to 0.
+  void resize({
+    required int cols,
+    required int rows,
+    int cellWidthPx = 0,
+    int cellHeightPx = 0,
+  }) {
+    _ensureOpen();
+    final checkedCols = _checkPositiveUint16(cols, 'cols');
+    final checkedRows = _checkPositiveUint16(rows, 'rows');
+    final result = _wasm.callInt('ghostty_terminal_resize', <Object>[
+      _handle,
+      checkedCols,
+      checkedRows,
+      cellWidthPx,
+      cellHeightPx,
+    ]);
+    _checkResult(result, 'ghostty_terminal_resize');
+    _cols = checkedCols;
+    _rows = checkedRows;
+  }
+
+  void scrollViewport(VtTerminalScrollViewport behavior) {
+    _ensureOpen();
+    final behaviorPtr = _allocU8ArrayOrThrow(
+      _wasm,
+      _ghosttyTerminalScrollViewportSize,
+      'ghostty_wasm_alloc_u8_array',
+    );
+    try {
+      _wasm.writeU32(behaviorPtr, behavior._tag);
+      if (behavior._tag == 2) {
+        _wasm.writeI32(behaviorPtr + 8, behavior.delta);
+      }
+      _wasm.callInt('ghostty_terminal_scroll_viewport', <Object>[
+        _handle,
+        behaviorPtr,
+      ]);
+    } finally {
+      _wasm.freeU8Array(behaviorPtr, _ghosttyTerminalScrollViewportSize);
+    }
+  }
+
+  void scrollToTop() {
+    scrollViewport(const VtTerminalScrollViewport.top());
+  }
+
+  void scrollToBottom() {
+    scrollViewport(const VtTerminalScrollViewport.bottom());
+  }
+
+  void scrollBy(int delta) {
+    scrollViewport(VtTerminalScrollViewport.delta(delta));
+  }
+
+  VtTerminalFormatter createFormatter([
+    VtFormatterTerminalOptions options = const VtFormatterTerminalOptions(),
+  ]) {
+    _ensureOpen();
+    final formatter = VtTerminalFormatter._(this, options);
+    _formatters.add(formatter);
+    return formatter;
+  }
+
+  VtGridRefSnapshot gridRef(VtPoint point) {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtTerminal.gridRef');
+  }
+
+  VtRenderState createRenderState() {
+    _ensureOpen();
+    return VtRenderState._(this);
+  }
+
+  void close() {
+    if (_closed) {
+      return;
+    }
+    for (final formatter in List<VtTerminalFormatter>.from(_formatters)) {
+      formatter.close();
+    }
+    _wasm.callInt('ghostty_terminal_free', <Object>[_handle]);
+    _handle = 0;
+    _closed = true;
+  }
+}
+
+final class VtTerminalFormatter {
+  VtTerminalFormatter._(VtTerminal terminal, VtFormatterTerminalOptions options)
+    : _terminal = terminal,
+      _wasm = terminal._wasm {
+    final out = _allocOpaqueOrThrow(_wasm, 'ghostty_wasm_alloc_opaque');
+    final optionsPtr = _allocU8ArrayOrThrow(
+      _wasm,
+      _ghosttyFormatterTerminalOptionsSize,
+      'ghostty_wasm_alloc_u8_array',
+    );
+    try {
+      _writeFormatterTerminalOptions(_wasm, optionsPtr, options);
+      final result = _wasm.callInt('ghostty_formatter_terminal_new', <Object>[
+        0,
+        out,
+        _terminal._handle,
+        optionsPtr,
+      ]);
+      _checkResult(result, 'ghostty_formatter_terminal_new');
+      _handle = _wasm.readPtr(out);
+    } finally {
+      _wasm.freeU8Array(optionsPtr, _ghosttyFormatterTerminalOptionsSize);
+      _wasm.freeOpaque(out);
+    }
+  }
+
+  final VtTerminal _terminal;
+  final _GhosttyWasmRuntime _wasm;
+  int _handle = 0;
+  bool _closed = false;
+
+  void _ensureOpen() {
+    if (_closed) {
+      throw StateError('VtTerminalFormatter is already closed.');
+    }
+  }
+
+  int _requiredSize() {
+    final outWritten = _wasm.allocUsize();
+    if (outWritten == 0) {
+      throw GhosttyVtError(
+        'ghostty_wasm_alloc_usize',
+        GhosttyResult.GHOSTTY_OUT_OF_MEMORY,
+      );
+    }
+    try {
+      final result = _wasm.callInt('ghostty_formatter_format_buf', <Object>[
+        _handle,
+        0,
+        0,
+        outWritten,
+      ]);
+      if (result == GhosttyResult.GHOSTTY_SUCCESS.value) {
+        return _wasm.readUsize(outWritten);
+      }
+      if (result != GhosttyResult.GHOSTTY_OUT_OF_SPACE.value) {
+        _checkResult(result, 'ghostty_formatter_format_buf(size_probe)');
+      }
+      return _wasm.readUsize(outWritten);
+    } finally {
+      _wasm.freeUsize(outWritten);
+    }
+  }
+
+  Uint8List formatBytes() {
+    _ensureOpen();
+    _terminal._ensureOpen();
+
+    var required = _requiredSize();
+    if (required == 0) {
+      return Uint8List(0);
+    }
+
+    for (var attempt = 0; attempt < 2; attempt++) {
+      final outWritten = _wasm.allocUsize();
+      if (outWritten == 0) {
+        throw GhosttyVtError(
+          'ghostty_wasm_alloc_usize',
+          GhosttyResult.GHOSTTY_OUT_OF_MEMORY,
+        );
+      }
+      final allocated = required;
+      final buffer = _allocU8ArrayOrThrow(
+        _wasm,
+        allocated,
+        'ghostty_wasm_alloc_u8_array',
+      );
+      try {
+        final result = _wasm.callInt('ghostty_formatter_format_buf', <Object>[
+          _handle,
+          buffer,
+          allocated,
+          outWritten,
+        ]);
+        if (result == GhosttyResult.GHOSTTY_SUCCESS.value) {
+          final written = _wasm.readUsize(outWritten);
+          return Uint8List.fromList(_wasm.u8View(buffer, written));
+        }
+        if (result != GhosttyResult.GHOSTTY_OUT_OF_SPACE.value) {
+          _checkResult(result, 'ghostty_formatter_format_buf');
+        }
+        required = _wasm.readUsize(outWritten);
+        if (required == 0) {
+          return Uint8List(0);
+        }
+      } finally {
+        _wasm.freeU8Array(buffer, allocated);
+        _wasm.freeUsize(outWritten);
+      }
+    }
+
+    throw StateError(
+      'VtTerminalFormatter output changed while formatting. Retry the call.',
+    );
+  }
+
+  Uint8List formatBytesAllocated() {
+    return formatBytesAllocatedWith(VtAllocator.dartMalloc);
+  }
+
+  Uint8List formatBytesAllocatedWith(VtAllocator allocator) {
+    allocator;
+    _ensureOpen();
+    _terminal._ensureOpen();
+
+    final outPtr = _allocOpaqueOrThrow(_wasm, 'ghostty_wasm_alloc_opaque');
+    final outLen = _wasm.allocUsize();
+    if (outLen == 0) {
+      _wasm.freeOpaque(outPtr);
+      throw GhosttyVtError(
+        'ghostty_wasm_alloc_usize',
+        GhosttyResult.GHOSTTY_OUT_OF_MEMORY,
+      );
+    }
+    try {
+      final result = _wasm.callInt('ghostty_formatter_format_alloc', <Object>[
+        _handle,
+        0,
+        outPtr,
+        outLen,
+      ]);
+      _checkResult(result, 'ghostty_formatter_format_alloc');
+
+      final ptr = _wasm.readPtr(outPtr);
+      final len = _wasm.readUsize(outLen);
+      if (ptr == 0 || len == 0) {
+        if (ptr != 0) {
+          _wasm.freeU8Array(ptr, len);
+        }
+        return Uint8List(0);
+      }
+
+      final bytes = Uint8List.fromList(_wasm.u8View(ptr, len));
+      _wasm.freeU8Array(ptr, len);
+      return bytes;
+    } finally {
+      _wasm.freeUsize(outLen);
+      _wasm.freeOpaque(outPtr);
+    }
+  }
+
+  String formatText({Encoding encoding = utf8}) {
+    final bytes = formatBytes();
+    if (encoding == utf8) {
+      return utf8.decode(bytes, allowMalformed: true);
+    }
+    return encoding.decode(bytes);
+  }
+
+  String formatTextAllocated({Encoding encoding = utf8}) {
+    return formatTextAllocatedWith(VtAllocator.dartMalloc, encoding: encoding);
+  }
+
+  String formatTextAllocatedWith(
+    VtAllocator allocator, {
+    Encoding encoding = utf8,
+  }) {
+    final bytes = formatBytesAllocatedWith(allocator);
+    if (encoding == utf8) {
+      return utf8.decode(bytes, allowMalformed: true);
+    }
+    return encoding.decode(bytes);
+  }
+
+  void close() {
+    if (_closed) {
+      return;
+    }
+    _wasm.callInt('ghostty_formatter_free', <Object>[_handle]);
+    _handle = 0;
+    _terminal._detachFormatter(this);
+    _closed = true;
+  }
+}
+
 final class GhosttyVt {
   const GhosttyVt._();
 
@@ -1917,4 +3420,44 @@ final class GhosttyVt {
   static VtSgrParser newSgrParser() => VtSgrParser();
   static VtKeyEvent newKeyEvent() => VtKeyEvent();
   static VtKeyEncoder newKeyEncoder() => VtKeyEncoder();
+  static VtMouseEvent newMouseEvent() => VtMouseEvent();
+  static VtMouseEncoder newMouseEncoder() => VtMouseEncoder();
+
+  static Uint8List encodeFocus(GhosttyFocusEvent event) {
+    return Uint8List.fromList(
+      ascii.encode(
+        event == GhosttyFocusEvent.GHOSTTY_FOCUS_GAINED ? '\x1b[I' : '\x1b[O',
+      ),
+    );
+  }
+
+  static Uint8List encodeModeReport(VtMode mode, GhosttyModeReportState state) {
+    final prefix = mode.ansi ? '' : '?';
+    return Uint8List.fromList(
+      ascii.encode('\x1b[$prefix${mode.mode};${state.value}\$y'),
+    );
+  }
+
+  static Uint8List encodeSizeReport(
+    GhosttySizeReportStyle style,
+    VtSizeReportSize size,
+  ) {
+    final sequence = switch (style) {
+      GhosttySizeReportStyle.GHOSTTY_SIZE_REPORT_MODE_2048 =>
+        '\x1b[48;${size.rows};${size.columns};${size.cellHeight};${size.cellWidth}t',
+      GhosttySizeReportStyle.GHOSTTY_SIZE_REPORT_CSI_14_T =>
+        '\x1b[4;${size.cellHeight * size.rows};${size.cellWidth * size.columns}t',
+      GhosttySizeReportStyle.GHOSTTY_SIZE_REPORT_CSI_16_T =>
+        '\x1b[6;${size.cellHeight};${size.cellWidth}t',
+      GhosttySizeReportStyle.GHOSTTY_SIZE_REPORT_CSI_18_T =>
+        '\x1b[8;${size.rows};${size.columns}t',
+    };
+    return Uint8List.fromList(ascii.encode(sequence));
+  }
+
+  static VtTerminal newTerminal({
+    required int cols,
+    required int rows,
+    int maxScrollback = 10_000,
+  }) => VtTerminal(cols: cols, rows: rows, maxScrollback: maxScrollback);
 }
