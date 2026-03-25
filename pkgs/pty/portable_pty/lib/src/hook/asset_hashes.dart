@@ -6,7 +6,7 @@
 // dart format off
 
 /// The GitHub release tag from which prebuilt binaries are downloaded.
-const String releaseTag = 'v0.1.0';
+const String releaseTag = 'v0.1.0+1';
 
 /// Maps platform labels to artifact info and SHA256 hashes.
 const Map<String, AssetHash> assetHashes = {
@@ -28,7 +28,7 @@ const Map<String, AssetHash> assetHashes = {
   ),
   'windows-x64': AssetHash(
     tarball: 'pty-windows-x64.tar.gz',
-    hash: '1db31b820c3989ab2dcd7133572795403e225c2d59f94f6a694608bec3cb3415',
+    hash: '71780f755669139d252150933105352668ba61fcf677382c7c71e3377d93afa8',
   ),
   'android-arm64': AssetHash(
     tarball: 'pty-android-arm64.tar.gz',
