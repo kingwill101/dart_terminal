@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:ghostty_vte/ghostty_vte.dart';
 
@@ -53,6 +55,9 @@ class GhosttyTerminalController extends ChangeNotifier
   VtKeyEncoder? _encoder;
   VtMouseEncoder? _mouseEncoder;
   GhosttyTerminalShellLaunch? _activeShellLaunch;
+  bool Function(List<int> bytes)? _externalWriteBytes;
+  void Function(int cols, int rows, int cellWidthPx, int cellHeightPx)?
+  _externalResize;
 
   final List<String> _lines = <String>[''];
   String _plainText = '';
@@ -234,6 +239,52 @@ class GhosttyTerminalController extends ChangeNotifier
     await startLaunch(launch);
   }
 
+  /// Attach an external transport backend such as an SSH session.
+  void attachExternalTransport({
+    required bool Function(List<int> bytes) writeBytes,
+    void Function(int cols, int rows, int cellWidthPx, int cellHeightPx)?
+    onResize,
+    GhosttyTerminalShellLaunch? launch,
+  }) {
+    _ensureTerminal();
+    _externalWriteBytes = writeBytes;
+    _externalResize = onResize;
+    if (launch != null) {
+      _activeShellLaunch = GhosttyTerminalShellLaunch(
+        label: launch.label,
+        shell: launch.shell,
+        arguments: List<String>.unmodifiable(launch.arguments),
+        environment: launch.environment == null
+            ? null
+            : Map<String, String>.unmodifiable(launch.environment!),
+        setupCommand: launch.setupCommand,
+      );
+    }
+    _running = true;
+    _markDirty();
+  }
+
+  /// Detach any external transport backend.
+  void detachExternalTransport() {
+    _externalWriteBytes = null;
+    _externalResize = null;
+  }
+
+  /// Inject remote output bytes directly into the VT stream.
+  void appendOutputBytes(List<int> bytes) {
+    if (bytes.isEmpty) return;
+    _consumeOscText(utf8.decode(bytes, allowMalformed: true));
+    _ensureTerminal().writeBytes(bytes);
+    _refreshSnapshot();
+    _markDirty();
+  }
+
+  /// Update the running state for an external transport session.
+  void setSessionRunning(bool running) {
+    _running = running;
+    _markDirty();
+  }
+
   /// Web keeps transport setup separate, so profile starts are a no-op wrapper.
   Future<GhosttyTerminalShellLaunch?> startShellProfile({
     required GhosttyTerminalShellProfile profile,
@@ -306,6 +357,12 @@ class GhosttyTerminalController extends ChangeNotifier
         cellWidthPx: cellWidthPx,
         cellHeightPx: cellHeightPx,
       );
+      _externalResize?.call(
+        checkedCols,
+        checkedRows,
+        cellWidthPx,
+        cellHeightPx,
+      );
       _refreshSnapshot();
     }
     _markDirty();
@@ -322,9 +379,11 @@ class GhosttyTerminalController extends ChangeNotifier
     if (sanitizePaste && !GhosttyVt.isPasteSafe(text)) {
       return false;
     }
-    // Placeholder for a transport write. The remote side should eventually
-    // feed output back through appendDebugOutput/bytes.
-    return true;
+    final externalWriteBytes = _externalWriteBytes;
+    if (externalWriteBytes == null) {
+      return false;
+    }
+    return externalWriteBytes(utf8.encode(text));
   }
 
   /// Forwards already-encoded bytes to the remote transport abstraction.
@@ -333,7 +392,11 @@ class GhosttyTerminalController extends ChangeNotifier
     if (!_running) {
       return false;
     }
-    return true;
+    final externalWriteBytes = _externalWriteBytes;
+    if (externalWriteBytes == null) {
+      return false;
+    }
+    return externalWriteBytes(bytes);
   }
 
   /// Encodes a key event using Ghostty's keyboard protocol rules.
@@ -369,7 +432,7 @@ class GhosttyTerminalController extends ChangeNotifier
       ..unshiftedCodepoint = unshiftedCodepoint;
     final encoded = _encoder!.encode(event);
     event.close();
-    return encoded.isNotEmpty;
+    return encoded.isNotEmpty && writeBytes(encoded);
   }
 
   /// Encodes a mouse event using Ghostty's mouse protocol rules.
@@ -417,7 +480,7 @@ class GhosttyTerminalController extends ChangeNotifier
       ..position = position;
     final encoded = _mouseEncoder!.encode(event);
     event.close();
-    return encoded.isNotEmpty;
+    return encoded.isNotEmpty && writeBytes(encoded);
   }
 
   /// Injects decoded terminal output directly into the VT model.

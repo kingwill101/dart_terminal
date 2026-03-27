@@ -1005,6 +1005,53 @@ final class VtMode {
   int get packed => (mode & 0x7FFF) | (ansi ? 0x8000 : 0);
 }
 
+/// Common terminal mode constants shared with the native API surface.
+final class VtModes {
+  const VtModes._();
+
+  static const kam = VtMode(2, ansi: true);
+  static const insert = VtMode(4, ansi: true);
+  static const srm = VtMode(12, ansi: true);
+  static const linefeed = VtMode(20, ansi: true);
+
+  static const cursorKeys = VtMode(1);
+  static const column132 = VtMode(3);
+  static const slowScroll = VtMode(4);
+  static const reverseColors = VtMode(5);
+  static const origin = VtMode(6);
+  static const wraparound = VtMode(7);
+  static const autorepeat = VtMode(8);
+  static const x10Mouse = VtMode(9);
+  static const cursorBlinking = VtMode(12);
+  static const cursorVisible = VtMode(25);
+  static const enableMode3 = VtMode(40);
+  static const reverseWrap = VtMode(45);
+  static const altScreenLegacy = VtMode(47);
+  static const keypadKeys = VtMode(66);
+  static const leftRightMargin = VtMode(69);
+  static const normalMouse = VtMode(1000);
+  static const buttonMouse = VtMode(1002);
+  static const anyMouse = VtMode(1003);
+  static const focusEvent = VtMode(1004);
+  static const utf8Mouse = VtMode(1005);
+  static const sgrMouse = VtMode(1006);
+  static const altScroll = VtMode(1007);
+  static const urxvtMouse = VtMode(1015);
+  static const sgrPixelsMouse = VtMode(1016);
+  static const numlockKeypad = VtMode(1035);
+  static const altEscPrefix = VtMode(1036);
+  static const altSendsEsc = VtMode(1039);
+  static const reverseWrapExt = VtMode(1045);
+  static const altScreen = VtMode(1047);
+  static const saveCursor = VtMode(1048);
+  static const altScreenSave = VtMode(1049);
+  static const bracketedPaste = VtMode(2004);
+  static const syncOutput = VtMode(2026);
+  static const graphemeCluster = VtMode(2027);
+  static const colorSchemeReport = VtMode(2031);
+  static const inBandResize = VtMode(2048);
+}
+
 final class VtPoint {
   const VtPoint.active(this.x, this.y)
     : tag = GhosttyPointTag.GHOSTTY_POINT_TAG_ACTIVE;
@@ -1169,6 +1216,35 @@ final class VtRenderColors {
   final VtRgbColor foreground;
   final VtRgbColor? cursor;
   final List<VtRgbColor> palette;
+
+  /// Returns the palette entry at [index].
+  VtRgbColor paletteAt(int index) {
+    RangeError.checkValueInInterval(index, 0, palette.length - 1, 'index');
+    return palette[index];
+  }
+
+  /// Resolves [color] to an RGB value using this render-state palette.
+  VtRgbColor? resolve(VtStyleColor color, {VtRgbColor? defaultColor}) {
+    return switch (color.tag) {
+      GhosttyStyleColorTag.GHOSTTY_STYLE_COLOR_NONE => defaultColor,
+      GhosttyStyleColorTag.GHOSTTY_STYLE_COLOR_PALETTE => paletteAt(
+        color.paletteIndex!,
+      ),
+      GhosttyStyleColorTag.GHOSTTY_STYLE_COLOR_RGB => color.rgb,
+    };
+  }
+
+  /// Resolves this style's foreground color using this render-state palette.
+  VtRgbColor? resolveForeground(VtStyle style) =>
+      resolve(style.foreground, defaultColor: foreground);
+
+  /// Resolves this style's background color using this render-state palette.
+  VtRgbColor? resolveBackground(VtStyle style) =>
+      resolve(style.background, defaultColor: background);
+
+  /// Resolves this style's underline color using this render-state palette.
+  VtRgbColor? resolveUnderlineColor(VtStyle style) =>
+      resolve(style.underlineColor, defaultColor: resolveForeground(style));
 }
 
 final class VtRenderCursorSnapshot {
@@ -2685,6 +2761,14 @@ final class VtFormatterScreenExtra {
     this.charsets = false,
   });
 
+  const VtFormatterScreenExtra.all()
+    : cursor = true,
+      style = true,
+      hyperlink = true,
+      protection = true,
+      kittyKeyboard = true,
+      charsets = true;
+
   final bool cursor;
   final bool style;
   final bool hyperlink;
@@ -2703,6 +2787,15 @@ final class VtFormatterTerminalExtra {
     this.keyboard = false,
     this.screen = const VtFormatterScreenExtra(),
   });
+
+  const VtFormatterTerminalExtra.all()
+    : palette = true,
+      modes = true,
+      scrollingRegion = true,
+      tabstops = true,
+      pwd = true,
+      keyboard = true,
+      screen = const VtFormatterScreenExtra.all();
 
   final bool palette;
   final bool modes;
@@ -2828,6 +2921,47 @@ final class VtMouseEncoder {
 
   void close() {
     _closed = true;
+  }
+}
+
+/// Reusable configuration for a [VtMouseEncoder].
+final class VtMouseEncoderOptions {
+  const VtMouseEncoderOptions({
+    required this.trackingMode,
+    required this.format,
+    required this.size,
+    this.anyButtonPressed = false,
+    this.trackLastCell = false,
+  });
+
+  const VtMouseEncoderOptions.sgr({
+    required this.size,
+    this.trackingMode = GhosttyMouseTrackingMode.GHOSTTY_MOUSE_TRACKING_NORMAL,
+    this.anyButtonPressed = false,
+    this.trackLastCell = true,
+  }) : format = GhosttyMouseFormat.GHOSTTY_MOUSE_FORMAT_SGR;
+
+  const VtMouseEncoderOptions.sgrPixels({
+    required this.size,
+    this.trackingMode = GhosttyMouseTrackingMode.GHOSTTY_MOUSE_TRACKING_ANY,
+    this.anyButtonPressed = false,
+    this.trackLastCell = true,
+  }) : format = GhosttyMouseFormat.GHOSTTY_MOUSE_FORMAT_SGR_PIXELS;
+
+  final GhosttyMouseTrackingMode trackingMode;
+  final GhosttyMouseFormat format;
+  final VtMouseEncoderSize size;
+  final bool anyButtonPressed;
+  final bool trackLastCell;
+
+  /// Applies this option set to [encoder].
+  void applyTo(VtMouseEncoder encoder) {
+    encoder
+      ..trackingMode = trackingMode
+      ..format = format
+      ..size = size
+      ..anyButtonPressed = anyButtonPressed
+      ..trackLastCell = trackLastCell;
   }
 }
 
@@ -3009,6 +3143,15 @@ final class VtTerminal {
   String get pwd {
     _ensureOpen();
     _unsupportedTerminalApi('VtTerminal.pwd');
+  }
+
+  /// Web currently does not expose direct terminal mode queries.
+  ///
+  /// Return `false` so higher-level widgets can safely disable optional
+  /// mode-dependent behavior such as mouse tracking.
+  bool getMode(VtMode mode) {
+    _ensureOpen();
+    return false;
   }
 
   bool get mouseTracking {

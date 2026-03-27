@@ -1,3 +1,10 @@
+## 0.0.3+2
+
+- Build-hook progress now logs to stdout so successful prebuilt selection does
+  not show up as `ERROR:` in Flutter builds.
+- Non-fatal cache and download fallback paths are now emitted as `Warning:`
+  messages instead of stderr noise.
+
 ## 0.0.3+1
 
 - Auto-download prebuilt native libraries from GitHub Releases during

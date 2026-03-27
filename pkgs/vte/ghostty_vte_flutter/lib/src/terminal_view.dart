@@ -317,6 +317,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     final key = ghosttyTerminalLogicalKey(event.logicalKey);
     final mods = modifiers.ghosttyMask;
     final character = ghosttyTerminalPrintableText(event, modifiers: modifiers);
+    final controlText = ghosttyTerminalControlText(event, modifiers: modifiers);
 
     if (key != null) {
       if (_selection != null) {
@@ -345,6 +346,16 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
         }
       }
       final sent = widget.controller.write(character);
+      return sent ? KeyEventResult.handled : KeyEventResult.ignored;
+    }
+
+    if (controlText != null && controlText.isNotEmpty) {
+      if (_selection != null) {
+        if (_selectionSession.updateSelection(null)) {
+          setState(() {});
+        }
+      }
+      final sent = widget.controller.write(controlText);
       return sent ? KeyEventResult.handled : KeyEventResult.ignored;
     }
 

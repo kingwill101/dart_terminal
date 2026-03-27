@@ -37,7 +37,7 @@ single import.
 
 ```yaml
 dependencies:
-  ghostty_vte_flutter: ^0.0.1
+  ghostty_vte_flutter: ^0.1.0+1
 ```
 
 No separate `ghostty_vte` dependency is needed — it's re-exported
@@ -48,6 +48,7 @@ automatically.
 A minimal terminal app with a live shell session:
 
 ```dart
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:ghostty_vte_flutter/ghostty_vte_flutter.dart';
 
@@ -71,11 +72,41 @@ class TerminalPage extends StatefulWidget {
 
 class _TerminalPageState extends State<TerminalPage> {
   final _ctrl = GhosttyTerminalController();
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _ctrl.start();
+    _startTerminal();
+  }
+
+  Future<void> _startTerminal() async {
+    try {
+      if (kIsWeb) {
+        await _ctrl.start();
+        _ctrl.appendDebugOutput(
+          '\x1b]2;Ghostty VT Demo\x07'
+          '\x1b[32mweb demo backend attached\x1b[0m\r\n'
+          'Connect a backend and feed bytes with appendDebugOutput().\r\n',
+        );
+        return;
+      }
+
+      final launch = await _ctrl.startShellProfile(
+        profile: GhosttyTerminalShellProfile.auto,
+        platformEnvironment: ghosttyTerminalPlatformEnvironment(),
+      );
+      if (launch == null) {
+        await _ctrl.start(
+          environment: ghosttyTerminalShellEnvironment(
+            platformEnvironment: ghosttyTerminalPlatformEnvironment(),
+          ),
+        );
+      }
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = error.toString());
+    }
   }
 
   @override
@@ -88,11 +119,32 @@ class _TerminalPageState extends State<TerminalPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Terminal')),
-      body: GhosttyTerminalView(controller: _ctrl, autofocus: true),
+      body: Column(
+        children: [
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                _error!,
+                style: const TextStyle(color: Colors.redAccent),
+              ),
+            ),
+          Expanded(
+            child: ColoredBox(
+              color: Colors.black,
+              child: GhosttyTerminalView(controller: _ctrl, autofocus: true),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
 ```
+
+On native platforms this starts a real shell session. On web it starts the VT
+engine and shows a demo banner until you connect your own backend and stream
+bytes into `appendDebugOutput()`.
 
 ## Controller
 

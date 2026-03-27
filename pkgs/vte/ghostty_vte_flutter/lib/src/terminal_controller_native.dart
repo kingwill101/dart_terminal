@@ -60,6 +60,9 @@ class GhosttyTerminalController extends ChangeNotifier
   StreamSubscription<int>? _exitSub;
   GhosttyTerminalPtySession? _ptySession;
   StreamSubscription<GhosttyTerminalPtySessionEvent>? _ptySessionSub;
+  bool Function(List<int> bytes)? _externalWriteBytes;
+  void Function(int cols, int rows, int cellWidthPx, int cellHeightPx)?
+  _externalResize;
 
   VtTerminal? _terminal;
   VtTerminalFormatter? _plainFormatter;
@@ -333,6 +336,40 @@ class GhosttyTerminalController extends ChangeNotifier
     await startLaunch(launch);
   }
 
+  /// Attach an external transport backend such as an SSH session.
+  void attachExternalTransport({
+    required bool Function(List<int> bytes) writeBytes,
+    void Function(int cols, int rows, int cellWidthPx, int cellHeightPx)?
+    onResize,
+    GhosttyTerminalShellLaunch? launch,
+  }) {
+    _ensureTerminal();
+    _externalWriteBytes = writeBytes;
+    _externalResize = onResize;
+    if (launch != null) {
+      _activeShellLaunch = _freezeLaunch(launch);
+    }
+    _running = true;
+    _markDirty();
+  }
+
+  /// Detach any external transport backend.
+  void detachExternalTransport() {
+    _externalWriteBytes = null;
+    _externalResize = null;
+  }
+
+  /// Inject remote output bytes directly into the VT stream.
+  void appendOutputBytes(List<int> bytes) {
+    _ingestBytes(bytes);
+  }
+
+  /// Update the running state for an external transport session.
+  void setSessionRunning(bool running) {
+    _running = running;
+    _markDirty();
+  }
+
   /// Starts one of the shared shell profiles and returns the resolved launch.
   ///
   /// Returns `null` when no launch candidate was available or every candidate
@@ -442,6 +479,12 @@ class GhosttyTerminalController extends ChangeNotifier
         cellHeightPx: cellHeightPx,
       );
       _ptySession?.resize(rows: checkedRows, cols: checkedCols);
+      _externalResize?.call(
+        checkedCols,
+        checkedRows,
+        cellWidthPx,
+        cellHeightPx,
+      );
       _refreshSnapshot();
     }
     _markDirty();
@@ -463,6 +506,10 @@ class GhosttyTerminalController extends ChangeNotifier
 
     final process = _process;
     if (process == null) {
+      final externalWriteBytes = _externalWriteBytes;
+      if (externalWriteBytes != null) {
+        return externalWriteBytes(utf8.encode(text));
+      }
       return false;
     }
     process.stdin.add(utf8.encode(text));
@@ -479,6 +526,10 @@ class GhosttyTerminalController extends ChangeNotifier
 
     final process = _process;
     if (process == null) {
+      final externalWriteBytes = _externalWriteBytes;
+      if (externalWriteBytes != null) {
+        return externalWriteBytes(bytes);
+      }
       return false;
     }
     process.stdin.add(bytes);
@@ -495,7 +546,9 @@ class GhosttyTerminalController extends ChangeNotifier
     String utf8Text = '',
     int unshiftedCodepoint = 0,
   }) {
-    if (_process == null && _ptySession == null) {
+    if (_process == null &&
+        _ptySession == null &&
+        _externalWriteBytes == null) {
       return false;
     }
 
@@ -534,7 +587,9 @@ class GhosttyTerminalController extends ChangeNotifier
     bool? anyButtonPressed,
     bool? trackLastCell,
   }) {
-    if (_process == null && _ptySession == null) {
+    if (_process == null &&
+        _ptySession == null &&
+        _externalWriteBytes == null) {
       return false;
     }
 
@@ -598,6 +653,8 @@ class GhosttyTerminalController extends ChangeNotifier
       final process = _process;
       if (process != null) {
         process.stdin.add(data);
+      } else {
+        _externalWriteBytes?.call(Uint8List.fromList(data));
       }
     }
 

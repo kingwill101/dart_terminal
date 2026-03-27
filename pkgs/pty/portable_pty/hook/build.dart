@@ -10,6 +10,10 @@ import 'package:portable_pty/src/hook/asset_hashes.dart';
 
 const _repo = 'kingwill101/dart_terminal';
 
+void _info(String message) => stdout.writeln(message);
+
+void _warn(String message) => stdout.writeln('Warning: $message');
+
 void main(List<String> args) async {
   await build(args, (input, output) async {
     if (!input.config.buildCodeAssets) {
@@ -25,7 +29,7 @@ void main(List<String> args) async {
     if (envPath != null && envPath.isNotEmpty) {
       final f = File(envPath);
       if (f.existsSync()) {
-        stderr.writeln('Using prebuilt PTY library from env: ${f.path}');
+        _info('Using prebuilt PTY library from env: ${f.path}');
         await f.copy(File.fromUri(bundledLibUri).path);
         _addAsset(output, input.packageName, bundledLibUri);
         return;
@@ -40,7 +44,7 @@ void main(List<String> args) async {
     // ── 2. Try .prebuilt/ directory (manual or setup script) ──
     final prebuilt = _findLocalPrebuilt(input, platformLabel, dylibName);
     if (prebuilt != null) {
-      stderr.writeln('Using prebuilt PTY library: ${prebuilt.path}');
+      _info('Using prebuilt PTY library: ${prebuilt.path}');
       await prebuilt.copy(File.fromUri(bundledLibUri).path);
       _addAsset(output, input.packageName, bundledLibUri);
       return;
@@ -49,7 +53,7 @@ void main(List<String> args) async {
     // ── 3. Auto-download from GitHub releases ──
     final assetInfo = assetHashes[platformLabel];
     if (assetInfo != null) {
-      stderr.writeln(
+      _info(
         'Downloading prebuilt PTY library for $platformLabel '
         '($releaseTag)...',
       );
@@ -60,18 +64,18 @@ void main(List<String> args) async {
           dylibName,
           assetInfo,
         );
-        stderr.writeln('Using downloaded PTY library: ${downloaded.path}');
+        _info('Using downloaded PTY library: ${downloaded.path}');
         await downloaded.copy(File.fromUri(bundledLibUri).path);
         _addAsset(output, input.packageName, bundledLibUri);
         return;
       } on Exception catch (e) {
-        stderr.writeln('Download failed: $e');
-        stderr.writeln('Falling back to build from source...');
+        _warn('Download failed: $e');
+        _warn('Falling back to build from source.');
       }
     }
 
     // ── 4. Build from source via Rust ──
-    stderr.writeln('Building PTY library from source via Rust...');
+    _info('Building PTY library from source via Rust...');
     await const RustBuilder(
       assetName: 'portable_pty_bindings_generated.dart',
     ).run(input: input, output: output);
@@ -118,7 +122,7 @@ Future<File> _downloadPrebuilt(
     if (actualHash.toString() == assetInfo.hash) {
       return cachedFile;
     }
-    stderr.writeln('Cached file hash mismatch, re-downloading...');
+    _warn('Cached file hash mismatch, re-downloading.');
   }
 
   // Download the tarball.

@@ -1,3 +1,13 @@
+## 0.1.0+2
+
+- Added shared web-side helpers for higher-level consumers: `VtModes`,
+  `VtMouseEncoderOptions`, render-color resolvers, `VtFormatter*Extra.all()`,
+  and a safe `VtTerminal.getMode()` fallback on web.
+- Fixed local prebuilt resolution to ignore invalid `.prebuilt/` candidates
+  before falling back to downloaded assets or a source build.
+- Build-hook progress now logs to stdout and uses `Warning:` for non-fatal
+  fallback paths, avoiding false `ERROR:` prefixes in Flutter builds.
+
 ## 0.1.0+1
 
 - Fixed Linux/macOS/Windows prebuilt artifact selection to only package the

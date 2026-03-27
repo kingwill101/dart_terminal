@@ -818,12 +818,14 @@ final class _GhosttyTerminalSnapshotParser {
         }
         if (unit == 0x0D) {
           _col = 0;
+          _cursor = GhosttyTerminalCursor(row: _row, col: _col);
           index++;
           continue;
         }
         if (unit == 0x0A) {
           _row++;
           _ensureLine(_row);
+          _cursor = GhosttyTerminalCursor(row: _row, col: _col);
           index++;
           continue;
         }
@@ -831,6 +833,7 @@ final class _GhosttyTerminalSnapshotParser {
           if (_col > 0) {
             _col--;
           }
+          _cursor = GhosttyTerminalCursor(row: _row, col: _col);
           index++;
           continue;
         }
@@ -869,7 +872,39 @@ final class _GhosttyTerminalSnapshotParser {
     if (next == 0x5D) {
       return _consumeOsc(text, index + 2);
     }
-    return index + 2;
+    if (next == 0x50 || next == 0x58 || next == 0x5E || next == 0x5F) {
+      return _consumeEscTerminatedString(text, index + 2);
+    }
+    return _consumeEscSequence(text, index + 1);
+  }
+
+  int _consumeEscSequence(String text, int index) {
+    var cursor = index;
+    while (cursor < text.length) {
+      final unit = text.codeUnitAt(cursor);
+      if (unit >= 0x30 && unit <= 0x7E) {
+        return cursor + 1;
+      }
+      cursor++;
+    }
+    return text.length;
+  }
+
+  int _consumeEscTerminatedString(String text, int index) {
+    var cursor = index;
+    while (cursor < text.length) {
+      final unit = text.codeUnitAt(cursor);
+      if (unit == 0x07) {
+        return cursor + 1;
+      }
+      if (unit == 0x1B &&
+          cursor + 1 < text.length &&
+          text.codeUnitAt(cursor + 1) == 0x5C) {
+        return cursor + 2;
+      }
+      cursor++;
+    }
+    return text.length;
   }
 
   int _consumeCsi(String text, int index) {
@@ -928,6 +963,7 @@ final class _GhosttyTerminalSnapshotParser {
       case 'G':
         final values = _parseIntParams(params);
         _col = values.isEmpty ? 0 : (values.first - 1).clamp(0, 0x7FFFFFFF);
+        _cursor = GhosttyTerminalCursor(row: _row, col: _col);
         break;
       default:
         break;
@@ -1143,6 +1179,7 @@ final class _GhosttyTerminalSnapshotParser {
       line[_col] = _GhosttyTerminalCell(text: text, style: _style);
     }
     _col++;
+    _cursor = GhosttyTerminalCursor(row: _row, col: _col);
   }
 
   void _ensureLine(int row) {

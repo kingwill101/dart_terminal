@@ -274,3 +274,39 @@ String ghosttyTerminalPrintableText(
   }
   return '';
 }
+
+/// Resolves ASCII control characters for Ctrl-based key chords such as
+/// `Ctrl+C`, `Ctrl+D`, and `Ctrl+L`.
+String? ghosttyTerminalControlText(
+  KeyEvent event, {
+  required GhosttyTerminalModifierState modifiers,
+}) {
+  if (!modifiers.controlPressed ||
+      modifiers.altPressed ||
+      modifiers.metaPressed) {
+    return null;
+  }
+
+  final keyLabel = event.logicalKey.keyLabel;
+  if (keyLabel.isEmpty) {
+    return null;
+  }
+
+  final upper = keyLabel.toUpperCase();
+  if (upper.runes.length == 1) {
+    final code = upper.runes.first;
+    if (code >= 0x41 && code <= 0x5A) {
+      return String.fromCharCode(code - 0x40);
+    }
+  }
+
+  return switch (keyLabel) {
+    ' ' => String.fromCharCode(0x00),
+    '[' => String.fromCharCode(0x1B),
+    '\\' => String.fromCharCode(0x1C),
+    ']' => String.fromCharCode(0x1D),
+    '^' => String.fromCharCode(0x1E),
+    '/' || '_' => String.fromCharCode(0x1F),
+    _ => null,
+  };
+}

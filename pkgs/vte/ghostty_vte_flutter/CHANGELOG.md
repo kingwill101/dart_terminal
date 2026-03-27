@@ -1,3 +1,15 @@
+## 0.1.0+1
+
+- Added external transport hooks on `GhosttyTerminalController` so Flutter apps
+  can attach SSH or other remote backends while still using the built-in VT
+  parser and renderer.
+- Fixed control-key chord handling to send ASCII control bytes for common
+  `Ctrl+` shortcuts, including copy-free terminal interactions like `Ctrl+C`.
+- Improved snapshot parsing and web/native parity for cursor state, escape
+  sequence handling, mouse modes, and formatter metadata.
+- Updated the README quick start to a runnable minimal app and bumped the
+  `ghostty_vte` dependency to `^0.1.0+2`.
+
 ## 0.1.0
 
 - **BREAKING**: Removed regex-based OSC title tracking (`_consumeOscText`,

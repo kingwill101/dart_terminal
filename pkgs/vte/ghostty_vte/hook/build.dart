@@ -10,6 +10,10 @@ import 'package:ghostty_vte/src/hook/asset_hashes.dart';
 
 const _repo = 'kingwill101/dart_terminal';
 
+void _info(String message) => stdout.writeln(message);
+
+void _warn(String message) => stdout.writeln('Warning: $message');
+
 void main(List<String> args) async {
   await build(args, (input, output) async {
     if (!input.config.buildCodeAssets) {
@@ -37,7 +41,7 @@ void main(List<String> args) async {
           canonicalName: dylibName,
           sourceDescription: 'GHOSTTY_VTE_PREBUILT',
         );
-        stderr.writeln('Using prebuilt VTE library from env: ${f.path}');
+        _info('Using prebuilt VTE library from env: ${f.path}');
         await f.copy(File.fromUri(bundledLibUri).path);
         _addAsset(output, input.packageName, bundledLibUri);
         return;
@@ -52,12 +56,7 @@ void main(List<String> args) async {
     // ── 2. Try .prebuilt/ directory (manual or setup script) ──
     final prebuilt = _findLocalPrebuilt(input, platformLabel, dylibName);
     if (prebuilt != null) {
-      ensureDynamicLibraryFile(
-        prebuilt,
-        canonicalName: dylibName,
-        sourceDescription: 'local prebuilt cache',
-      );
-      stderr.writeln('Using prebuilt VTE library: ${prebuilt.path}');
+      _info('Using prebuilt VTE library: ${prebuilt.path}');
       await prebuilt.copy(File.fromUri(bundledLibUri).path);
       _addAsset(output, input.packageName, bundledLibUri);
       return;
@@ -66,7 +65,7 @@ void main(List<String> args) async {
     // ── 3. Auto-download from GitHub releases ──
     final assetInfo = assetHashes[platformLabel];
     if (assetInfo != null) {
-      stderr.writeln(
+      _info(
         'Downloading prebuilt VTE library for $platformLabel '
         '($releaseTag)...',
       );
@@ -77,18 +76,18 @@ void main(List<String> args) async {
           dylibName,
           assetInfo,
         );
-        stderr.writeln('Using downloaded VTE library: ${downloaded.path}');
+        _info('Using downloaded VTE library: ${downloaded.path}');
         await downloaded.copy(File.fromUri(bundledLibUri).path);
         _addAsset(output, input.packageName, bundledLibUri);
         return;
       } on Object catch (e) {
-        stderr.writeln('Download failed: $e');
-        stderr.writeln('Falling back to build from source...');
+        _warn('Download failed: $e');
+        _warn('Falling back to build from source.');
       }
     }
 
     // ── 4. Build from source ──
-    stderr.writeln('Building VTE library from source...');
+    _info('Building VTE library from source...');
     await _buildFromSource(input, code, dylibName, bundledLibUri);
     _addAsset(output, input.packageName, bundledLibUri);
   });
@@ -139,7 +138,7 @@ Future<File> _downloadPrebuilt(
       );
       return cachedFile;
     }
-    stderr.writeln('Cached file hash mismatch, re-downloading...');
+    _warn('Cached file hash mismatch, re-downloading.');
   }
 
   // Download the tarball.
@@ -262,28 +261,40 @@ Future<void> _extractAndVerify(
 // ── Local prebuilt search ────────────────────────────────────────────
 
 /// Search for a prebuilt library in local directories:
-/// 1. Monorepo root (.prebuilt/) — from packageRoot
-/// 2. Consuming project root (.prebuilt/) — from outputDirectory
+/// 1. Consuming project root (.prebuilt/) — from outputDirectory
+/// 2. Monorepo root (.prebuilt/) — from packageRoot
+///
+/// Invalid local candidates are skipped with a warning so stale archives in
+/// `.prebuilt/` don't block downloading or rebuilding the library.
 File? _findLocalPrebuilt(
   BuildInput input,
   String platformLabel,
   String dylibName,
 ) {
-  // Check .prebuilt/ cache at monorepo root.
+  for (final candidate in _findPrebuiltInProjectRoots(
+    input.outputDirectory,
+    platformLabel,
+    dylibName,
+  )) {
+    final usable = _validateLocalPrebuiltCandidate(candidate, dylibName);
+    if (usable != null) {
+      return usable;
+    }
+  }
+
+  // Check .prebuilt/ cache at monorepo root after project-local caches.
   final repoRoot = _findRepoRoot(input.packageRoot);
   if (repoRoot != null) {
     final cached = File.fromUri(
       repoRoot.resolve('.prebuilt/$platformLabel/$dylibName'),
     );
-    if (cached.existsSync()) return cached;
+    final usable = _validateLocalPrebuiltCandidate(cached, dylibName);
+    if (usable != null) {
+      return usable;
+    }
   }
 
-  // Check .prebuilt/ at consuming project roots.
-  return _findPrebuiltInProjectRoots(
-    input.outputDirectory,
-    platformLabel,
-    dylibName,
-  );
+  return null;
 }
 
 /// Walk up from a URI to find the repo root (has pubspec.yaml + pkgs/).
@@ -302,11 +313,11 @@ Uri? _findRepoRoot(Uri packageRoot) {
 
 /// Search for `.prebuilt/<platform>/<dylib>` by walking up from
 /// [outputDirectory].
-File? _findPrebuiltInProjectRoots(
+Iterable<File> _findPrebuiltInProjectRoots(
   Uri outputDirectory,
   String platformLabel,
   String dylibName,
-) {
+) sync* {
   var dir = Directory.fromUri(outputDirectory).absolute;
   while (true) {
     final hasPubspec = File('${dir.path}/pubspec.yaml').existsSync();
@@ -315,11 +326,33 @@ File? _findPrebuiltInProjectRoots(
 
     if (hasPubspec && (hasDartTool || hasPkgs)) {
       final cached = File('${dir.path}/.prebuilt/$platformLabel/$dylibName');
-      if (cached.existsSync()) return cached;
+      if (cached.existsSync()) {
+        yield cached;
+      }
     }
     final parent = dir.parent;
-    if (parent.path == dir.path) return null;
+    if (parent.path == dir.path) {
+      return;
+    }
     dir = parent;
+  }
+}
+
+File? _validateLocalPrebuiltCandidate(File file, String dylibName) {
+  if (!file.existsSync()) {
+    return null;
+  }
+
+  try {
+    ensureDynamicLibraryFile(
+      file,
+      canonicalName: dylibName,
+      sourceDescription: 'local prebuilt cache',
+    );
+    return file;
+  } on StateError catch (error) {
+    _warn('$error Ignoring this local prebuilt candidate.');
+    return null;
   }
 }
 
