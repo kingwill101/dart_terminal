@@ -10,7 +10,8 @@ enum GhosttyResult {
   GHOSTTY_SUCCESS(0),
   GHOSTTY_OUT_OF_MEMORY(-1),
   GHOSTTY_INVALID_VALUE(-2),
-  GHOSTTY_OUT_OF_SPACE(-3);
+  GHOSTTY_OUT_OF_SPACE(-3),
+  GHOSTTY_NO_VALUE(-4);
 
   const GhosttyResult(this.value);
   final int value;
@@ -20,7 +21,27 @@ enum GhosttyResult {
     -1 => GHOSTTY_OUT_OF_MEMORY,
     -2 => GHOSTTY_INVALID_VALUE,
     -3 => GHOSTTY_OUT_OF_SPACE,
+    -4 => GHOSTTY_NO_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyResult: $value'),
+  };
+}
+
+/// Build optimization mode.
+enum GhosttyOptimizeMode {
+  GHOSTTY_OPTIMIZE_DEBUG(0),
+  GHOSTTY_OPTIMIZE_RELEASE_SAFE(1),
+  GHOSTTY_OPTIMIZE_RELEASE_SMALL(2),
+  GHOSTTY_OPTIMIZE_RELEASE_FAST(3);
+
+  const GhosttyOptimizeMode(this.value);
+  final int value;
+
+  static GhosttyOptimizeMode fromValue(int value) => switch (value) {
+    0 => GHOSTTY_OPTIMIZE_DEBUG,
+    1 => GHOSTTY_OPTIMIZE_RELEASE_SAFE,
+    2 => GHOSTTY_OPTIMIZE_RELEASE_SMALL,
+    3 => GHOSTTY_OPTIMIZE_RELEASE_FAST,
+    _ => throw ArgumentError('Unknown value for GhosttyOptimizeMode: $value'),
   };
 }
 
@@ -849,6 +870,35 @@ const int _ghosttyFormatterScreenExtraSize = 12;
 const int _ghosttyFormatterTerminalExtraSize = 24;
 const int _ghosttyFormatterTerminalOptionsSize = 36;
 const int _ghosttyTerminalScrollViewportSize = 24;
+const int _ghosttyStringSize = 8;
+const int _ghosttyColorRgbSize = 3;
+const int _ghosttyColorPaletteLength = 256;
+const int _ghosttyColorPaletteSize =
+    _ghosttyColorRgbSize * _ghosttyColorPaletteLength;
+
+const int _ghosttyBuildInfoSimd = 1;
+const int _ghosttyBuildInfoKittyGraphics = 2;
+const int _ghosttyBuildInfoTmuxControlMode = 3;
+const int _ghosttyBuildInfoOptimize = 4;
+const int _ghosttyBuildInfoVersionString = 5;
+const int _ghosttyBuildInfoVersionMajor = 6;
+const int _ghosttyBuildInfoVersionMinor = 7;
+const int _ghosttyBuildInfoVersionPatch = 8;
+const int _ghosttyBuildInfoVersionBuild = 9;
+
+const int _ghosttyTerminalOptColorForeground = 11;
+const int _ghosttyTerminalOptColorBackground = 12;
+const int _ghosttyTerminalOptColorCursor = 13;
+const int _ghosttyTerminalOptColorPalette = 14;
+
+const int _ghosttyTerminalDataColorForeground = 18;
+const int _ghosttyTerminalDataColorBackground = 19;
+const int _ghosttyTerminalDataColorCursor = 20;
+const int _ghosttyTerminalDataColorPalette = 21;
+const int _ghosttyTerminalDataColorForegroundDefault = 22;
+const int _ghosttyTerminalDataColorBackgroundDefault = 23;
+const int _ghosttyTerminalDataColorCursorDefault = 24;
+const int _ghosttyTerminalDataColorPaletteDefault = 25;
 
 int _checkPositiveUint16(int value, String name) {
   if (value < 1 || value > 0xFFFF) {
@@ -892,6 +942,35 @@ int _allocOpaqueOrThrow(_GhosttyWasmRuntime rt, String operation) {
     throw GhosttyVtError(operation, GhosttyResult.GHOSTTY_OUT_OF_MEMORY);
   }
   return ptr;
+}
+
+VtRgbColor _readRgb(_GhosttyWasmRuntime rt, int ptr) {
+  return VtRgbColor(rt.readU8(ptr), rt.readU8(ptr + 1), rt.readU8(ptr + 2));
+}
+
+void _writeRgb(_GhosttyWasmRuntime rt, int ptr, VtRgbColor value) {
+  rt
+    ..writeU8(ptr, value.r)
+    ..writeU8(ptr + 1, value.g)
+    ..writeU8(ptr + 2, value.b);
+}
+
+List<VtRgbColor> _readPalette(_GhosttyWasmRuntime rt, int ptr) {
+  return List<VtRgbColor>.unmodifiable(
+    List<VtRgbColor>.generate(
+      _ghosttyColorPaletteLength,
+      (index) => _readRgb(rt, ptr + (index * _ghosttyColorRgbSize)),
+    ),
+  );
+}
+
+String _readGhosttyString(_GhosttyWasmRuntime rt, int ptr) {
+  final strPtr = rt.readPtr(ptr);
+  final len = rt.readUsize(ptr + 4);
+  if (strPtr == 0 || len == 0) {
+    return '';
+  }
+  return utf8.decode(rt.u8View(strPtr, len), allowMalformed: true);
 }
 
 void _writeBoolByte(_GhosttyWasmRuntime rt, int ptr, int offset, bool value) {
@@ -993,6 +1072,55 @@ final class VtRgbColor {
 
   @override
   String toString() => 'VtRgbColor(r: $r, g: $g, b: $b)';
+}
+
+/// Compile-time build metadata for the loaded libghostty-vt library.
+final class VtBuildInfo {
+  const VtBuildInfo({
+    required this.simd,
+    required this.kittyGraphics,
+    required this.tmuxControlMode,
+    required this.optimize,
+    required this.versionString,
+    required this.versionMajor,
+    required this.versionMinor,
+    required this.versionPatch,
+    required this.versionBuild,
+  });
+
+  final bool simd;
+  final bool kittyGraphics;
+  final bool tmuxControlMode;
+  final GhosttyOptimizeMode optimize;
+  final String versionString;
+  final int versionMajor;
+  final int versionMinor;
+  final int versionPatch;
+  final String versionBuild;
+
+  /// The numeric semantic version segment without build metadata.
+  String get versionCore => '$versionMajor.$versionMinor.$versionPatch';
+}
+
+/// Effective or default terminal colors and palette.
+final class VtTerminalColors {
+  const VtTerminalColors({
+    required this.foreground,
+    required this.background,
+    required this.cursor,
+    required this.palette,
+  });
+
+  final VtRgbColor? foreground;
+  final VtRgbColor? background;
+  final VtRgbColor? cursor;
+  final List<VtRgbColor> palette;
+
+  /// Returns the palette entry at [index].
+  VtRgbColor paletteAt(int index) {
+    RangeError.checkValueInInterval(index, 0, palette.length - 1, 'index');
+    return palette[index];
+  }
 }
 
 final class VtMode {
@@ -3179,6 +3307,69 @@ final class VtTerminal {
     _unsupportedTerminalApi('VtTerminal.heightPx');
   }
 
+  /// The effective foreground color, including OSC overrides when present.
+  VtRgbColor? get foregroundColor =>
+      _terminalRgb(_ghosttyTerminalDataColorForeground);
+
+  /// The effective background color, including OSC overrides when present.
+  VtRgbColor? get backgroundColor =>
+      _terminalRgb(_ghosttyTerminalDataColorBackground);
+
+  /// The effective cursor color, including OSC overrides when present.
+  VtRgbColor? get cursorColor => _terminalRgb(_ghosttyTerminalDataColorCursor);
+
+  /// The effective 256-color palette, including OSC overrides.
+  List<VtRgbColor> get colorPalette =>
+      _terminalPalette(_ghosttyTerminalDataColorPalette);
+
+  /// The default foreground color, ignoring OSC overrides.
+  VtRgbColor? get defaultForegroundColor =>
+      _terminalRgb(_ghosttyTerminalDataColorForegroundDefault);
+
+  set defaultForegroundColor(VtRgbColor? value) {
+    _terminalSetRgb(_ghosttyTerminalOptColorForeground, value);
+  }
+
+  /// The default background color, ignoring OSC overrides.
+  VtRgbColor? get defaultBackgroundColor =>
+      _terminalRgb(_ghosttyTerminalDataColorBackgroundDefault);
+
+  set defaultBackgroundColor(VtRgbColor? value) {
+    _terminalSetRgb(_ghosttyTerminalOptColorBackground, value);
+  }
+
+  /// The default cursor color, ignoring OSC overrides.
+  VtRgbColor? get defaultCursorColor =>
+      _terminalRgb(_ghosttyTerminalDataColorCursorDefault);
+
+  set defaultCursorColor(VtRgbColor? value) {
+    _terminalSetRgb(_ghosttyTerminalOptColorCursor, value);
+  }
+
+  /// The default 256-color palette, ignoring OSC overrides.
+  List<VtRgbColor> get defaultPalette =>
+      _terminalPalette(_ghosttyTerminalDataColorPaletteDefault);
+
+  set defaultPalette(List<VtRgbColor>? value) {
+    _terminalSetPalette(_ghosttyTerminalOptColorPalette, value);
+  }
+
+  /// The current effective terminal colors and palette.
+  VtTerminalColors get effectiveColors => VtTerminalColors(
+    foreground: foregroundColor,
+    background: backgroundColor,
+    cursor: cursorColor,
+    palette: colorPalette,
+  );
+
+  /// The configured default terminal colors and palette.
+  VtTerminalColors get defaultColors => VtTerminalColors(
+    foreground: defaultForegroundColor,
+    background: defaultBackgroundColor,
+    cursor: defaultCursorColor,
+    palette: defaultPalette,
+  );
+
   int get kittyKeyboardFlags {
     _ensureOpen();
     _unsupportedTerminalApi('VtTerminal.kittyKeyboardFlags');
@@ -3192,6 +3383,92 @@ final class VtTerminal {
   VtStyle get cursorStyle {
     _ensureOpen();
     _unsupportedTerminalApi('VtTerminal.cursorStyle');
+  }
+
+  VtRgbColor? _terminalRgb(int data) {
+    final out = _allocU8ArrayOrThrow(
+      _wasm,
+      _ghosttyColorRgbSize,
+      'ghostty_wasm_alloc_u8_array',
+    );
+    try {
+      final result = _wasm.callInt('ghostty_terminal_get', <Object>[
+        _handle,
+        data,
+        out,
+      ]);
+      if (result == GhosttyResult.GHOSTTY_NO_VALUE.value) {
+        return null;
+      }
+      _checkResult(result, 'ghostty_terminal_get');
+      return _readRgb(_wasm, out);
+    } finally {
+      _wasm.freeU8Array(out, _ghosttyColorRgbSize);
+    }
+  }
+
+  List<VtRgbColor> _terminalPalette(int data) {
+    final out = _allocU8ArrayOrThrow(
+      _wasm,
+      _ghosttyColorPaletteSize,
+      'ghostty_wasm_alloc_u8_array',
+    );
+    try {
+      _checkResult(
+        _wasm.callInt('ghostty_terminal_get', <Object>[_handle, data, out]),
+        'ghostty_terminal_get',
+      );
+      return _readPalette(_wasm, out);
+    } finally {
+      _wasm.freeU8Array(out, _ghosttyColorPaletteSize);
+    }
+  }
+
+  void _terminalSetRgb(int option, VtRgbColor? value) {
+    _ensureOpen();
+    if (value == null) {
+      _wasm.callInt('ghostty_terminal_set', <Object>[_handle, option, 0]);
+      return;
+    }
+    final native = _allocU8ArrayOrThrow(
+      _wasm,
+      _ghosttyColorRgbSize,
+      'ghostty_wasm_alloc_u8_array',
+    );
+    try {
+      _writeRgb(_wasm, native, value);
+      _wasm.callInt('ghostty_terminal_set', <Object>[_handle, option, native]);
+    } finally {
+      _wasm.freeU8Array(native, _ghosttyColorRgbSize);
+    }
+  }
+
+  void _terminalSetPalette(int option, List<VtRgbColor>? value) {
+    _ensureOpen();
+    if (value == null) {
+      _wasm.callInt('ghostty_terminal_set', <Object>[_handle, option, 0]);
+      return;
+    }
+    if (value.length != _ghosttyColorPaletteLength) {
+      throw ArgumentError.value(
+        value.length,
+        'value.length',
+        'Palette must contain exactly 256 colors.',
+      );
+    }
+    final native = _allocU8ArrayOrThrow(
+      _wasm,
+      _ghosttyColorPaletteSize,
+      'ghostty_wasm_alloc_u8_array',
+    );
+    try {
+      for (var i = 0; i < value.length; i++) {
+        _writeRgb(_wasm, native + (i * _ghosttyColorRgbSize), value[i]);
+      }
+      _wasm.callInt('ghostty_terminal_set', <Object>[_handle, option, native]);
+    } finally {
+      _wasm.freeU8Array(native, _ghosttyColorPaletteSize);
+    }
   }
 
   void writeBytes(List<int> bytes) {
@@ -3513,6 +3790,22 @@ final class VtTerminalFormatter {
 final class GhosttyVt {
   const GhosttyVt._();
 
+  /// Compile-time build metadata for the loaded libghostty-vt library.
+  static VtBuildInfo get buildInfo {
+    final rt = _requireTerminalRuntime('GhosttyVt.buildInfo');
+    return VtBuildInfo(
+      simd: _buildInfoBool(rt, _ghosttyBuildInfoSimd),
+      kittyGraphics: _buildInfoBool(rt, _ghosttyBuildInfoKittyGraphics),
+      tmuxControlMode: _buildInfoBool(rt, _ghosttyBuildInfoTmuxControlMode),
+      optimize: _buildInfoOptimize(rt, _ghosttyBuildInfoOptimize),
+      versionString: _buildInfoString(rt, _ghosttyBuildInfoVersionString),
+      versionMajor: _buildInfoSize(rt, _ghosttyBuildInfoVersionMajor),
+      versionMinor: _buildInfoSize(rt, _ghosttyBuildInfoVersionMinor),
+      versionPatch: _buildInfoSize(rt, _ghosttyBuildInfoVersionPatch),
+      versionBuild: _buildInfoString(rt, _ghosttyBuildInfoVersionBuild),
+    );
+  }
+
   static bool isPasteSafe(String text) {
     return isPasteSafeBytes(utf8.encode(text));
   }
@@ -3559,6 +3852,88 @@ final class GhosttyVt {
     return true;
   }
 
+  /// Encodes paste bytes for terminal input.
+  ///
+  /// Unsafe control bytes are rewritten, and bracketed paste markers are
+  /// added when [bracketed] is true.
+  static Uint8List encodePasteBytes(List<int> bytes, {bool bracketed = false}) {
+    final rt = _requireTerminalRuntime('GhosttyVt.encodePasteBytes');
+    final dataPtr = bytes.isEmpty
+        ? 0
+        : _allocU8ArrayOrThrow(rt, bytes.length, 'ghostty_wasm_alloc_u8_array');
+    final outWritten = rt.allocUsize();
+    if (outWritten == 0) {
+      if (dataPtr != 0) {
+        rt.freeU8Array(dataPtr, bytes.length);
+      }
+      throw GhosttyVtError(
+        'ghostty_wasm_alloc_usize',
+        GhosttyResult.GHOSTTY_OUT_OF_MEMORY,
+      );
+    }
+
+    try {
+      if (dataPtr != 0) {
+        rt.u8View(dataPtr, bytes.length).setAll(0, bytes);
+      }
+      final first = rt.callInt('ghostty_paste_encode', <Object>[
+        dataPtr,
+        bytes.length,
+        bracketed,
+        0,
+        0,
+        outWritten,
+      ]);
+      if (first != GhosttyResult.GHOSTTY_OUT_OF_SPACE.value &&
+          first != GhosttyResult.GHOSTTY_SUCCESS.value) {
+        _checkResult(first, 'ghostty_paste_encode(size_probe)');
+      }
+      final required = rt.readUsize(outWritten);
+      if (required == 0) {
+        return Uint8List(0);
+      }
+
+      final output = _allocU8ArrayOrThrow(
+        rt,
+        required,
+        'ghostty_wasm_alloc_u8_array',
+      );
+      try {
+        final second = rt.callInt('ghostty_paste_encode', <Object>[
+          dataPtr,
+          bytes.length,
+          bracketed,
+          output,
+          required,
+          outWritten,
+        ]);
+        _checkResult(second, 'ghostty_paste_encode');
+        final written = rt.readUsize(outWritten);
+        return Uint8List.fromList(rt.u8View(output, written));
+      } finally {
+        rt.freeU8Array(output, required);
+      }
+    } finally {
+      rt.freeUsize(outWritten);
+      if (dataPtr != 0) {
+        rt.freeU8Array(dataPtr, bytes.length);
+      }
+    }
+  }
+
+  /// Encodes [text] for terminal paste input.
+  static String encodePaste(
+    String text, {
+    bool bracketed = false,
+    Encoding encoding = utf8,
+  }) {
+    final bytes = encodePasteBytes(encoding.encode(text), bracketed: bracketed);
+    if (encoding == utf8) {
+      return utf8.decode(bytes, allowMalformed: true);
+    }
+    return encoding.decode(bytes);
+  }
+
   static VtOscParser newOscParser() => VtOscParser();
   static VtSgrParser newSgrParser() => VtSgrParser();
   static VtKeyEvent newKeyEvent() => VtKeyEvent();
@@ -3603,4 +3978,75 @@ final class GhosttyVt {
     required int rows,
     int maxScrollback = 10_000,
   }) => VtTerminal(cols: cols, rows: rows, maxScrollback: maxScrollback);
+
+  static bool _buildInfoBool(_GhosttyWasmRuntime rt, int data) {
+    final out = rt.allocU8();
+    if (out == 0) {
+      throw GhosttyVtError(
+        'ghostty_wasm_alloc_u8',
+        GhosttyResult.GHOSTTY_OUT_OF_MEMORY,
+      );
+    }
+    try {
+      _checkResult(
+        rt.callInt('ghostty_build_info', <Object>[data, out]),
+        'ghostty_build_info',
+      );
+      return rt.readU8(out) != 0;
+    } finally {
+      rt.freeU8(out);
+    }
+  }
+
+  static int _buildInfoSize(_GhosttyWasmRuntime rt, int data) {
+    final out = rt.allocUsize();
+    if (out == 0) {
+      throw GhosttyVtError(
+        'ghostty_wasm_alloc_usize',
+        GhosttyResult.GHOSTTY_OUT_OF_MEMORY,
+      );
+    }
+    try {
+      _checkResult(
+        rt.callInt('ghostty_build_info', <Object>[data, out]),
+        'ghostty_build_info',
+      );
+      return rt.readUsize(out);
+    } finally {
+      rt.freeUsize(out);
+    }
+  }
+
+  static String _buildInfoString(_GhosttyWasmRuntime rt, int data) {
+    final out = _allocU8ArrayOrThrow(
+      rt,
+      _ghosttyStringSize,
+      'ghostty_wasm_alloc_u8_array',
+    );
+    try {
+      _checkResult(
+        rt.callInt('ghostty_build_info', <Object>[data, out]),
+        'ghostty_build_info',
+      );
+      return _readGhosttyString(rt, out);
+    } finally {
+      rt.freeU8Array(out, _ghosttyStringSize);
+    }
+  }
+
+  static GhosttyOptimizeMode _buildInfoOptimize(
+    _GhosttyWasmRuntime rt,
+    int data,
+  ) {
+    final out = _allocU8ArrayOrThrow(rt, 4, 'ghostty_wasm_alloc_u8_array');
+    try {
+      _checkResult(
+        rt.callInt('ghostty_build_info', <Object>[data, out]),
+        'ghostty_build_info',
+      );
+      return GhosttyOptimizeMode.fromValue(rt.readUsize(out));
+    } finally {
+      rt.freeU8Array(out, 4);
+    }
+  }
 }

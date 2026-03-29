@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 
 import 'package:ghostty_vte/src/hook/dynamic_library.dart';
 import 'package:ghostty_vte/src/hook/asset_hashes.dart';
+import 'package:ghostty_vte/src/hook/source_patches.dart';
 
 const _repo = 'kingwill101/dart_terminal';
 
@@ -52,6 +53,7 @@ void main(List<String> args) async {
       code.targetOS,
       code.targetArchitecture,
     );
+    final preferSourceBuild = _shouldPreferSourceBuild(input);
 
     // ── 2. Try .prebuilt/ directory (manual or setup script) ──
     final prebuilt = _findLocalPrebuilt(input, platformLabel, dylibName);
@@ -64,7 +66,7 @@ void main(List<String> args) async {
 
     // ── 3. Auto-download from GitHub releases ──
     final assetInfo = assetHashes[platformLabel];
-    if (assetInfo != null) {
+    if (assetInfo != null && !preferSourceBuild) {
       _info(
         'Downloading prebuilt VTE library for $platformLabel '
         '($releaseTag)...',
@@ -84,6 +86,11 @@ void main(List<String> args) async {
         _warn('Download failed: $e');
         _warn('Falling back to build from source.');
       }
+    } else if (assetInfo != null && preferSourceBuild) {
+      _info(
+        'Skipping downloaded VTE prebuilt for $platformLabel because '
+        'this package is being used from a local checkout.',
+      );
     }
 
     // ── 4. Build from source ──
@@ -91,6 +98,16 @@ void main(List<String> args) async {
     await _buildFromSource(input, code, dylibName, bundledLibUri);
     _addAsset(output, input.packageName, bundledLibUri);
   });
+}
+
+bool _shouldPreferSourceBuild(BuildInput input) {
+  final override = Platform.environment['GHOSTTY_VTE_PREFER_SOURCE'];
+  if (override != null && override.isNotEmpty && override != '0') {
+    return true;
+  }
+
+  final packagePath = Directory.fromUri(input.packageRoot).absolute.path;
+  return !packagePath.contains('${Platform.pathSeparator}.pub-cache${Platform.pathSeparator}');
 }
 
 void _addAsset(BuildOutputBuilder output, String packageName, Uri file) {
@@ -366,6 +383,12 @@ Future<void> _buildFromSource(
   Uri bundledLibUri,
 ) async {
   final ghosttyRoot = _resolveGhosttySourceRoot(input);
+  applyBundledGhosttyPatches(
+    packageRoot: Directory.fromUri(input.packageRoot),
+    ghosttyRoot: ghosttyRoot,
+    info: _info,
+    warn: _warn,
+  );
   final target = _zigTarget(code.targetOS, code.targetArchitecture);
 
   final prefixDir = Directory.fromUri(

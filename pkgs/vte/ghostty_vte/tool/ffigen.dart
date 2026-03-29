@@ -1,5 +1,8 @@
 import 'dart:io';
 
+import 'package:ffigen/ffigen.dart' as ffigen;
+import 'package:logging/logging.dart';
+
 Future<void> main() async {
   final packageRoot = _packageRoot();
   final ghosttyRoot = _resolveGhosttySourceRoot(packageRoot);
@@ -27,23 +30,9 @@ Future<void> main() async {
     ),
   );
 
-  final result = await Process.start(
-    'dart',
-    <String>['run', 'ffigen', '--config', configFile.path],
-    workingDirectory: packageRoot.path,
-    runInShell: true,
-  );
-  await stdout.addStream(result.stdout);
-  await stderr.addStream(result.stderr);
-  final exit = await result.exitCode;
-  if (exit != 0) {
-    throw ProcessException(
-      'dart',
-      <String>['run', 'ffigen'],
-      'ffigen failed',
-      exit,
-    );
-  }
+  final logger = _createLogger();
+  final config = ffigen.YamlConfig.fromFile(configFile, logger);
+  config.configAdapter().generate(logger: logger);
 
   _postProcessGeneratedBindings(
     File.fromUri(
@@ -151,6 +140,16 @@ String _renderConfig({
 
 String _yamlQuote(String value) {
   return value.replaceAll('\\', '/').replaceAll("'", "''");
+}
+
+Logger _createLogger() {
+  Logger.root.level = Level.INFO;
+  final logger = Logger('ghostty_vte.ffigen');
+  logger.onRecord.listen((record) {
+    final stream = record.level >= Level.SEVERE ? stderr : stdout;
+    stream.writeln('[${record.level.name}] ${record.message}');
+  });
+  return logger;
 }
 
 void _postProcessGeneratedBindings(File file) {

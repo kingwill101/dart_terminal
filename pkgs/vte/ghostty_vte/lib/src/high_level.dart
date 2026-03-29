@@ -41,6 +41,35 @@ import '../ghostty_vte_bindings_generated.dart' as bindings;
 final class GhosttyVt {
   const GhosttyVt._();
 
+  /// Compile-time build metadata for the loaded libghostty-vt library.
+  static VtBuildInfo get buildInfo => VtBuildInfo(
+    simd: _buildInfoBool(bindings.GhosttyBuildInfo.GHOSTTY_BUILD_INFO_SIMD),
+    kittyGraphics: _buildInfoBool(
+      bindings.GhosttyBuildInfo.GHOSTTY_BUILD_INFO_KITTY_GRAPHICS,
+    ),
+    tmuxControlMode: _buildInfoBool(
+      bindings.GhosttyBuildInfo.GHOSTTY_BUILD_INFO_TMUX_CONTROL_MODE,
+    ),
+    optimize: _buildInfoOptimize(
+      bindings.GhosttyBuildInfo.GHOSTTY_BUILD_INFO_OPTIMIZE,
+    ),
+    versionString: _buildInfoString(
+      bindings.GhosttyBuildInfo.GHOSTTY_BUILD_INFO_VERSION_STRING,
+    ),
+    versionMajor: _buildInfoSize(
+      bindings.GhosttyBuildInfo.GHOSTTY_BUILD_INFO_VERSION_MAJOR,
+    ),
+    versionMinor: _buildInfoSize(
+      bindings.GhosttyBuildInfo.GHOSTTY_BUILD_INFO_VERSION_MINOR,
+    ),
+    versionPatch: _buildInfoSize(
+      bindings.GhosttyBuildInfo.GHOSTTY_BUILD_INFO_VERSION_PATCH,
+    ),
+    versionBuild: _buildInfoString(
+      bindings.GhosttyBuildInfo.GHOSTTY_BUILD_INFO_VERSION_BUILD,
+    ),
+  );
+
   /// Returns whether [text] is safe to paste into a terminal.
   ///
   /// Checks for dangerous control characters that could execute
@@ -64,6 +93,71 @@ final class GhosttyVt {
     } finally {
       calloc.free(ptr);
     }
+  }
+
+  /// Encodes paste bytes for terminal input.
+  ///
+  /// Unsafe control bytes are rewritten, and bracketed paste markers are
+  /// added when [bracketed] is true.
+  static Uint8List encodePasteBytes(List<int> bytes, {bool bracketed = false}) {
+    final mutable = Uint8List.fromList(bytes);
+    final input = calloc<ffi.Char>(mutable.length);
+    final outWritten = calloc<ffi.Size>();
+    try {
+      if (mutable.isNotEmpty) {
+        input.cast<ffi.Uint8>().asTypedList(mutable.length).setAll(0, mutable);
+      }
+      final first = bindings.ghostty_paste_encode(
+        input,
+        mutable.length,
+        bracketed,
+        ffi.nullptr,
+        0,
+        outWritten,
+      );
+      if (first != bindings.GhosttyResult.GHOSTTY_OUT_OF_SPACE &&
+          first != bindings.GhosttyResult.GHOSTTY_SUCCESS) {
+        _checkResult(first, 'ghostty_paste_encode(size_probe)');
+      }
+      final required = outWritten.value;
+      if (required == 0) {
+        return Uint8List(0);
+      }
+
+      final output = calloc<ffi.Char>(required);
+      try {
+        final second = bindings.ghostty_paste_encode(
+          input,
+          mutable.length,
+          bracketed,
+          output,
+          required,
+          outWritten,
+        );
+        _checkResult(second, 'ghostty_paste_encode');
+        return Uint8List.fromList(
+          output.cast<ffi.Uint8>().asTypedList(outWritten.value),
+        );
+      } finally {
+        calloc.free(output);
+      }
+    } finally {
+      calloc.free(outWritten);
+      calloc.free(input);
+    }
+  }
+
+  /// Encodes [text] for terminal paste input.
+  static String encodePaste(
+    String text, {
+    bool bracketed = false,
+    Encoding encoding = utf8,
+  }) {
+    final bytes = encodePasteBytes(encoding.encode(text), bracketed: bracketed);
+    if (encoding == utf8) {
+      return utf8.decode(bytes, allowMalformed: true);
+    }
+    return encoding.decode(bytes);
   }
 
   /// Creates a streaming OSC parser.
@@ -137,6 +231,52 @@ final class GhosttyVt {
       );
     } finally {
       calloc.free(nativeSize);
+    }
+  }
+
+  static bool _buildInfoBool(bindings.GhosttyBuildInfo data) {
+    final out = calloc<ffi.Bool>();
+    try {
+      _checkResult(bindings.ghostty_build_info(data, out.cast()), 'build_info');
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  static int _buildInfoSize(bindings.GhosttyBuildInfo data) {
+    final out = calloc<ffi.Size>();
+    try {
+      _checkResult(bindings.ghostty_build_info(data, out.cast()), 'build_info');
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  static String _buildInfoString(bindings.GhosttyBuildInfo data) {
+    final out = calloc<bindings.GhosttyString>();
+    try {
+      _checkResult(bindings.ghostty_build_info(data, out.cast()), 'build_info');
+      final len = out.ref.len;
+      if (len == 0) {
+        return '';
+      }
+      return utf8.decode(out.ref.ptr.asTypedList(len), allowMalformed: true);
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  static bindings.GhosttyOptimizeMode _buildInfoOptimize(
+    bindings.GhosttyBuildInfo data,
+  ) {
+    final out = calloc<ffi.UnsignedInt>();
+    try {
+      _checkResult(bindings.ghostty_build_info(data, out.cast()), 'build_info');
+      return bindings.GhosttyOptimizeMode.fromValue(out.value);
+    } finally {
+      calloc.free(out);
     }
   }
 }
@@ -219,6 +359,24 @@ Uint8List _encodeCharSequence(
 
 VtRgbColor _rgbFromNative(bindings.GhosttyColorRgb native) {
   return VtRgbColor.fromNative(native);
+}
+
+void _writeRgbToNative(VtRgbColor color, bindings.GhosttyColorRgb native) {
+  native
+    ..r = color.r
+    ..g = color.g
+    ..b = color.b;
+}
+
+List<VtRgbColor> _rgbPaletteFromNative(
+  ffi.Pointer<bindings.GhosttyColorRgb> native,
+) {
+  return List<VtRgbColor>.unmodifiable(
+    List<VtRgbColor>.generate(
+      256,
+      (index) => _rgbFromNative((native + index).ref),
+    ),
+  );
 }
 
 void _writeStyleColorToNative(
@@ -499,6 +657,55 @@ final class VtRgbColor {
 
   @override
   String toString() => 'VtRgbColor(r: $r, g: $g, b: $b)';
+}
+
+/// Compile-time build metadata for the loaded libghostty-vt library.
+final class VtBuildInfo {
+  const VtBuildInfo({
+    required this.simd,
+    required this.kittyGraphics,
+    required this.tmuxControlMode,
+    required this.optimize,
+    required this.versionString,
+    required this.versionMajor,
+    required this.versionMinor,
+    required this.versionPatch,
+    required this.versionBuild,
+  });
+
+  final bool simd;
+  final bool kittyGraphics;
+  final bool tmuxControlMode;
+  final bindings.GhosttyOptimizeMode optimize;
+  final String versionString;
+  final int versionMajor;
+  final int versionMinor;
+  final int versionPatch;
+  final String versionBuild;
+
+  /// The numeric semantic version segment without build metadata.
+  String get versionCore => '$versionMajor.$versionMinor.$versionPatch';
+}
+
+/// Effective or default terminal colors and palette.
+final class VtTerminalColors {
+  const VtTerminalColors({
+    required this.foreground,
+    required this.background,
+    required this.cursor,
+    required this.palette,
+  });
+
+  final VtRgbColor? foreground;
+  final VtRgbColor? background;
+  final VtRgbColor? cursor;
+  final List<VtRgbColor> palette;
+
+  /// Returns the palette entry at [index].
+  VtRgbColor paletteAt(int index) {
+    RangeError.checkValueInInterval(index, 0, palette.length - 1, 'index');
+    return palette[index];
+  }
 }
 
 /// Packed terminal mode helper used by DECRPM mode reports.
@@ -2529,6 +2736,90 @@ final class VtTerminal {
     bindings.GhosttyTerminalData.GHOSTTY_TERMINAL_DATA_HEIGHT_PX,
   );
 
+  /// The effective foreground color, including OSC overrides when present.
+  VtRgbColor? get foregroundColor => _terminalRgb(
+    bindings.GhosttyTerminalData.GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND,
+  );
+
+  /// The effective background color, including OSC overrides when present.
+  VtRgbColor? get backgroundColor => _terminalRgb(
+    bindings.GhosttyTerminalData.GHOSTTY_TERMINAL_DATA_COLOR_BACKGROUND,
+  );
+
+  /// The effective cursor color, including OSC overrides when present.
+  VtRgbColor? get cursorColor => _terminalRgb(
+    bindings.GhosttyTerminalData.GHOSTTY_TERMINAL_DATA_COLOR_CURSOR,
+  );
+
+  /// The effective 256-color palette, including OSC overrides.
+  List<VtRgbColor> get colorPalette => _terminalPalette(
+    bindings.GhosttyTerminalData.GHOSTTY_TERMINAL_DATA_COLOR_PALETTE,
+  );
+
+  /// The default foreground color, ignoring OSC overrides.
+  VtRgbColor? get defaultForegroundColor => _terminalRgb(
+    bindings.GhosttyTerminalData.GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND_DEFAULT,
+  );
+
+  set defaultForegroundColor(VtRgbColor? value) {
+    _terminalSetRgb(
+      bindings.GhosttyTerminalOption.GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND,
+      value,
+    );
+  }
+
+  /// The default background color, ignoring OSC overrides.
+  VtRgbColor? get defaultBackgroundColor => _terminalRgb(
+    bindings.GhosttyTerminalData.GHOSTTY_TERMINAL_DATA_COLOR_BACKGROUND_DEFAULT,
+  );
+
+  set defaultBackgroundColor(VtRgbColor? value) {
+    _terminalSetRgb(
+      bindings.GhosttyTerminalOption.GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND,
+      value,
+    );
+  }
+
+  /// The default cursor color, ignoring OSC overrides.
+  VtRgbColor? get defaultCursorColor => _terminalRgb(
+    bindings.GhosttyTerminalData.GHOSTTY_TERMINAL_DATA_COLOR_CURSOR_DEFAULT,
+  );
+
+  set defaultCursorColor(VtRgbColor? value) {
+    _terminalSetRgb(
+      bindings.GhosttyTerminalOption.GHOSTTY_TERMINAL_OPT_COLOR_CURSOR,
+      value,
+    );
+  }
+
+  /// The default 256-color palette, ignoring OSC overrides.
+  List<VtRgbColor> get defaultPalette => _terminalPalette(
+    bindings.GhosttyTerminalData.GHOSTTY_TERMINAL_DATA_COLOR_PALETTE_DEFAULT,
+  );
+
+  set defaultPalette(List<VtRgbColor>? value) {
+    _terminalSetPalette(
+      bindings.GhosttyTerminalOption.GHOSTTY_TERMINAL_OPT_COLOR_PALETTE,
+      value,
+    );
+  }
+
+  /// The current effective terminal colors and palette.
+  VtTerminalColors get effectiveColors => VtTerminalColors(
+    foreground: foregroundColor,
+    background: backgroundColor,
+    cursor: cursorColor,
+    palette: colorPalette,
+  );
+
+  /// The configured default terminal colors and palette.
+  VtTerminalColors get defaultColors => VtTerminalColors(
+    foreground: defaultForegroundColor,
+    background: defaultBackgroundColor,
+    cursor: defaultCursorColor,
+    palette: defaultPalette,
+  );
+
   /// Returns whether [mode] is currently set on this terminal.
   bool getMode(VtMode mode) {
     _ensureOpen();
@@ -2604,6 +2895,80 @@ final class VtTerminal {
       return VtStyle.fromNative(out.ref);
     } finally {
       calloc.free(out);
+    }
+  }
+
+  VtRgbColor? _terminalRgb(bindings.GhosttyTerminalData data) {
+    final out = calloc<bindings.GhosttyColorRgb>();
+    try {
+      final result = bindings.ghostty_terminal_get(_handle, data, out.cast());
+      if (result == bindings.GhosttyResult.GHOSTTY_NO_VALUE) {
+        return null;
+      }
+      _checkResult(result, 'ghostty_terminal_get');
+      return _rgbFromNative(out.ref);
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  List<VtRgbColor> _terminalPalette(bindings.GhosttyTerminalData data) {
+    final out = calloc<bindings.GhosttyColorRgb>(256);
+    try {
+      _checkResult(
+        bindings.ghostty_terminal_get(_handle, data, out.cast()),
+        'ghostty_terminal_get',
+      );
+      return _rgbPaletteFromNative(out);
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  void _terminalSetRgb(
+    bindings.GhosttyTerminalOption option,
+    VtRgbColor? value,
+  ) {
+    _ensureOpen();
+    if (value == null) {
+      bindings.ghostty_terminal_set(_handle, option, ffi.nullptr);
+      return;
+    }
+
+    final native = calloc<bindings.GhosttyColorRgb>();
+    try {
+      _writeRgbToNative(value, native.ref);
+      bindings.ghostty_terminal_set(_handle, option, native.cast());
+    } finally {
+      calloc.free(native);
+    }
+  }
+
+  void _terminalSetPalette(
+    bindings.GhosttyTerminalOption option,
+    List<VtRgbColor>? value,
+  ) {
+    _ensureOpen();
+    if (value == null) {
+      bindings.ghostty_terminal_set(_handle, option, ffi.nullptr);
+      return;
+    }
+    if (value.length != 256) {
+      throw ArgumentError.value(
+        value.length,
+        'value.length',
+        'Palette must contain exactly 256 colors.',
+      );
+    }
+
+    final native = calloc<bindings.GhosttyColorRgb>(256);
+    try {
+      for (var i = 0; i < value.length; i++) {
+        _writeRgbToNative(value[i], (native + i).ref);
+      }
+      bindings.ghostty_terminal_set(_handle, option, native.cast());
+    } finally {
+      calloc.free(native);
     }
   }
 

@@ -12,6 +12,35 @@ void main() {
     expect(GhosttyVt.isPasteSafe('echo hello\nrm -rf /'), isFalse);
   });
 
+  test('build info exposes version metadata', () {
+    final info = GhosttyVt.buildInfo;
+
+    expect(info.versionString, isNotEmpty);
+    expect(info.versionMajor, greaterThanOrEqualTo(0));
+    expect(info.versionMinor, greaterThanOrEqualTo(0));
+    expect(info.versionPatch, greaterThanOrEqualTo(0));
+    expect(info.optimize, isIn(GhosttyOptimizeMode.values));
+    expect(info.versionString, contains(info.versionCore));
+  });
+
+  test('paste encoder wraps bracketed paste', () {
+    expect(
+      GhosttyVt.encodePaste('hello', bracketed: true),
+      '\x1b[200~hello\x1b[201~',
+    );
+  });
+
+  test('paste encoder rewrites unsafe bytes for plain paste', () {
+    final encoded = GhosttyVt.encodePasteBytes(<int>[
+      0x61,
+      0x1B,
+      0x62,
+      0x0A,
+      0x63,
+    ]);
+    expect(encoded, <int>[0x61, 0x20, 0x62, 0x0D, 0x63]);
+  });
+
   test('OSC parser parses window title command', () {
     final parser = VtOscParser();
     addTearDown(parser.close);
@@ -208,6 +237,44 @@ void main() {
     terminal.write('Hello');
 
     expect(formatter.formatText(), 'Hello');
+  });
+
+  test('terminal color wrappers expose effective and default colors', () {
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+    addTearDown(terminal.close);
+
+    terminal
+      ..defaultForegroundColor = const VtRgbColor(0x11, 0x22, 0x33)
+      ..defaultBackgroundColor = const VtRgbColor(0x44, 0x55, 0x66)
+      ..defaultCursorColor = const VtRgbColor(0x77, 0x88, 0x99)
+      ..defaultPalette = List<VtRgbColor>.generate(
+        256,
+        (index) => VtRgbColor(index, index, 255 - index),
+      );
+
+    final effective = terminal.effectiveColors;
+    final defaults = terminal.defaultColors;
+
+    expect(effective.foreground?.r, 0x11);
+    expect(effective.background?.g, 0x55);
+    expect(effective.cursor?.b, 0x99);
+    expect(effective.paletteAt(7).g, 7);
+    expect(effective.paletteAt(7).b, 248);
+
+    expect(defaults.foreground?.r, 0x11);
+    expect(defaults.background?.g, 0x55);
+    expect(defaults.cursor?.b, 0x99);
+    expect(defaults.paletteAt(42).r, 42);
+
+    terminal.defaultForegroundColor = null;
+    terminal.defaultBackgroundColor = null;
+    terminal.defaultCursorColor = null;
+    terminal.defaultPalette = null;
+
+    expect(terminal.defaultForegroundColor, isNull);
+    expect(terminal.defaultBackgroundColor, isNull);
+    expect(terminal.defaultCursorColor, isNull);
+    expect(terminal.defaultPalette, hasLength(256));
   });
 
   test('terminal formatter reflects terminal changes', () {

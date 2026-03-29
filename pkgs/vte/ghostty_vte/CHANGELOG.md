@@ -1,5 +1,14 @@
 ## 0.1.0+2
 
+- Synced the bundled Ghostty checkout to the latest VT headers, regenerated
+  the FFI bindings, and updated the local binding generator to use the
+  `ffigen` API directly.
+- Added bundled source patch application in the build hook so Android source
+  builds can apply the `libghostty-vt` libc-link fix without carrying a dirty
+  Ghostty submodule checkout.
+- Added high-level wrappers for the new VT APIs:
+  `GhosttyVt.buildInfo`, `GhosttyVt.encodePaste*`, and terminal default and
+  effective color theme accessors on both native and web.
 - Added shared web-side helpers for higher-level consumers: `VtModes`,
   `VtMouseEncoderOptions`, render-color resolvers, `VtFormatter*Extra.all()`,
   and a safe `VtTerminal.getMode()` fallback on web.
