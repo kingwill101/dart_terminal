@@ -42,6 +42,8 @@ const _ptyArtifacts = <String, String>{
   'ios-sim-arm64': 'pty-ios-sim-arm64.tar.gz',
 };
 
+typedef _ArtifactDownload = ({String label, String filename});
+
 Future<void> main(List<String> args) async {
   var tag = _defaultTag;
   var lib = 'all';
@@ -88,23 +90,31 @@ Future<void> main(List<String> args) async {
   stdout.writeln('Release tag:     $tag');
   stdout.writeln('');
 
-  final artifacts = <String, String>{};
+  final artifacts = <_ArtifactDownload>[];
   if (lib == 'vte' || lib == 'all') {
     if (allPlatforms) {
-      artifacts.addAll(_vteArtifacts);
+      artifacts.addAll(
+        _vteArtifacts.entries.map(
+          (entry) => (label: entry.key, filename: entry.value),
+        ),
+      );
     } else {
       // Download the specific platform + wasm.
       if (_vteArtifacts.containsKey(platform)) {
-        artifacts[platform] = _vteArtifacts[platform]!;
+        artifacts.add((label: platform, filename: _vteArtifacts[platform]!));
       }
-      artifacts['wasm'] = _vteArtifacts['wasm']!;
+      artifacts.add((label: 'wasm', filename: _vteArtifacts['wasm']!));
     }
   }
   if (lib == 'pty' || lib == 'all') {
     if (allPlatforms) {
-      artifacts.addAll(_ptyArtifacts);
+      artifacts.addAll(
+        _ptyArtifacts.entries.map(
+          (entry) => (label: entry.key, filename: entry.value),
+        ),
+      );
     } else if (_ptyArtifacts.containsKey(platform)) {
-      artifacts[platform] = _ptyArtifacts[platform]!;
+      artifacts.add((label: platform, filename: _ptyArtifacts[platform]!));
     }
   }
 
@@ -118,9 +128,9 @@ Future<void> main(List<String> args) async {
   stdout.writeln('Resolved tag: $resolvedTag\n');
 
   var failures = 0;
-  for (final entry in artifacts.entries) {
-    final label = entry.key;
-    final filename = entry.value;
+  for (final artifact in artifacts) {
+    final label = artifact.label;
+    final filename = artifact.filename;
     final outDir = Directory('${cacheDir.path}/$label')
       ..createSync(recursive: true);
 
