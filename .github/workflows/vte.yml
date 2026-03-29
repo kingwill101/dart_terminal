@@ -58,7 +58,8 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
 
-      - name: Verify Android libghostty-vt links libc
+      - name: Locate Android arm64 libghostty-vt
+        id: locate_android
         run: |
           LIB=$(
             find "$GITHUB_WORKSPACE/build-prefix" \
@@ -72,7 +73,26 @@ jobs:
             find "$GITHUB_WORKSPACE/build-prefix" -type f
             exit 1
           fi
-          ./tool/verify_vte_android_libc.sh "$LIB"
+          echo "path=$LIB" >> "$GITHUB_OUTPUT"
+
+      - name: Verify Android libghostty-vt links libc
+        run: ./tool/verify_vte_android_libc.sh "${{ steps.locate_android.outputs.path }}"
+
+      - name: Package Android linkage artifact
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/android-linkage-artifact"
+          cp -L "${{ steps.locate_android.outputs.path }}" \
+            "$GITHUB_WORKSPACE/android-linkage-artifact/libghostty-vt.so"
+          file "${{ steps.locate_android.outputs.path }}" \
+            > "$GITHUB_WORKSPACE/android-linkage-artifact/file.txt"
+          readelf -d "${{ steps.locate_android.outputs.path }}" \
+            > "$GITHUB_WORKSPACE/android-linkage-artifact/readelf-dynamic.txt"
+
+      - name: Upload Android linkage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vte-android-arm64-linkage-check
+          path: ${{ github.workspace }}/android-linkage-artifact
 
   # ── Build native library + run Dart tests ──────────────────────────
   # NOTE: macOS is excluded because Zig-built dylibs lack Mach-O
