@@ -1,3 +1,9 @@
+## 0.1.1-dev.1
+
+- Bumped the `ghostty_vte` dependency to `^0.1.1-dev.1` to expose the latest
+  Ghostty VT binding sync, paste helpers, build metadata, and terminal color
+  APIs through the Flutter package re-exports.
+
 ## 0.1.0+1
 
 - Added external transport hooks on `GhosttyTerminalController` so Flutter apps

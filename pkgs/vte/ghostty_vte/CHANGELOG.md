@@ -1,4 +1,4 @@
-## 0.1.0+2
+## 0.1.1-dev.1
 
 - Synced the bundled Ghostty checkout to the latest VT headers, regenerated
   the FFI bindings, and updated the local binding generator to use the
@@ -9,6 +9,12 @@
 - Added high-level wrappers for the new VT APIs:
   `GhosttyVt.buildInfo`, `GhosttyVt.encodePaste*`, and terminal default and
   effective color theme accessors on both native and web.
+- Added shared web-side helpers for higher-level consumers: `VtModes`,
+  `VtMouseEncoderOptions`, render-color resolvers, `VtFormatter*Extra.all()`,
+  and a safe `VtTerminal.getMode()` fallback on web.
+
+## 0.1.0+2
+
 - Added shared web-side helpers for higher-level consumers: `VtModes`,
   `VtMouseEncoderOptions`, render-color resolvers, `VtFormatter*Extra.all()`,
   and a safe `VtTerminal.getMode()` fallback on web.
