@@ -21,3 +21,6 @@ Thumbs.db
 
 # Prebuilt library cache
 .prebuilt/
+
+# Standalone example applications live in their own repos.
+examples/
