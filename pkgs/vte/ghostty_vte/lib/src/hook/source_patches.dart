@@ -32,12 +32,12 @@ void applyPatchFile({
   PatchLogger? info,
   PatchLogger? warn,
 }) {
-  final alreadyApplied = Process.runSync('git', <String>[
-    'apply',
-    '--reverse',
-    '--check',
-    patchFile.path,
-  ], workingDirectory: workingDirectory.path, runInShell: true);
+  final alreadyApplied = Process.runSync(
+    'git',
+    <String>['apply', '--reverse', '--check', patchFile.path],
+    workingDirectory: workingDirectory.path,
+    runInShell: true,
+  );
   if (alreadyApplied.exitCode == 0) {
     info?.call(
       'Source patch already applied: ${patchFile.uri.pathSegments.last}',
@@ -45,11 +45,12 @@ void applyPatchFile({
     return;
   }
 
-  final check = Process.runSync('git', <String>[
-    'apply',
-    '--check',
-    patchFile.path,
-  ], workingDirectory: workingDirectory.path, runInShell: true);
+  final check = Process.runSync(
+    'git',
+    <String>['apply', '--check', patchFile.path],
+    workingDirectory: workingDirectory.path,
+    runInShell: true,
+  );
   if (check.exitCode != 0) {
     throw StateError(
       'Failed to validate patch ${patchFile.path}.\n'
@@ -58,10 +59,12 @@ void applyPatchFile({
     );
   }
 
-  final apply = Process.runSync('git', <String>[
-    'apply',
-    patchFile.path,
-  ], workingDirectory: workingDirectory.path, runInShell: true);
+  final apply = Process.runSync(
+    'git',
+    <String>['apply', patchFile.path],
+    workingDirectory: workingDirectory.path,
+    runInShell: true,
+  );
   if (apply.exitCode != 0) {
     throw StateError(
       'Failed to apply patch ${patchFile.path}.\n'

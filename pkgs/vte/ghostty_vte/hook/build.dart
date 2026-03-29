@@ -107,7 +107,9 @@ bool _shouldPreferSourceBuild(BuildInput input) {
   }
 
   final packagePath = Directory.fromUri(input.packageRoot).absolute.path;
-  return !packagePath.contains('${Platform.pathSeparator}.pub-cache${Platform.pathSeparator}');
+  return !packagePath.contains(
+    '${Platform.pathSeparator}.pub-cache${Platform.pathSeparator}',
+  );
 }
 
 void _addAsset(BuildOutputBuilder output, String packageName, Uri file) {
