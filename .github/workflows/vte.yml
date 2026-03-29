@@ -6,15 +6,74 @@ on:
     paths:
       - "pkgs/vte/**"
       - "pubspec.yaml"
+      - "tool/apply_ghostty_vte_source_patches.sh"
+      - "tool/verify_vte_android_libc.sh"
       - ".github/workflows/vte.yml"
   pull_request:
     branches: [master, main]
     paths:
       - "pkgs/vte/**"
       - "pubspec.yaml"
+      - "tool/apply_ghostty_vte_source_patches.sh"
+      - "tool/verify_vte_android_libc.sh"
       - ".github/workflows/vte.yml"
 
 jobs:
+  verify-android-linkage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: "0.15.2"
+
+      - name: Install Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27c
+
+      - name: Install binary inspection tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binutils
+
+      - name: Apply bundled Ghostty source patches
+        run: ./tool/apply_ghostty_vte_source_patches.sh
+
+      - name: Build Android arm64 libghostty-vt
+        working-directory: pkgs/vte/ghostty_vte/third_party/ghostty
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/build-prefix"
+          zig build \
+            -Demit-lib-vt=true \
+            -Dtarget=aarch64-linux-android \
+            -Doptimize=ReleaseFast \
+            -Dsimd=false \
+            --prefix "$GITHUB_WORKSPACE/build-prefix" \
+            --summary failures
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+
+      - name: Verify Android libghostty-vt links libc
+        run: |
+          LIB=$(
+            find "$GITHUB_WORKSPACE/build-prefix" \
+              \( -type f -o -type l \) \
+              \( -name 'libghostty-vt.so' -o -name 'libghostty-vt.so.*' \) \
+              | sort \
+              | head -1
+          )
+          if [ -z "$LIB" ]; then
+            echo "::error::Could not find libghostty-vt.so in build-prefix"
+            find "$GITHUB_WORKSPACE/build-prefix" -type f
+            exit 1
+          fi
+          ./tool/verify_vte_android_libc.sh "$LIB"
+
   # ── Build native library + run Dart tests ──────────────────────────
   # NOTE: macOS is excluded because Zig-built dylibs lack Mach-O
   # header padding (-headerpad_max_install_names) and the Dart SDK's

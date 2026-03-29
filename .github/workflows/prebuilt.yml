@@ -81,6 +81,22 @@ jobs:
         with:
           version: ${{ env.ZIG_VERSION }}
 
+      - name: Install Android NDK
+        if: contains(matrix.target, 'android')
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27c
+
+      - name: Install binary inspection tools
+        if: contains(matrix.target, 'android')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binutils
+
+      - name: Apply bundled Ghostty source patches
+        run: ./tool/apply_ghostty_vte_source_patches.sh
+
       - name: Build libghostty-vt (${{ matrix.target }})
         working-directory: pkgs/vte/ghostty_vte/third_party/ghostty
         run: |
@@ -92,6 +108,8 @@ jobs:
             -Dsimd=false \
             --prefix ${{ github.workspace }}/build-prefix \
             --summary failures
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
 
       - name: Locate artifact
         id: locate
@@ -135,6 +153,10 @@ jobs:
           esac
           echo "path=$LIB" >> "$GITHUB_OUTPUT"
           echo "Found: $LIB -> $TARGET ($(wc -c < "$TARGET") bytes, $KIND)"
+
+      - name: Verify Android libghostty-vt links libc
+        if: contains(matrix.target, 'android')
+        run: ./tool/verify_vte_android_libc.sh "${{ steps.locate.outputs.path }}"
 
       - name: Package artifact
         run: |
