@@ -19,8 +19,40 @@ on:
       - ".github/workflows/vte.yml"
 
 jobs:
-  verify-android-linkage:
+  build-vte-artifacts:
+    name: "build-vte-${{ matrix.os_label }}"
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-linux-gnu
+            artifact: libghostty-vt.so
+            os_label: linux-x64
+          - target: aarch64-linux-gnu
+            artifact: libghostty-vt.so
+            os_label: linux-arm64
+          - target: aarch64-macos
+            artifact: libghostty-vt.dylib
+            os_label: macos-arm64
+          - target: x86_64-macos
+            artifact: libghostty-vt.dylib
+            os_label: macos-x64
+          - target: x86_64-windows-gnu
+            artifact: ghostty-vt.dll
+            os_label: windows-x64
+          - target: aarch64-windows-gnu
+            artifact: ghostty-vt.dll
+            os_label: windows-arm64
+          - target: aarch64-linux-android
+            artifact: libghostty-vt.so
+            os_label: android-arm64
+          - target: arm-linux-androideabi
+            artifact: libghostty-vt.so
+            os_label: android-arm
+          - target: x86_64-linux-android
+            artifact: libghostty-vt.so
+            os_label: android-x64
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,12 +63,14 @@ jobs:
           version: "0.15.2"
 
       - name: Install Android NDK
+        if: contains(matrix.target, 'android')
         uses: nttld/setup-ndk@v1
         id: setup-ndk
         with:
           ndk-version: r27c
 
       - name: Install binary inspection tools
+        if: contains(matrix.target, 'android')
         run: |
           sudo apt-get update
           sudo apt-get install -y binutils
@@ -44,13 +78,13 @@ jobs:
       - name: Apply bundled Ghostty source patches
         run: ./tool/apply_ghostty_vte_source_patches.sh
 
-      - name: Build Android arm64 libghostty-vt
+      - name: Build libghostty-vt (${{ matrix.target }})
         working-directory: pkgs/vte/ghostty_vte/third_party/ghostty
         run: |
           mkdir -p "$GITHUB_WORKSPACE/build-prefix"
           zig build \
             -Demit-lib-vt=true \
-            -Dtarget=aarch64-linux-android \
+            -Dtarget=${{ matrix.target }} \
             -Doptimize=ReleaseFast \
             -Dsimd=false \
             --prefix "$GITHUB_WORKSPACE/build-prefix" \
@@ -58,41 +92,45 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
 
-      - name: Locate Android arm64 libghostty-vt
-        id: locate_android
+      - name: Locate built VTE artifact
+        id: locate_vte
         run: |
           LIB=$(
             find "$GITHUB_WORKSPACE/build-prefix" \
               \( -type f -o -type l \) \
-              \( -name 'libghostty-vt.so' -o -name 'libghostty-vt.so.*' \) \
+              \( -name '${{ matrix.artifact }}' -o -name '${{ matrix.artifact }}.*' \) \
               | sort \
               | head -1
           )
           if [ -z "$LIB" ]; then
-            echo "::error::Could not find libghostty-vt.so in build-prefix"
+            echo "::error::Could not find ${{ matrix.artifact }} in build-prefix"
             find "$GITHUB_WORKSPACE/build-prefix" -type f
             exit 1
           fi
           echo "path=$LIB" >> "$GITHUB_OUTPUT"
 
       - name: Verify Android libghostty-vt links libc
-        run: ./tool/verify_vte_android_libc.sh "${{ steps.locate_android.outputs.path }}"
+        if: contains(matrix.target, 'android')
+        run: ./tool/verify_vte_android_libc.sh "${{ steps.locate_vte.outputs.path }}"
 
-      - name: Package Android linkage artifact
+      - name: Package VTE artifact
         run: |
-          mkdir -p "$GITHUB_WORKSPACE/android-linkage-artifact"
-          cp -L "${{ steps.locate_android.outputs.path }}" \
-            "$GITHUB_WORKSPACE/android-linkage-artifact/libghostty-vt.so"
-          file "${{ steps.locate_android.outputs.path }}" \
-            > "$GITHUB_WORKSPACE/android-linkage-artifact/file.txt"
-          readelf -d "${{ steps.locate_android.outputs.path }}" \
-            > "$GITHUB_WORKSPACE/android-linkage-artifact/readelf-dynamic.txt"
+          ARTIFACT_DIR="$GITHUB_WORKSPACE/vte-${{ matrix.os_label }}-artifact"
+          mkdir -p "$ARTIFACT_DIR"
+          cp -L "${{ steps.locate_vte.outputs.path }}" \
+            "$ARTIFACT_DIR/${{ matrix.artifact }}"
+          file "${{ steps.locate_vte.outputs.path }}" \
+            > "$ARTIFACT_DIR/file.txt"
+          if [ "${{ contains(matrix.target, 'android') }}" = "true" ]; then
+            readelf -d "${{ steps.locate_vte.outputs.path }}" \
+              > "$ARTIFACT_DIR/readelf-dynamic.txt"
+          fi
 
-      - name: Upload Android linkage artifact
+      - name: Upload VTE artifact
         uses: actions/upload-artifact@v4
         with:
-          name: vte-android-arm64-linkage-check
-          path: ${{ github.workspace }}/android-linkage-artifact
+          name: vte-${{ matrix.os_label }}-check
+          path: ${{ github.workspace }}/vte-${{ matrix.os_label }}-artifact
 
   # ── Build native library + run Dart tests ──────────────────────────
   # NOTE: macOS is excluded because Zig-built dylibs lack Mach-O
@@ -142,6 +180,12 @@ jobs:
         run: |
           ls -lh pkgs/vte/ghostty_vte_flutter/assets/ghostty-vt.wasm
           file pkgs/vte/ghostty_vte_flutter/assets/ghostty-vt.wasm
+
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vte-wasm-check
+          path: pkgs/vte/ghostty_vte_flutter/assets/ghostty-vt.wasm
 
   # ── Flutter package tests ──────────────────────────────────────────
   test-flutter:
