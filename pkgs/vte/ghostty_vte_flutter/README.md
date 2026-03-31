@@ -398,7 +398,8 @@ GhosttyTerminalView(
   foregroundColor: const Color(0xFFE6EDF3),
   fontSize: 14,
   lineHeight: 1.35,
-  fontFamily: 'JetBrainsMono Nerd Font',
+  fontFamily: 'Noto Sans Mono',
+  fontFamilyFallback: const ['Noto Sans Symbols 2'],
   cellWidthScale: 1.0,
   padding: const EdgeInsets.all(12),
   palette: GhosttyTerminalPalette.xterm,
@@ -440,6 +441,24 @@ GhosttyTerminalView(
 | `onCopySelection` | callback | `null` | Called with selection content for clipboard copy |
 | `onPasteRequest` | callback | `null` | Called to retrieve clipboard text for paste |
 | `onOpenHyperlink` | callback | `null` | Called when a hyperlink is activated |
+
+### Recommended font setup
+
+For more consistent terminal rendering across platforms, use a stable
+monospace font together with a symbol fallback. A good starting point is:
+
+- `Noto Sans Mono` for terminal text
+- `Noto Sans Symbols 2` as a fallback for arrows, checkmarks, and other symbols
+
+Example:
+
+```dart
+GhosttyTerminalView(
+  controller: ctrl,
+  fontFamily: 'Noto Sans Mono',
+  fontFamilyFallback: const ['Noto Sans Symbols 2'],
+)
+```
 
 ### Renderer modes
 
@@ -595,8 +614,8 @@ class _TerminalScreenState extends State<TerminalScreen> {
         backgroundColor: const Color(0xFF0A0F14),
         foregroundColor: const Color(0xFFE6EDF3),
         fontSize: 14,
-        fontFamily: 'JetBrainsMono Nerd Font',
-        fontFamilyFallback: const ['monospace'],
+        fontFamily: 'Noto Sans Mono',
+        fontFamilyFallback: const ['Noto Sans Symbols 2'],
         onCopySelection: (content) {
           Clipboard.setData(ClipboardData(text: content.text));
         },

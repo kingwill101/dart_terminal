@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:ghostty_vte_flutter/ghostty_vte_flutter.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -73,6 +74,14 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
     text: '0x63',
   );
   final TextEditingController _fontFamilyController = TextEditingController();
+  final TextEditingController _renderDumpStartRowController =
+      TextEditingController();
+  final TextEditingController _renderDumpEndRowController =
+      TextEditingController();
+  final TextEditingController _renderDumpStartColController =
+      TextEditingController();
+  final TextEditingController _renderDumpEndColController =
+      TextEditingController();
 
   // Clipboard/selection/hyperlink state
   String _selectionText = '';
@@ -158,6 +167,9 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
   String _vtSnapshot = '';
   String _htmlSnapshot = '';
   bool _pasteSafe = true;
+  bool _hideDemoChrome = false;
+  bool _fullWidthTerminal = false;
+  bool _renderDumpOnlyInterestingRows = true;
   double _cellWidthScale = 1;
   GhosttyTerminalRendererMode _renderer = GhosttyTerminalRendererMode.formatter;
   GhosttyTerminalInteractionPolicy _interactionPolicy =
@@ -183,6 +195,20 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
 
   Map<String, String> get _currentShellEnvironment =>
       _controllerLaunch?.environment ?? _activeShellEnvironment;
+
+  String get _terminalFontFamily {
+    final configured = _fontFamilyController.text.trim();
+    if (configured.isNotEmpty) {
+      return configured;
+    }
+    return GoogleFonts.notoSansMono().fontFamily!;
+  }
+
+  List<String> get _terminalFontFallback => <String>[
+    if (_terminalFontFamily != 'Noto Sans Symbols 2')
+      GoogleFonts.notoSansSymbols2().fontFamily!,
+    'Noto Color Emoji',
+  ];
 
   @override
   void initState() {
@@ -230,6 +256,10 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
     _utf8Controller.dispose();
     _codepointController.dispose();
     _fontFamilyController.dispose();
+    _renderDumpStartRowController.dispose();
+    _renderDumpEndRowController.dispose();
+    _renderDumpStartColController.dispose();
+    _renderDumpEndColController.dispose();
     super.dispose();
   }
 
@@ -614,6 +644,154 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
         'cursorViewport=${cursor.hasViewportPosition ? '${cursor.row},${cursor.col}' : '(offscreen)'}';
   }
 
+  String _renderViewportDump() {
+    final snapshot = _terminal.renderSnapshot;
+    if (snapshot == null || !snapshot.hasViewportData) {
+      return 'Render snapshot unavailable on this platform or before native viewport update.';
+    }
+
+    final startRow = _parseNullableInt(_renderDumpStartRowController.text);
+    final endRow = _parseNullableInt(_renderDumpEndRowController.text);
+    final startCol = _parseNullableInt(_renderDumpStartColController.text);
+    final endCol = _parseNullableInt(_renderDumpEndColController.text);
+
+    final buffer = StringBuffer()
+      ..writeln(
+        'cols=${snapshot.cols} rows=${snapshot.rows} dirty=${snapshot.dirty}',
+      )
+      ..writeln(
+        'cursor=${snapshot.cursor.hasViewportPosition ? '${snapshot.cursor.row},${snapshot.cursor.col}' : '(offscreen)'}'
+        ' visible=${snapshot.cursor.visible}'
+        ' blinking=${snapshot.cursor.blinking}'
+        ' wideTail=${snapshot.cursor.onWideTail}',
+      );
+
+    for (var rowIndex = 0; rowIndex < snapshot.rowsData.length; rowIndex++) {
+      if (startRow != null && rowIndex < startRow) {
+        continue;
+      }
+      if (endRow != null && rowIndex > endRow) {
+        continue;
+      }
+
+      final row = snapshot.rowsData[rowIndex];
+      final visibleText = _sliceRenderRowText(
+        row,
+        startCol: startCol,
+        endCol: endCol,
+      );
+      if (_renderDumpOnlyInterestingRows &&
+          visibleText.trim().isEmpty &&
+          !row.dirty &&
+          !row.hasHyperlink) {
+        continue;
+      }
+
+      buffer
+        ..writeln(
+          'row $rowIndex '
+          'dirty=${row.dirty} wrap=${row.wrap} cont=${row.wrapContinuation} '
+          'styled=${row.styled} link=${row.hasHyperlink}',
+        )
+        ..writeln('  text: ${visibleText.replaceAll('\t', r'\t')}');
+
+      var col = 0;
+      for (final cell in row.cells) {
+        final cellStartCol = col;
+        final cellEndCol = col + cell.width - 1;
+        final overlapsSelectedColumns =
+            (startCol == null || cellEndCol >= startCol) &&
+            (endCol == null || cellStartCol <= endCol);
+        final codepoint = cell.metadata.codepoint;
+        final display = cell.text.isEmpty ? ' ' : cell.text;
+        final interesting =
+            cell.width != 1 ||
+            cell.hasStyling ||
+            cell.hasHyperlink ||
+            cell.metadata.hasBackgroundColor ||
+            cell.text.isEmpty ||
+            codepoint > 0x7F;
+        if (interesting && overlapsSelectedColumns) {
+          buffer.writeln(
+            '  [$cellStartCol] "${_escapeDumpText(display)}" '
+            'U+${codepoint.toRadixString(16).toUpperCase().padLeft(4, '0')} '
+            'w=${cell.width} '
+            'text=${cell.hasText} style=${cell.hasStyling} link=${cell.hasHyperlink} '
+            'bg=${_describeOptionalColor(cell.metadata.backgroundColor)} '
+            'semantic=${cell.semanticContent.name}',
+          );
+        }
+        col += cell.width;
+      }
+    }
+
+    return buffer.toString().trimRight();
+  }
+
+  String _sliceRenderRowText(
+    GhosttyTerminalRenderRow row, {
+    int? startCol,
+    int? endCol,
+  }) {
+    final buffer = StringBuffer();
+    var col = 0;
+    for (final cell in row.cells) {
+      final cellStartCol = col;
+      final cellEndCol = col + cell.width - 1;
+      final overlapsSelectedColumns =
+          (startCol == null || cellEndCol >= startCol) &&
+          (endCol == null || cellStartCol <= endCol);
+      if (overlapsSelectedColumns) {
+        if (cell.text.isNotEmpty) {
+          buffer.write(cell.text);
+        } else {
+          buffer.write(' '.padRight(cell.width));
+        }
+      }
+      col += cell.width;
+    }
+    return buffer.toString();
+  }
+
+  int? _parseNullableInt(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+    return int.tryParse(trimmed);
+  }
+
+  String _escapeDumpText(String value) => value
+      .replaceAll('\\', r'\\')
+      .replaceAll('\n', r'\n')
+      .replaceAll('\r', r'\r')
+      .replaceAll('\t', r'\t');
+
+  String _describeOptionalColor(Color? color) {
+    if (color == null) {
+      return 'none';
+    }
+    final argb = color.toARGB32();
+    final hex =
+        '${((argb >> 16) & 0xFF).toRadixString(16).padLeft(2, '0')}'
+        '${((argb >> 8) & 0xFF).toRadixString(16).padLeft(2, '0')}'
+        '${(argb & 0xFF).toRadixString(16).padLeft(2, '0')}';
+    return '#$hex';
+  }
+
+  Future<void> _copyTextToClipboard(
+    String text, {
+    required String message,
+  }) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   void _recomputeInspectorState({
     bool addLog = true,
     bool refreshSnapshots = true,
@@ -823,6 +1001,32 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
       appBar: AppBar(
         title: const Text('Ghostty VT Studio'),
         actions: <Widget>[
+          IconButton(
+            tooltip: _hideDemoChrome
+                ? 'Show demo controls'
+                : 'Hide most demo controls',
+            onPressed: () => setState(() {
+              _hideDemoChrome = !_hideDemoChrome;
+            }),
+            icon: Icon(
+              _hideDemoChrome
+                  ? Icons.tune_outlined
+                  : Icons.visibility_off_outlined,
+            ),
+          ),
+          IconButton(
+            tooltip: _fullWidthTerminal
+                ? 'Restore split layout'
+                : 'Use full-width terminal',
+            onPressed: () => setState(() {
+              _fullWidthTerminal = !_fullWidthTerminal;
+            }),
+            icon: Icon(
+              _fullWidthTerminal
+                  ? Icons.splitscreen_outlined
+                  : Icons.width_full_outlined,
+            ),
+          ),
           TextButton.icon(
             onPressed: _terminal.isRunning ? _stopTerminal : _restartTerminal,
             icon: Icon(
@@ -838,14 +1042,7 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: wide
-            ? Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  Expanded(flex: 8, child: _buildTerminalColumn(theme)),
-                  const SizedBox(width: 16),
-                  Expanded(flex: 7, child: _buildInspector(theme)),
-                ],
-              )
+            ? _buildWideBody(theme)
             : ListView(
                 children: <Widget>[
                   SizedBox(height: 620, child: _buildTerminalColumn(theme)),
@@ -857,12 +1054,40 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
     );
   }
 
+  Widget _buildWideBody(ThemeData theme) {
+    if (_fullWidthTerminal) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Expanded(flex: 9, child: _buildTerminalColumn(theme)),
+          const SizedBox(height: 16),
+          Expanded(flex: 6, child: _buildInspector(theme)),
+        ],
+      );
+    }
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Expanded(flex: 8, child: _buildTerminalColumn(theme)),
+        const SizedBox(width: 16),
+        Expanded(flex: 7, child: _buildInspector(theme)),
+      ],
+    );
+  }
+
   Widget _buildTerminalColumn(ThemeData theme) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final terminalHeight = constraints.maxHeight.isFinite
             ? (constraints.maxHeight * 0.42).clamp(220.0, 420.0)
             : 320.0;
+        if (_hideDemoChrome) {
+          final fullHeight = constraints.maxHeight.isFinite
+              ? constraints.maxHeight
+              : terminalHeight;
+          return _buildTerminalViewport(theme, height: fullHeight);
+        }
         return ListView(
           children: <Widget>[
             if (!kIsWeb) ...<Widget>[
@@ -1156,78 +1381,7 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
               ],
             ),
             const SizedBox(height: 12),
-            SizedBox(
-              height: terminalHeight,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: theme.colorScheme.outlineVariant),
-                  boxShadow: const <BoxShadow>[
-                    BoxShadow(
-                      color: Color(0x33000000),
-                      blurRadius: 28,
-                      offset: Offset(0, 12),
-                    ),
-                  ],
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(18),
-                  child: GhosttyTerminalView(
-                    controller: _terminal,
-                    autofocus: true,
-                    chromeColor: const Color(0xFF10212C),
-                    backgroundColor: const Color(0xFF060D13),
-                    foregroundColor: const Color(0xFFE7F8F5),
-                    fontSize: 14,
-                    lineHeight: 1.32,
-                    fontFamily: _fontFamilyController.text.trim().isEmpty
-                        ? null
-                        : _fontFamilyController.text.trim(),
-                    cellWidthScale: _cellWidthScale,
-                    renderer: _renderer,
-                    interactionPolicy: _interactionPolicy,
-                    padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
-                    onSelectionChanged: (selection) {
-                      setState(() {
-                        _selectionText = selection != null
-                            ? '${selection.base} -> ${selection.extent}'
-                            : '';
-                      });
-                      _appendLog(
-                        selection != null
-                            ? 'Selection changed: ${selection.base} -> ${selection.extent}'
-                            : 'Selection cleared.',
-                      );
-                    },
-                    onCopySelection: (text) async {
-                      await Clipboard.setData(ClipboardData(text: text));
-                      setState(() {
-                        _lastCopiedText = text.length > 120
-                            ? '${text.substring(0, 120)}...'
-                            : text;
-                      });
-                      _appendLog('Copied ${text.length} chars to clipboard.');
-                    },
-                    onPasteRequest: () async {
-                      setState(() {
-                        _pasteRequestCount += 1;
-                      });
-                      _appendLog('Paste requested (#$_pasteRequestCount).');
-                      final data = await Clipboard.getData(
-                        Clipboard.kTextPlain,
-                      );
-                      return data?.text;
-                    },
-                    onOpenHyperlink: (uri) async {
-                      setState(() {
-                        _lastHyperlink = uri;
-                      });
-                      _appendLog('Hyperlink activated: $uri');
-                    },
-                  ),
-                ),
-              ),
-            ),
+            _buildTerminalViewport(theme, height: terminalHeight),
             const SizedBox(height: 12),
             Wrap(
               spacing: 8,
@@ -1274,6 +1428,79 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
           ],
         );
       },
+    );
+  }
+
+  Widget _buildTerminalViewport(ThemeData theme, {required double height}) {
+    return SizedBox(
+      height: height,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: theme.colorScheme.outlineVariant),
+          boxShadow: const <BoxShadow>[
+            BoxShadow(
+              color: Color(0x33000000),
+              blurRadius: 28,
+              offset: Offset(0, 12),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: GhosttyTerminalView(
+            controller: _terminal,
+            autofocus: true,
+            showVerticalScrollbar: true,
+            chromeColor: const Color(0xFF10212C),
+            backgroundColor: const Color(0xFF060D13),
+            foregroundColor: const Color(0xFFE7F8F5),
+            fontSize: 14,
+            lineHeight: 1.32,
+            fontFamily: _terminalFontFamily,
+            fontFamilyFallback: _terminalFontFallback,
+            cellWidthScale: _cellWidthScale,
+            renderer: _renderer,
+            interactionPolicy: _interactionPolicy,
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+            onSelectionChanged: (selection) {
+              setState(() {
+                _selectionText = selection != null
+                    ? '${selection.base} -> ${selection.extent}'
+                    : '';
+              });
+              _appendLog(
+                selection != null
+                    ? 'Selection changed: ${selection.base} -> ${selection.extent}'
+                    : 'Selection cleared.',
+              );
+            },
+            onCopySelection: (text) async {
+              await Clipboard.setData(ClipboardData(text: text));
+              setState(() {
+                _lastCopiedText = text.length > 120
+                    ? '${text.substring(0, 120)}...'
+                    : text;
+              });
+              _appendLog('Copied ${text.length} chars to clipboard.');
+            },
+            onPasteRequest: () async {
+              setState(() {
+                _pasteRequestCount += 1;
+              });
+              _appendLog('Paste requested (#$_pasteRequestCount).');
+              final data = await Clipboard.getData(Clipboard.kTextPlain);
+              return data?.text;
+            },
+            onOpenHyperlink: (uri) async {
+              setState(() {
+                _lastHyperlink = uri;
+              });
+              _appendLog('Hyperlink activated: $uri');
+            },
+          ),
+        ),
+      ),
     );
   }
 
@@ -1437,6 +1664,92 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
         _snapshotCard('HTML Output', _htmlSnapshot),
         const SizedBox(height: 12),
         _snapshotCard('Render Semantics', _renderSemanticSummary()),
+        const SizedBox(height: 12),
+        Row(
+          children: <Widget>[
+            Expanded(
+              child: TextField(
+                controller: _renderDumpStartRowController,
+                decoration: const InputDecoration(
+                  labelText: 'Start row',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType: TextInputType.number,
+                onChanged: (_) => setState(() {}),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                controller: _renderDumpEndRowController,
+                decoration: const InputDecoration(
+                  labelText: 'End row',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType: TextInputType.number,
+                onChanged: (_) => setState(() {}),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: <Widget>[
+            Expanded(
+              child: TextField(
+                controller: _renderDumpStartColController,
+                decoration: const InputDecoration(
+                  labelText: 'Start col',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType: TextInputType.number,
+                onChanged: (_) => setState(() {}),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                controller: _renderDumpEndColController,
+                decoration: const InputDecoration(
+                  labelText: 'End col',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType: TextInputType.number,
+                onChanged: (_) => setState(() {}),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: <Widget>[
+            FilterChip(
+              label: const Text('Only interesting rows'),
+              selected: _renderDumpOnlyInterestingRows,
+              onSelected: (selected) => setState(() {
+                _renderDumpOnlyInterestingRows = selected;
+              }),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => setState(() {}),
+              icon: const Icon(Icons.refresh),
+              label: const Text('Refresh Dump'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => _copyTextToClipboard(
+                _renderViewportDump(),
+                message: 'Copied renderState viewport dump.',
+              ),
+              icon: const Icon(Icons.copy_rounded),
+              label: const Text('Copy Dump'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        _snapshotCard('RenderState Viewport Dump', _renderViewportDump()),
       ],
     );
   }

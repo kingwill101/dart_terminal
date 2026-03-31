@@ -127,7 +127,7 @@ List<GhosttyTerminalShellLaunch> ghosttyTerminalShellLaunches({
 
   GhosttyTerminalShellLaunch? shLaunch() {
     final sh = platform_shell.ghosttyTerminalResolveFirstExistingShell(
-      const <String>['/bin/sh', '/usr/bin/sh'],
+      const <String>['/system/bin/sh', '/bin/sh', '/usr/bin/sh'],
     );
     if (sh == null) {
       return null;

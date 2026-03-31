@@ -1,8 +1,24 @@
-## 0.1.1-dev.1
+## 0.1.1-dev.2-wip
 
-- Bumped the `ghostty_vte` dependency to `^0.1.1-dev.1` to expose the latest
-  Ghostty VT binding sync, paste helpers, build metadata, and terminal color
-  APIs through the Flutter package re-exports.
+- Added `showHeader`, `focusOnInteraction`, and `onTapTerminal` on
+  `GhosttyTerminalView` so embedders can hide the terminal chrome row and
+  control focus/tap behavior more precisely.
+- Improved `renderState` fidelity by using Ghostty's resolved default colors
+  directly, tightening whole-run text shaping to stay cell-aligned, and fixing
+  terminal mouse coordinate encoding when a header is present.
+- Added transcript scrolling APIs on `GhosttyTerminalView`, including external
+  `ScrollController`/physics support, a built-in vertical scrollbar, and
+  optional auto-follow-on-activity behavior for snapping back to the live
+  cursor while typing.
+- Updated formatter-mode cursor painting to prefer the native Ghostty cursor
+  position when available, avoiding stale right-edge cursor artifacts while
+  keeping formatter text rendering.
+- Added custom painting for terminal box-drawing and geometric marker glyphs to
+  better match Ghostty/terminal output for borders and single-cell symbols.
+- Expanded paint regression coverage for formatter vs `renderState` parity,
+  border continuity, circle glyph spacing, headerless rendering, scroll
+  behavior, and cursor placement.
+- Bumped the `ghostty_vte` dependency to `^0.1.1`.
 
 ## 0.1.0+1
 

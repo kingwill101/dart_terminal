@@ -56,7 +56,10 @@ final class GhosttyTerminalSnapshot
         buffer.write(options.trimTrailingSpaces ? text.trimRight() : text);
       }
       if (row != endRow) {
-        buffer.write('\n');
+        final nextLine = lines[row + 1];
+        final joinsWrappedLine =
+            options.joinWrappedLines && line.wrap && nextLine.wrapContinuation;
+        buffer.write(joinsWrappedLine ? options.wrappedLineJoiner : '\n');
       }
     }
     return buffer.toString();
@@ -99,6 +102,9 @@ final class GhosttyTerminalSnapshot
     if (lines.isEmpty || position.row < 0 || position.row >= lines.length) {
       return null;
     }
+    if (position.col < 0 || position.col >= lines[position.row].cellCount) {
+      return null;
+    }
     return lines[position.row].hyperlinkAtCell(position.col);
   }
 
@@ -110,6 +116,9 @@ final class GhosttyTerminalSnapshot
         const GhosttyTerminalWordBoundaryPolicy(),
   }) {
     if (lines.isEmpty || position.row < 0 || position.row >= lines.length) {
+      return null;
+    }
+    if (position.col < 0 || position.col >= lines[position.row].cellCount) {
       return null;
     }
     return lines[position.row].wordSelectionAtCell(
@@ -280,11 +289,24 @@ final class GhosttyTerminalSelection {
 /// Single styled line within a [GhosttyTerminalSnapshot].
 @immutable
 final class GhosttyTerminalLine {
-  const GhosttyTerminalLine(this.runs);
+  const GhosttyTerminalLine(
+    this.runs, {
+    this.wrap = false,
+    this.wrapContinuation = false,
+  });
 
-  const GhosttyTerminalLine.empty() : runs = const <GhosttyTerminalRun>[];
+  const GhosttyTerminalLine.empty()
+    : runs = const <GhosttyTerminalRun>[],
+      wrap = false,
+      wrapContinuation = false;
 
   final List<GhosttyTerminalRun> runs;
+
+  /// Whether this line soft-wraps into the next line.
+  final bool wrap;
+
+  /// Whether this line continues a previous soft-wrapped line.
+  final bool wrapContinuation;
 
   String get text => runs.map((run) => run.text).join();
 
@@ -469,11 +491,14 @@ final class GhosttyTerminalLine {
 
   @override
   bool operator ==(Object other) {
-    return other is GhosttyTerminalLine && listEquals(other.runs, runs);
+    return other is GhosttyTerminalLine &&
+        other.wrap == wrap &&
+        other.wrapContinuation == wrapContinuation &&
+        listEquals(other.runs, runs);
   }
 
   @override
-  int get hashCode => Object.hashAll(runs);
+  int get hashCode => Object.hash(Object.hashAll(runs), wrap, wrapContinuation);
 }
 
 final class _GhosttyTerminalLineCell {

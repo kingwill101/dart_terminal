@@ -718,7 +718,10 @@ class GhosttyTerminalController extends ChangeNotifier
     if (!preferPty) {
       return false;
     }
-    return Platform.isLinux || Platform.isMacOS;
+    return Platform.isLinux ||
+        Platform.isMacOS ||
+        Platform.isAndroid ||
+        Platform.isIOS;
   }
 
   Future<Process> _spawnProcess(
@@ -737,6 +740,9 @@ class GhosttyTerminalController extends ChangeNotifier
   String _defaultShell() {
     if (Platform.isWindows) {
       return 'cmd.exe';
+    }
+    if (Platform.isAndroid) {
+      return '/system/bin/sh';
     }
     return Platform.environment['SHELL'] ?? '/bin/bash';
   }
