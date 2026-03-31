@@ -1,5 +1,7 @@
-## 0.1.1-dev.1
+## 0.1.1
 
+- Graduated the staged `0.1.1-dev` VT/runtime updates as the stable `0.1.1`
+  release.
 - Synced the bundled Ghostty checkout to the latest VT headers, regenerated
   the FFI bindings, and updated the local binding generator to use the
   `ffigen` API directly.
