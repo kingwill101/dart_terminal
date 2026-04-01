@@ -45,6 +45,8 @@ enum GhosttyTerminalInteractionPolicy {
   terminalMouseFirst,
 }
 
+const double _terminalHeaderHeight = 28.0;
+
 /// Painter-based terminal widget that renders lines from [GhosttyTerminalController].
 ///
 /// The controller now keeps a real [VtTerminal] alive, and this widget sizes
@@ -55,6 +57,13 @@ class GhosttyTerminalView extends StatefulWidget {
     required this.controller,
     super.key,
     this.autofocus = false,
+    this.showHeader = true,
+    this.showVerticalScrollbar = false,
+    this.scrollController,
+    this.scrollPhysics,
+    this.autoFollowOnActivity = false,
+    this.focusOnInteraction = true,
+    this.onTapTerminal,
     this.focusNode,
     this.backgroundColor = const Color(0xFF0A0F14),
     this.foregroundColor = const Color(0xFFE6EDF3),
@@ -75,6 +84,10 @@ class GhosttyTerminalView extends StatefulWidget {
     this.copyOptions = const GhosttyTerminalCopyOptions(),
     this.wordBoundaryPolicy = const GhosttyTerminalWordBoundaryPolicy(),
     this.selectionAutoScrollEdgeInset = 28,
+    this.scrollbarThickness = 10,
+    this.scrollbarMinThumbExtent = 24,
+    this.scrollbarThumbColor = const Color(0x66FFFFFF),
+    this.scrollbarTrackColor = const Color(0x22000000),
     this.interactionPolicy = GhosttyTerminalInteractionPolicy.auto,
     this.onSelectionChanged,
     this.onSelectionContentChanged,
@@ -88,6 +101,27 @@ class GhosttyTerminalView extends StatefulWidget {
 
   /// Whether the view should request focus automatically when inserted.
   final bool autofocus;
+
+  /// Whether to paint the terminal header/chrome row above the grid.
+  final bool showHeader;
+
+  /// Whether to show a local vertical scrollbar for transcript scrolling.
+  final bool showVerticalScrollbar;
+
+  /// Optional Flutter scroll controller for transcript scrolling.
+  final ScrollController? scrollController;
+
+  /// Optional Flutter scroll physics used by the internal scrollable.
+  final ScrollPhysics? scrollPhysics;
+
+  /// Whether new terminal activity should snap the viewport back to the live bottom.
+  final bool autoFollowOnActivity;
+
+  /// Whether terminal gestures should request focus for keyboard input.
+  final bool focusOnInteraction;
+
+  /// Optional callback invoked when the terminal receives a tap interaction.
+  final VoidCallback? onTapTerminal;
 
   /// Optional externally-managed focus node for keyboard input.
   final FocusNode? focusNode;
@@ -108,9 +142,17 @@ class GhosttyTerminalView extends StatefulWidget {
   final double lineHeight;
 
   /// Preferred monospace font family for terminal text.
+  ///
+  /// A bundled monospace font such as `Noto Sans Mono` or `IBM Plex Mono`
+  /// gives more consistent terminal text metrics than platform fallback.
   final String? fontFamily;
 
   /// Fallback font families used when [fontFamily] lacks required glyphs.
+  ///
+  /// A symbol-oriented fallback such as `Noto Sans Symbols 2` works well for
+  /// general-purpose arrows and markers. Terminal primitives such as
+  /// box-drawing and block elements may still be rendered by the widget's
+  /// custom glyph path for cell-accurate output.
   final List<String>? fontFamilyFallback;
 
   /// Optional package that provides [fontFamily].
@@ -149,6 +191,18 @@ class GhosttyTerminalView extends StatefulWidget {
   /// Distance from the viewport edge that triggers auto-scroll during drag selection.
   final double selectionAutoScrollEdgeInset;
 
+  /// Visual thickness of the optional vertical scrollbar.
+  final double scrollbarThickness;
+
+  /// Minimum logical height of the optional vertical scrollbar thumb.
+  final double scrollbarMinThumbExtent;
+
+  /// Fill color for the optional vertical scrollbar thumb.
+  final Color scrollbarThumbColor;
+
+  /// Fill color for the optional vertical scrollbar track.
+  final Color scrollbarTrackColor;
+
   /// Controls whether Flutter-side selection or terminal mouse reporting wins
   /// when both could handle the same pointer input.
   final GhosttyTerminalInteractionPolicy interactionPolicy;
@@ -178,9 +232,13 @@ class GhosttyTerminalView extends StatefulWidget {
 class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
   late FocusNode _focusNode;
   late bool _ownsFocusNode;
+  late ScrollController _scrollController;
+  late bool _ownsScrollController;
   int _scrollOffsetLines = 0;
   int _lastReportedCols = -1;
   int _lastReportedRows = -1;
+  int _lastVisibleStartLine = 0;
+  double _lastMeasuredLinePixels = 1;
   final GhosttyTerminalSelectionSession<GhosttyTerminalSelection>
   _selectionSession =
       GhosttyTerminalSelectionSession<GhosttyTerminalSelection>();
@@ -188,6 +246,12 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
       GhosttyTerminalAutoScrollSession<_TerminalMetrics>();
   final _TerminalTextPainterCache _nativeRunPainterCache =
       _TerminalTextPainterCache(maxEntries: 512);
+  final _TerminalTextIntrinsicWidthCache _nativeRunIntrinsicWidthCache =
+      _TerminalTextIntrinsicWidthCache(maxEntries: 1024);
+  int _pendingSerialTapCount = 0;
+  GhosttyTerminalSelection? _wordSelectionAnchor;
+  _TerminalSelectionGranularity _dragSelectionGranularity =
+      _TerminalSelectionGranularity.cell;
   late final GhosttyTerminalGestureCoordinator<
     GhosttyTerminalCellPosition,
     GhosttyTerminalSelection
@@ -202,11 +266,18 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
   String? get _hoveredHyperlink => _selectionSession.hoveredHyperlink;
   int? get _lineSelectionAnchorRow => _selectionSession.lineSelectionAnchorRow;
 
+  void _recordSerialTapDown(SerialTapDownDetails details) {
+    _pendingSerialTapCount = details.count;
+  }
+
   @override
   void initState() {
     super.initState();
     _focusNode = widget.focusNode ?? FocusNode();
     _ownsFocusNode = widget.focusNode == null;
+    _scrollController = widget.scrollController ?? ScrollController();
+    _ownsScrollController = widget.scrollController == null;
+    _scrollController.addListener(_onScrollControllerChanged);
     widget.controller.addListener(_onControllerChanged);
   }
 
@@ -229,13 +300,19 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
       _focusNode = widget.focusNode ?? FocusNode();
       _ownsFocusNode = widget.focusNode == null;
     }
+    if (oldWidget.scrollController != widget.scrollController) {
+      _scrollController.removeListener(_onScrollControllerChanged);
+      if (_ownsScrollController) {
+        _scrollController.dispose();
+      }
+      _scrollController = widget.scrollController ?? ScrollController();
+      _ownsScrollController = widget.scrollController == null;
+      _scrollController.addListener(_onScrollControllerChanged);
+    }
     if (oldWidget.copyOptions != widget.copyOptions && _selection != null) {
       ghosttyTerminalNotifySelectionContent<GhosttyTerminalSelection>(
         selection: _selection,
-        resolveText: (selection) => widget.controller.snapshot.textForSelection(
-          selection,
-          options: widget.copyOptions,
-        ),
+        resolveText: _resolveSelectionText,
         onSelectionContentChanged: widget.onSelectionContentChanged,
       );
     }
@@ -245,6 +322,10 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
   void dispose() {
     _stopAutoScroll();
     widget.controller.removeListener(_onControllerChanged);
+    _scrollController.removeListener(_onScrollControllerChanged);
+    if (_ownsScrollController) {
+      _scrollController.dispose();
+    }
     if (_ownsFocusNode) {
       _focusNode.dispose();
     }
@@ -258,14 +339,52 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     if (_selection != null) {
       ghosttyTerminalNotifySelectionContent<GhosttyTerminalSelection>(
         selection: _selection,
-        resolveText: (selection) => widget.controller.snapshot.textForSelection(
-          selection,
-          options: widget.copyOptions,
-        ),
+        resolveText: _resolveSelectionText,
         onSelectionContentChanged: widget.onSelectionContentChanged,
       );
     }
+    if (widget.autoFollowOnActivity) {
+      _jumpToLiveBottom();
+    }
     setState(() {});
+  }
+
+  void _onScrollControllerChanged() {
+    if (!mounted || _lastMeasuredLinePixels <= 0) {
+      return;
+    }
+    final nextOffsetLines = (_scrollController.offset / _lastMeasuredLinePixels)
+        .round();
+    if (nextOffsetLines == _scrollOffsetLines) {
+      return;
+    }
+    setState(() {
+      _scrollOffsetLines = nextOffsetLines;
+    });
+  }
+
+  bool _jumpToLiveBottom() {
+    if (_scrollController.hasClients) {
+      if (_scrollController.offset.abs() >= 0.5) {
+        _scrollController.jumpTo(0);
+        return true;
+      }
+      if (_scrollOffsetLines != 0) {
+        setState(() {
+          _scrollOffsetLines = 0;
+        });
+        return true;
+      }
+      return false;
+    }
+
+    if (_scrollOffsetLines != 0) {
+      setState(() {
+        _scrollOffsetLines = 0;
+      });
+      return true;
+    }
+    return false;
   }
 
   KeyEventResult _handleKey(FocusNode _, KeyEvent event) {
@@ -320,6 +439,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     final controlText = ghosttyTerminalControlText(event, modifiers: modifiers);
 
     if (key != null) {
+      _jumpToLiveBottom();
       if (_selection != null) {
         if (_selectionSession.updateSelection(null)) {
           setState(() {});
@@ -340,6 +460,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     }
 
     if (character.isNotEmpty) {
+      _jumpToLiveBottom();
       if (_selection != null) {
         if (_selectionSession.updateSelection(null)) {
           setState(() {});
@@ -350,6 +471,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     }
 
     if (controlText != null && controlText.isNotEmpty) {
+      _jumpToLiveBottom();
       if (_selection != null) {
         if (_selectionSession.updateSelection(null)) {
           setState(() {});
@@ -384,9 +506,86 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     if (selection == null) {
       return '';
     }
+    return _resolveSelectionText(selection);
+  }
+
+  String _resolveSelectionText(GhosttyTerminalSelection selection) {
+    final renderSnapshot = widget.controller.renderSnapshot;
+    if (widget.renderer == GhosttyTerminalRendererMode.renderState &&
+        _scrollOffsetLines == 0 &&
+        renderSnapshot != null &&
+        renderSnapshot.hasViewportData) {
+      return _renderSnapshotTextForSelection(
+        renderSnapshot,
+        selection,
+        viewportStartLine: _lastVisibleStartLine,
+        options: widget.copyOptions,
+      );
+    }
     return widget.controller.snapshot.textForSelection(
       selection,
       options: widget.copyOptions,
+    );
+  }
+
+  String? _resolveHyperlinkUriAt(GhosttyTerminalCellPosition position) {
+    final renderSnapshot = widget.controller.renderSnapshot;
+    if (widget.renderer == GhosttyTerminalRendererMode.renderState &&
+        _scrollOffsetLines == 0 &&
+        renderSnapshot != null &&
+        renderSnapshot.hasViewportData) {
+      final uri = _renderSnapshotHyperlinkAt(
+        renderSnapshot,
+        position,
+        viewportStartLine: _lastVisibleStartLine,
+      );
+      if (uri != null) {
+        return uri;
+      }
+    }
+    return widget.controller.snapshot.hyperlinkAt(position);
+  }
+
+  GhosttyTerminalSelection? _resolveWordSelectionAt(
+    GhosttyTerminalCellPosition position,
+  ) {
+    final renderSnapshot = widget.controller.renderSnapshot;
+    if (widget.renderer == GhosttyTerminalRendererMode.renderState &&
+        _scrollOffsetLines == 0 &&
+        renderSnapshot != null &&
+        renderSnapshot.hasViewportData) {
+      return _renderSnapshotWordSelectionAt(
+        renderSnapshot,
+        position,
+        viewportStartLine: _lastVisibleStartLine,
+        policy: widget.wordBoundaryPolicy,
+      );
+    }
+    return widget.controller.snapshot.wordSelectionAt(
+      position,
+      policy: widget.wordBoundaryPolicy,
+    );
+  }
+
+  GhosttyTerminalSelection? _resolveLineSelectionBetweenRows(
+    int baseRow,
+    int extentRow,
+  ) {
+    final renderSnapshot = widget.controller.renderSnapshot;
+    if (widget.renderer == GhosttyTerminalRendererMode.renderState &&
+        _scrollOffsetLines == 0 &&
+        renderSnapshot != null &&
+        renderSnapshot.hasViewportData) {
+      return _renderSnapshotLineSelectionBetweenRows(
+        renderSnapshot,
+        baseRow,
+        extentRow,
+        viewportStartLine: _lastVisibleStartLine,
+      );
+    }
+    return widget.controller.snapshot.lineSelectionBetweenRows(
+      baseRow,
+      extentRow,
     );
   }
 
@@ -399,8 +598,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     ghosttyTerminalNotifySelectionChange<GhosttyTerminalSelection>(
       previousSelection: previousSelection,
       nextSelection: _selection,
-      resolveText: (nextSelection) => widget.controller.snapshot
-          .textForSelection(nextSelection, options: widget.copyOptions),
+      resolveText: _resolveSelectionText,
       onSelectionChanged: widget.onSelectionChanged,
       onSelectionContentChanged: widget.onSelectionContentChanged,
     );
@@ -449,10 +647,11 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     );
   }
 
+  double get _headerHeight => widget.showHeader ? _terminalHeaderHeight : 0;
+
   void _syncGrid(Size size, _TerminalMetrics metrics) {
-    const headerHeight = 28.0;
     final contentWidth = size.width - widget.padding.horizontal;
-    final contentHeight = size.height - headerHeight - widget.padding.vertical;
+    final contentHeight = size.height - _headerHeight - widget.padding.vertical;
     if (contentWidth <= 0 || contentHeight <= 0) {
       return;
     }
@@ -517,18 +716,13 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
       return;
     }
 
-    setState(() {
-      _scrollOffsetLines = (_scrollOffsetLines - deltaLines).clamp(
-        0,
-        _maxScrollOffset(size, metrics),
-      );
-    });
+    _setScrollOffsetLines(_scrollOffsetLines - deltaLines, size, metrics);
   }
 
   VtMouseEncoderSize _mouseEncoderSize(Size size, _TerminalMetrics metrics) {
     return VtMouseEncoderSize(
       screenWidth: math.max(1, size.width.round()),
-      screenHeight: math.max(1, size.height.round()),
+      screenHeight: math.max(1, (size.height - _headerHeight).round()),
       cellWidth: math.max(1, metrics.charWidth.round()),
       cellHeight: math.max(1, metrics.linePixels.round()),
       paddingTop: widget.padding.top.round(),
@@ -615,14 +809,15 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
       return;
     }
 
+    final terminalLocalY = math.max<double>(
+      0,
+      event.localPosition.dy - _headerHeight,
+    );
     widget.controller.sendMouse(
       action: action,
       button: button ?? _mouseButtonFromButtons(event.buttons),
       mods: GhosttyTerminalModifierState.fromHardwareKeyboard().ghosttyMask,
-      position: VtMousePosition(
-        x: event.localPosition.dx,
-        y: event.localPosition.dy,
-      ),
+      position: VtMousePosition(x: event.localPosition.dx, y: terminalLocalY),
       size: _mouseEncoderSize(size, metrics),
       trackingMode: _terminalMouseTrackingMode,
       format: _terminalMouseFormat,
@@ -640,8 +835,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
   }
 
   _TerminalViewport _viewportFor(Size size, _TerminalMetrics metrics) {
-    const headerHeight = 28.0;
-    final contentTop = headerHeight + widget.padding.top;
+    final contentTop = _headerHeight + widget.padding.top;
     final contentHeight = size.height - contentTop - widget.padding.bottom;
     final maxVisible = contentHeight <= 0
         ? 1
@@ -656,6 +850,143 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
       contentTop: contentTop,
       contentHeight: math.max(0, contentHeight),
       maxVisible: maxVisible,
+    );
+  }
+
+  void _setScrollOffsetLines(int offset, Size size, _TerminalMetrics metrics) {
+    final clamped = offset.clamp(0, _maxScrollOffset(size, metrics));
+    if (clamped == _scrollOffsetLines && !_scrollController.hasClients) {
+      return;
+    }
+    final targetPixels = clamped * metrics.linePixels;
+    if (_scrollController.hasClients) {
+      final maxPixels = _scrollController.position.maxScrollExtent;
+      final clampedPixels = targetPixels.clamp(0.0, maxPixels);
+      if ((_scrollController.offset - clampedPixels).abs() < 0.5) {
+        if (clamped != _scrollOffsetLines) {
+          setState(() {
+            _scrollOffsetLines = clamped;
+          });
+        }
+        return;
+      }
+      _scrollController.jumpTo(clampedPixels);
+      return;
+    }
+    setState(() {
+      _scrollOffsetLines = clamped;
+    });
+  }
+
+  Widget _buildScrollLayer(
+    Size size,
+    _TerminalMetrics metrics,
+    _TerminalViewport viewport,
+  ) {
+    final maxOffset = _maxScrollOffset(size, metrics);
+    if (viewport.contentHeight <= 0) {
+      return const SizedBox.shrink();
+    }
+
+    final maxScrollPixels = maxOffset * metrics.linePixels;
+    final scrollExtentHeight = viewport.contentHeight + maxScrollPixels;
+    return Positioned(
+      left: 0,
+      right: 0,
+      top: viewport.contentTop,
+      height: viewport.contentHeight,
+      child: SingleChildScrollView(
+        controller: _scrollController,
+        physics: widget.scrollPhysics ?? const ClampingScrollPhysics(),
+        child: SizedBox(width: size.width, height: scrollExtentHeight),
+      ),
+    );
+  }
+
+  Widget _buildScrollbarOverlay(
+    Size size,
+    _TerminalMetrics metrics,
+    _TerminalViewport viewport,
+  ) {
+    final lineCount = widget.controller.snapshot.lines.length;
+    final maxOffset = _maxScrollOffset(size, metrics);
+    if (!widget.showVerticalScrollbar ||
+        viewport.contentHeight <= 0 ||
+        lineCount <= viewport.maxVisible ||
+        maxOffset <= 0) {
+      return const SizedBox.shrink();
+    }
+
+    final trackTop = viewport.contentTop;
+    final trackHeight = viewport.contentHeight;
+    final visibleFraction = (viewport.maxVisible / lineCount).clamp(0.0, 1.0);
+    final thumbExtent = math.max(
+      widget.scrollbarMinThumbExtent,
+      trackHeight * visibleFraction,
+    );
+    final thumbTravel = math.max(0.0, trackHeight - thumbExtent);
+    final thumbTop =
+        trackTop +
+        (maxOffset == 0
+            ? thumbTravel
+            : ((maxOffset - _scrollOffsetLines) / maxOffset) * thumbTravel);
+
+    double fractionForDy(double dy, {bool centerThumb = false}) {
+      final localY = dy - trackTop;
+      final thumbAnchor = centerThumb ? thumbExtent / 2 : 0.0;
+      final travelY = (localY - thumbAnchor).clamp(0.0, thumbTravel);
+      if (thumbTravel <= 0) {
+        return 0;
+      }
+      return travelY / thumbTravel;
+    }
+
+    void updateFraction(double fraction) {
+      final nextOffset = ((1 - fraction.clamp(0.0, 1.0)) * maxOffset).round();
+      _setScrollOffsetLines(nextOffset, size, metrics);
+    }
+
+    return Positioned(
+      top: trackTop,
+      right: 2,
+      width: widget.scrollbarThickness,
+      height: trackHeight,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (details) => updateFraction(
+          fractionForDy(details.localPosition.dy + trackTop, centerThumb: true),
+        ),
+        onVerticalDragDown: (details) => updateFraction(
+          fractionForDy(details.localPosition.dy + trackTop, centerThumb: true),
+        ),
+        onVerticalDragUpdate: (details) => updateFraction(
+          fractionForDy(details.localPosition.dy + trackTop, centerThumb: true),
+        ),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: widget.scrollbarTrackColor,
+            borderRadius: BorderRadius.circular(widget.scrollbarThickness / 2),
+          ),
+          child: Stack(
+            children: [
+              Positioned(
+                top: thumbTop - trackTop,
+                left: 0,
+                right: 0,
+                height: thumbExtent,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: widget.scrollbarThumbColor,
+                    borderRadius: BorderRadius.circular(
+                      widget.scrollbarThickness / 2,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -694,16 +1025,23 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
       0,
       widget.controller.snapshot.lines.length - 1,
     );
-    final lines = widget.controller.snapshot.lines;
     final col = ((resolvedX - widget.padding.left) / metrics.charWidth).floor();
-    final maxCol = math.max(0, lines[row].cellCount - 1);
+    final maxCol = math.max(0, widget.controller.cols - 1);
     return GhosttyTerminalCellPosition(row: row, col: col.clamp(0, maxCol));
   }
 
-  void _stopAutoScroll({bool clearLineSelectionAnchor = true}) {
+  void _stopAutoScroll({
+    bool clearLineSelectionAnchor = true,
+    bool resetSelectionGestureState = true,
+  }) {
     _autoScrollSession.stop();
     if (clearLineSelectionAnchor) {
       _selectionSession.clearLineSelectionAnchorRow();
+    }
+    if (resetSelectionGestureState) {
+      _dragSelectionGranularity = _TerminalSelectionGranularity.cell;
+      _wordSelectionAnchor = null;
+      _pendingSerialTapCount = 0;
     }
   }
 
@@ -724,7 +1062,10 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     final shouldScrollUp = localPosition.dy < topEdge;
     final shouldScrollDown = localPosition.dy > bottomEdge;
     if (!shouldScrollUp && !shouldScrollDown) {
-      _stopAutoScroll(clearLineSelectionAnchor: false);
+      _stopAutoScroll(
+        clearLineSelectionAnchor: false,
+        resetSelectionGestureState: false,
+      );
       return;
     }
 
@@ -752,7 +1093,10 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
         ? 1
         : (localPosition.dy > bottomEdge ? -1 : 0);
     if (direction == 0) {
-      _stopAutoScroll(clearLineSelectionAnchor: false);
+      _stopAutoScroll(
+        clearLineSelectionAnchor: false,
+        resetSelectionGestureState: false,
+      );
       return;
     }
 
@@ -783,12 +1127,27 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     }
 
     final lineSelectionAnchorRow = _lineSelectionAnchorRow;
-    final nextSelection = lineSelectionAnchorRow == null
-        ? GhosttyTerminalSelection(base: current.base, extent: position)
-        : widget.controller.snapshot.lineSelectionBetweenRows(
-            lineSelectionAnchorRow,
-            position.row,
-          );
+    final nextSelection = switch (_dragSelectionGranularity) {
+      _TerminalSelectionGranularity.word => _extendWordSelection(position),
+      _TerminalSelectionGranularity.line =>
+        lineSelectionAnchorRow == null
+            ? GhosttyTerminalSelection(base: current.base, extent: position)
+            : _resolveLineSelectionBetweenRows(
+                lineSelectionAnchorRow,
+                position.row,
+              ),
+      _TerminalSelectionGranularity.cell =>
+        lineSelectionAnchorRow == null
+            ? GhosttyTerminalSelection(base: current.base, extent: position)
+            : _resolveLineSelectionBetweenRows(
+                lineSelectionAnchorRow,
+                position.row,
+              ),
+    };
+    if (nextSelection == null) {
+      _stopAutoScroll();
+      return;
+    }
     final previousSelection = _selection;
     setState(() {
       _scrollOffsetLines = nextOffset;
@@ -797,10 +1156,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     ghosttyTerminalNotifySelectionChange<GhosttyTerminalSelection>(
       previousSelection: previousSelection,
       nextSelection: _selection,
-      resolveText: (selection) => widget.controller.snapshot.textForSelection(
-        selection,
-        options: widget.copyOptions,
-      ),
+      resolveText: _resolveSelectionText,
       onSelectionChanged: widget.onSelectionChanged,
       onSelectionContentChanged: widget.onSelectionContentChanged,
     );
@@ -818,7 +1174,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     >(
       session: _selectionSession,
       position: position,
-      resolveUri: widget.controller.snapshot.hyperlinkAt,
+      resolveUri: _resolveHyperlinkUriAt,
     )) {
       return;
     }
@@ -832,12 +1188,56 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     );
   }
 
+  void _handleSerialTapUp(
+    SerialTapUpDetails details,
+    Size size,
+    _TerminalMetrics metrics,
+  ) {
+    final tapCount = details.count;
+    _pendingSerialTapCount = 0;
+    switch (tapCount) {
+      case 1:
+        _handleTapUp(details.localPosition, size, metrics);
+      case 2:
+        _selectWord(details.localPosition, size, metrics);
+      default:
+        _beginLineSelection(details.localPosition, size, metrics);
+    }
+  }
+
   void _handleTapUp(Offset localPosition, Size size, _TerminalMetrics metrics) {
-    FocusScope.of(context).requestFocus(_focusNode);
+    widget.onTapTerminal?.call();
+    if (widget.focusOnInteraction) {
+      FocusScope.of(context).requestFocus(_focusNode);
+    }
     if (_terminalMouseReportingEnabled) {
       return;
     }
     final position = _positionForOffset(localPosition, size, metrics);
+    final currentSelection = _selection;
+    if ((HardwareKeyboard.instance.isShiftPressed ||
+            HardwareKeyboard.instance.isLogicalKeyPressed(
+              LogicalKeyboardKey.shiftLeft,
+            ) ||
+            HardwareKeyboard.instance.isLogicalKeyPressed(
+              LogicalKeyboardKey.shiftRight,
+            )) &&
+        currentSelection != null &&
+        position != null) {
+      final nextSelection = _lineSelectionAnchorRow == null
+          ? GhosttyTerminalSelection(
+              base: currentSelection.base,
+              extent: position,
+            )
+          : _resolveLineSelectionBetweenRows(
+              _lineSelectionAnchorRow!,
+              position.row,
+            );
+      if (nextSelection != null) {
+        _setSelection(nextSelection);
+      }
+      return;
+    }
     final resolution =
         ghosttyTerminalResolveTap<
           GhosttyTerminalCellPosition,
@@ -846,7 +1246,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
           session: _selectionSession,
           selection: _selection,
           position: position,
-          resolveUri: widget.controller.snapshot.hyperlinkAt,
+          resolveUri: _resolveHyperlinkUriAt,
         );
     if (resolution.hyperlink case final hyperlink?) {
       unawaited(_openHyperlink(hyperlink));
@@ -865,6 +1265,14 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     if (_terminalMouseReportingEnabled) {
       return;
     }
+    if (_pendingSerialTapCount >= 3) {
+      _beginLineSelection(localPosition, size, metrics);
+      return;
+    }
+    if (_pendingSerialTapCount == 2) {
+      _beginWordSelectionDrag(localPosition, size, metrics);
+      return;
+    }
     final position = _positionForOffset(localPosition, size, metrics);
     final selection = _gestureCoordinator.beginSelection(
       position: position,
@@ -875,7 +1283,33 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
       return;
     }
     _stopAutoScroll();
-    FocusScope.of(context).requestFocus(_focusNode);
+    _wordSelectionAnchor = null;
+    _dragSelectionGranularity = _TerminalSelectionGranularity.cell;
+    if (widget.focusOnInteraction) {
+      FocusScope.of(context).requestFocus(_focusNode);
+    }
+    _setSelection(selection);
+  }
+
+  void _beginWordSelectionDrag(
+    Offset localPosition,
+    Size size,
+    _TerminalMetrics metrics,
+  ) {
+    final position = _positionForOffset(localPosition, size, metrics);
+    final selection = _gestureCoordinator.selectWord(
+      position: position,
+      resolveWordSelection: _resolveWordSelectionAt,
+    );
+    if (selection == null) {
+      return;
+    }
+    _stopAutoScroll();
+    _wordSelectionAnchor = selection.normalized;
+    _dragSelectionGranularity = _TerminalSelectionGranularity.word;
+    if (widget.focusOnInteraction) {
+      FocusScope.of(context).requestFocus(_focusNode);
+    }
     _setSelection(selection);
   }
 
@@ -893,21 +1327,58 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
       metrics,
       clampToViewport: true,
     );
-    final nextSelection = _gestureCoordinator.updateSelection(
-      currentSelection: _selection,
-      position: position,
-      extendSelection: (currentSelection, position) => GhosttyTerminalSelection(
-        base: currentSelection.base,
-        extent: position,
+    final nextSelection = switch (_dragSelectionGranularity) {
+      _TerminalSelectionGranularity.word => _extendWordSelection(position),
+      _TerminalSelectionGranularity.line => _gestureCoordinator.updateSelection(
+        currentSelection: _selection,
+        position: position,
+        extendSelection: (currentSelection, position) =>
+            GhosttyTerminalSelection(
+              base: currentSelection.base,
+              extent: position,
+            ),
+        extendLineSelection: (anchorRow, position) =>
+            _resolveLineSelectionBetweenRows(anchorRow, position.row),
       ),
-      extendLineSelection: (anchorRow, position) => widget.controller.snapshot
-          .lineSelectionBetweenRows(anchorRow, position.row),
-    );
+      _TerminalSelectionGranularity.cell => _gestureCoordinator.updateSelection(
+        currentSelection: _selection,
+        position: position,
+        extendSelection: (currentSelection, position) =>
+            GhosttyTerminalSelection(
+              base: currentSelection.base,
+              extent: position,
+            ),
+        extendLineSelection: (anchorRow, position) =>
+            _resolveLineSelectionBetweenRows(anchorRow, position.row),
+      ),
+    };
     if (nextSelection == null) {
       return;
     }
     _setSelection(nextSelection);
     _syncAutoScroll(localPosition, size, metrics);
+  }
+
+  GhosttyTerminalSelection? _extendWordSelection(
+    GhosttyTerminalCellPosition? position,
+  ) {
+    final anchor = _wordSelectionAnchor;
+    if (anchor == null || position == null) {
+      return null;
+    }
+    final current = _resolveWordSelectionAt(position);
+    if (current == null) {
+      return null;
+    }
+    final anchorNormalized = anchor.normalized;
+    final currentNormalized = current.normalized;
+    final start = anchorNormalized.start.compareTo(currentNormalized.start) <= 0
+        ? anchorNormalized.start
+        : currentNormalized.start;
+    final end = anchorNormalized.end.compareTo(currentNormalized.end) >= 0
+        ? anchorNormalized.end
+        : currentNormalized.end;
+    return GhosttyTerminalSelection(base: start, extent: end);
   }
 
   void _selectWord(Offset localPosition, Size size, _TerminalMetrics metrics) {
@@ -917,14 +1388,17 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     final position = _positionForOffset(localPosition, size, metrics);
     final selection = _gestureCoordinator.selectWord(
       position: position,
-      resolveWordSelection: (position) => widget.controller.snapshot
-          .wordSelectionAt(position, policy: widget.wordBoundaryPolicy),
+      resolveWordSelection: _resolveWordSelectionAt,
     );
     if (selection == null) {
       return;
     }
     _stopAutoScroll();
-    FocusScope.of(context).requestFocus(_focusNode);
+    _wordSelectionAnchor = selection.normalized;
+    _dragSelectionGranularity = _TerminalSelectionGranularity.word;
+    if (widget.focusOnInteraction) {
+      FocusScope.of(context).requestFocus(_focusNode);
+    }
     _setSelection(selection);
   }
 
@@ -940,12 +1414,15 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     final selection = _gestureCoordinator.beginLineSelection(
       position: position,
       rowOfPosition: (position) => position.row,
-      resolveLineSelection: (position) => widget.controller.snapshot
-          .lineSelectionBetweenRows(position.row, position.row),
+      resolveLineSelection: (position) =>
+          _resolveLineSelectionBetweenRows(position.row, position.row),
     );
     if (selection == null) {
       return;
     }
+    _stopAutoScroll();
+    _wordSelectionAnchor = null;
+    _dragSelectionGranularity = _TerminalSelectionGranularity.line;
     _setSelection(selection);
     _syncAutoScroll(localPosition, size, metrics);
   }
@@ -957,9 +1434,11 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final size = Size(constraints.maxWidth, constraints.maxHeight);
+        _lastMeasuredLinePixels = metrics.linePixels;
         _autoScrollSession.updateLayout(layoutSize: size, metrics: metrics);
         _syncGrid(size, metrics);
         final viewport = _viewportFor(size, metrics);
+        _lastVisibleStartLine = viewport.startLine;
 
         return Focus(
           focusNode: _focusNode,
@@ -1008,56 +1487,83 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
               ),
               onPointerSignal: (event) =>
                   _handlePointerSignal(event, size, metrics),
-              child: GestureDetector(
+              child: RawGestureDetector(
                 behavior: HitTestBehavior.opaque,
-                onTapUp: (details) =>
-                    _handleTapUp(details.localPosition, size, metrics),
-                onDoubleTapDown: (details) =>
-                    _selectWord(details.localPosition, size, metrics),
-                onLongPressStart: (details) =>
-                    _beginLineSelection(details.localPosition, size, metrics),
-                onLongPressMoveUpdate: (details) =>
-                    _updateSelection(details.localPosition, size, metrics),
-                onLongPressEnd: (_) => _stopAutoScroll(),
-                onPanDown: (details) =>
-                    _beginSelection(details.localPosition, size, metrics),
-                onPanUpdate: (details) =>
-                    _updateSelection(details.localPosition, size, metrics),
-                onPanEnd: (_) => _stopAutoScroll(),
-                onPanCancel: _stopAutoScroll,
-                child: RepaintBoundary(
-                  child: CustomPaint(
-                    painter: _GhosttyTerminalPainter(
-                      revision: widget.controller.revision,
-                      title: widget.controller.title,
-                      snapshot: widget.controller.snapshot,
-                      renderSnapshot: widget.controller.renderSnapshot,
-                      renderer: widget.renderer,
-                      running: widget.controller.isRunning,
-                      focused: _focusNode.hasFocus,
-                      cols: widget.controller.cols,
-                      rows: widget.controller.rows,
-                      scrollOffsetLines: _scrollOffsetLines,
-                      visibleStartLine: viewport.startLine,
-                      charWidth: metrics.charWidth,
-                      linePixels: metrics.linePixels,
-                      backgroundColor: widget.backgroundColor,
-                      foregroundColor: widget.foregroundColor,
-                      chromeColor: widget.chromeColor,
-                      cursorColor: widget.cursorColor,
-                      selectionColor: widget.selectionColor,
-                      hyperlinkColor: widget.hyperlinkColor,
-                      palette: widget.palette,
-                      fontSize: widget.fontSize,
-                      fontFamily: widget.fontFamily ?? 'monospace',
-                      fontFamilyFallback: widget.fontFamilyFallback,
-                      fontPackage: widget.fontPackage,
-                      letterSpacing: widget.letterSpacing,
-                      padding: widget.padding,
-                      selection: _selection,
-                      nativeRunPainterCache: _nativeRunPainterCache,
-                    ),
-                    child: const SizedBox.expand(),
+                gestures: <Type, GestureRecognizerFactory>{
+                  SerialTapGestureRecognizer:
+                      GestureRecognizerFactoryWithHandlers<
+                        SerialTapGestureRecognizer
+                      >(SerialTapGestureRecognizer.new, (recognizer) {
+                        recognizer.onSerialTapDown = _recordSerialTapDown;
+                        recognizer.onSerialTapUp = (details) =>
+                            _handleSerialTapUp(details, size, metrics);
+                      }),
+                },
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onLongPressStart: (details) =>
+                      _beginLineSelection(details.localPosition, size, metrics),
+                  onLongPressMoveUpdate: (details) =>
+                      _updateSelection(details.localPosition, size, metrics),
+                  onLongPressEnd: (_) => _stopAutoScroll(),
+                  onPanDown: (details) =>
+                      _beginSelection(details.localPosition, size, metrics),
+                  onPanUpdate: (details) =>
+                      _updateSelection(details.localPosition, size, metrics),
+                  onPanEnd: (_) => _stopAutoScroll(),
+                  onPanCancel: _stopAutoScroll,
+                  child: Stack(
+                    children: [
+                      if (widget.showHeader)
+                        SizedBox(
+                          key: const ValueKey('terminalHeader'),
+                          height: _terminalHeaderHeight,
+                        ),
+                      _buildScrollLayer(size, metrics, viewport),
+                      RepaintBoundary(
+                        child: CustomPaint(
+                          key: const ValueKey('terminalPainter'),
+                          painter: _GhosttyTerminalPainter(
+                            revision: widget.controller.revision,
+                            title: widget.controller.title,
+                            snapshot: widget.controller.snapshot,
+                            renderSnapshot: widget.controller.renderSnapshot,
+                            renderer: widget.renderer,
+                            running: widget.controller.isRunning,
+                            focused: _focusNode.hasFocus,
+                            cols: widget.controller.cols,
+                            rows: widget.controller.rows,
+                            scrollOffsetLines: _scrollOffsetLines,
+                            visibleStartLine: viewport.startLine,
+                            charWidth: metrics.charWidth,
+                            linePixels: metrics.linePixels,
+                            backgroundColor: widget.backgroundColor,
+                            foregroundColor: widget.foregroundColor,
+                            chromeColor: widget.chromeColor,
+                            cursorColor: widget.cursorColor,
+                            selectionColor: widget.selectionColor,
+                            hyperlinkColor: widget.hyperlinkColor,
+                            palette: widget.palette,
+                            fontSize: widget.fontSize,
+                            fontFamily: widget.fontFamily ?? 'monospace',
+                            fontFamilyFallback: widget.fontFamilyFallback,
+                            fontPackage: widget.fontPackage,
+                            letterSpacing: widget.letterSpacing,
+                            padding: widget.padding,
+                            headerHeight: _headerHeight,
+                            devicePixelRatio: MediaQuery.devicePixelRatioOf(
+                              context,
+                            ),
+                            selection: _selection,
+                            nativeRunPainterCache: _nativeRunPainterCache,
+                            nativeRunIntrinsicWidthCache:
+                                _nativeRunIntrinsicWidthCache,
+                          ),
+                          child: const SizedBox.expand(),
+                        ),
+                      ),
+                      _buildScrollbarOverlay(size, metrics, viewport),
+                    ],
                   ),
                 ),
               ),
@@ -1067,6 +1573,361 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
       },
     );
   }
+}
+
+String _renderSnapshotTextForSelection(
+  GhosttyTerminalRenderSnapshot snapshot,
+  GhosttyTerminalSelection selection, {
+  required int viewportStartLine,
+  required GhosttyTerminalCopyOptions options,
+}) {
+  if (!snapshot.hasViewportData) {
+    return '';
+  }
+
+  final normalized = selection.normalized;
+  final startRow = math.max(normalized.start.row, viewportStartLine);
+  final endRow = math.min(
+    normalized.end.row,
+    viewportStartLine + snapshot.rowsData.length - 1,
+  );
+  if (endRow < startRow) {
+    return '';
+  }
+
+  final buffer = StringBuffer();
+  for (var row = startRow; row <= endRow; row++) {
+    final localRow = row - viewportStartLine;
+    final renderRow = snapshot.rowsData[localRow];
+    final rowCellCount = renderRow.cells.fold<int>(
+      0,
+      (sum, cell) => sum + cell.width,
+    );
+    final startCol = row == startRow ? normalized.start.col : 0;
+    final endCol = row == endRow ? normalized.end.col : rowCellCount - 1;
+    if (rowCellCount > 0 && endCol >= startCol) {
+      final text = _renderRowTextForCellRange(renderRow, startCol, endCol);
+      buffer.write(options.trimTrailingSpaces ? text.trimRight() : text);
+    }
+    if (row != endRow) {
+      final nextRow = snapshot.rowsData[localRow + 1];
+      final joinsWrappedLine =
+          options.joinWrappedLines &&
+          renderRow.wrap &&
+          nextRow.wrapContinuation;
+      buffer.write(joinsWrappedLine ? options.wrappedLineJoiner : '\n');
+    }
+  }
+  return buffer.toString();
+}
+
+String _renderRowTextForCellRange(
+  GhosttyTerminalRenderRow row,
+  int startCol,
+  int endColInclusive,
+) {
+  if (endColInclusive < startCol) {
+    return '';
+  }
+
+  final buffer = StringBuffer();
+  var col = 0;
+  for (final cell in row.cells) {
+    final cellStart = col;
+    final cellEnd = col + cell.width - 1;
+    col += cell.width;
+    if (cellEnd < startCol) {
+      continue;
+    }
+    if (cellStart > endColInclusive) {
+      break;
+    }
+
+    if (cell.text.isNotEmpty) {
+      buffer.write(cell.text);
+      continue;
+    }
+
+    final overlapStart = math.max(startCol, cellStart);
+    final overlapEnd = math.min(endColInclusive, cellEnd);
+    final overlapWidth = overlapEnd - overlapStart + 1;
+    if (overlapWidth > 0) {
+      buffer.write(' ' * overlapWidth);
+    }
+  }
+  return buffer.toString();
+}
+
+String? _renderSnapshotHyperlinkAt(
+  GhosttyTerminalRenderSnapshot snapshot,
+  GhosttyTerminalCellPosition position, {
+  required int viewportStartLine,
+}) {
+  if (!snapshot.hasViewportData) {
+    return null;
+  }
+
+  final localRow = position.row - viewportStartLine;
+  if (localRow < 0 || localRow >= snapshot.rowsData.length) {
+    return null;
+  }
+
+  final segment = _renderSnapshotLogicalSegment(
+    snapshot,
+    localRow: localRow,
+    viewportStartLine: viewportStartLine,
+  );
+  final targetSegmentCol = segment.rowCellOffsets[localRow]! + position.col;
+  for (final match in _renderStateUrlPattern.allMatches(segment.text)) {
+    final raw = match.group(0);
+    if (raw == null || raw.isEmpty) {
+      continue;
+    }
+
+    final trimmed = raw.replaceFirst(RegExp(r'[),.;:!?]+$'), '');
+    if (trimmed.isEmpty) {
+      continue;
+    }
+
+    final prefixCellCount = match.start;
+    final linkCellCount = trimmed.length;
+    final startCol = prefixCellCount;
+    final endCol = startCol + linkCellCount - 1;
+    if (targetSegmentCol >= startCol && targetSegmentCol <= endCol) {
+      return trimmed;
+    }
+  }
+
+  return null;
+}
+
+GhosttyTerminalSelection? _renderSnapshotWordSelectionAt(
+  GhosttyTerminalRenderSnapshot snapshot,
+  GhosttyTerminalCellPosition position, {
+  required int viewportStartLine,
+  required GhosttyTerminalWordBoundaryPolicy policy,
+}) {
+  if (!snapshot.hasViewportData) {
+    return null;
+  }
+
+  final localRow = position.row - viewportStartLine;
+  if (localRow < 0 || localRow >= snapshot.rowsData.length) {
+    return null;
+  }
+
+  final segment = _renderSnapshotLogicalSegment(
+    snapshot,
+    localRow: localRow,
+    viewportStartLine: viewportStartLine,
+  );
+  if (segment.cells.isEmpty) {
+    return null;
+  }
+
+  final targetSegmentCol =
+      (segment.rowCellOffsets[localRow] ?? 0) + position.col;
+  final normalizedCol = targetSegmentCol.clamp(0, segment.cells.length - 1);
+  final classification = _classifyRenderStateCharacter(
+    segment.cells[normalizedCol],
+    policy: policy,
+  );
+  var start = normalizedCol;
+  var end = normalizedCol;
+  while (start > 0 &&
+      _classifyRenderStateCharacter(segment.cells[start - 1], policy: policy) ==
+          classification) {
+    start--;
+  }
+  while (end + 1 < segment.cells.length &&
+      _classifyRenderStateCharacter(segment.cells[end + 1], policy: policy) ==
+          classification) {
+    end++;
+  }
+
+  final startPosition = _renderSnapshotSegmentPositionAtColumn(
+    segment,
+    segmentColumn: start,
+    viewportStartLine: viewportStartLine,
+  );
+  final endPosition = _renderSnapshotSegmentPositionAtColumn(
+    segment,
+    segmentColumn: end,
+    viewportStartLine: viewportStartLine,
+  );
+  if (startPosition == null || endPosition == null) {
+    return null;
+  }
+
+  return GhosttyTerminalSelection(base: startPosition, extent: endPosition);
+}
+
+GhosttyTerminalSelection? _renderSnapshotLineSelectionBetweenRows(
+  GhosttyTerminalRenderSnapshot snapshot,
+  int baseRow,
+  int extentRow, {
+  required int viewportStartLine,
+}) {
+  if (!snapshot.hasViewportData || snapshot.rowsData.isEmpty) {
+    return null;
+  }
+
+  final minRow = viewportStartLine;
+  final maxRow = viewportStartLine + snapshot.rowsData.length - 1;
+  final startRow = baseRow.clamp(minRow, maxRow);
+  final endRow = extentRow.clamp(minRow, maxRow);
+  var normalizedStart = math.min(startRow, endRow) - viewportStartLine;
+  var normalizedEnd = math.max(startRow, endRow) - viewportStartLine;
+  while (normalizedStart > 0 &&
+      snapshot.rowsData[normalizedStart].wrapContinuation) {
+    normalizedStart--;
+  }
+  while (normalizedEnd + 1 < snapshot.rowsData.length &&
+      snapshot.rowsData[normalizedEnd].wrap) {
+    normalizedEnd++;
+  }
+  final endCol = math.max(
+    0,
+    snapshot.rowsData[normalizedEnd].cells.fold<int>(
+          0,
+          (sum, cell) => sum + cell.width,
+        ) -
+        1,
+  );
+  return GhosttyTerminalSelection(
+    base: GhosttyTerminalCellPosition(
+      row: viewportStartLine + normalizedStart,
+      col: 0,
+    ),
+    extent: GhosttyTerminalCellPosition(
+      row: viewportStartLine + normalizedEnd,
+      col: endCol,
+    ),
+  );
+}
+
+List<String> _renderRowWordCells(GhosttyTerminalRenderRow row) {
+  final cells = <String>[];
+  for (final cell in row.cells) {
+    final text = cell.text.isNotEmpty ? cell.text : ' ';
+    for (var i = 0; i < cell.width; i++) {
+      cells.add(text);
+    }
+  }
+  return cells;
+}
+
+_RenderSnapshotLogicalSegment _renderSnapshotLogicalSegment(
+  GhosttyTerminalRenderSnapshot snapshot, {
+  required int localRow,
+  required int viewportStartLine,
+}) {
+  var start = localRow;
+  while (start > 0 && snapshot.rowsData[start].wrapContinuation) {
+    start--;
+  }
+
+  var end = localRow;
+  while (end + 1 < snapshot.rowsData.length && snapshot.rowsData[end].wrap) {
+    end++;
+  }
+
+  final buffer = StringBuffer();
+  final cells = <String>[];
+  final rowCellOffsets = <int, int>{};
+  final rowCellCounts = <int, int>{};
+  var runningOffset = 0;
+  for (var row = start; row <= end; row++) {
+    rowCellOffsets[row] = runningOffset;
+    final rowCells = _renderRowWordCells(snapshot.rowsData[row]);
+    rowCellCounts[row] = rowCells.length;
+    for (final cell in rowCells) {
+      buffer.write(cell);
+      cells.add(cell);
+    }
+    runningOffset += rowCells.length;
+  }
+
+  return _RenderSnapshotLogicalSegment(
+    text: buffer.toString(),
+    cells: cells,
+    rowCellOffsets: rowCellOffsets,
+    rowCellCounts: rowCellCounts,
+  );
+}
+
+GhosttyTerminalCellPosition? _renderSnapshotSegmentPositionAtColumn(
+  _RenderSnapshotLogicalSegment segment, {
+  required int segmentColumn,
+  required int viewportStartLine,
+}) {
+  final orderedRows = segment.rowCellOffsets.keys.toList()..sort();
+  for (final localRow in orderedRows) {
+    final rowOffset = segment.rowCellOffsets[localRow] ?? 0;
+    final rowCellCount = segment.rowCellCounts[localRow] ?? 0;
+    if (rowCellCount <= 0) {
+      continue;
+    }
+    if (segmentColumn >= rowOffset &&
+        segmentColumn < rowOffset + rowCellCount) {
+      return GhosttyTerminalCellPosition(
+        row: viewportStartLine + localRow,
+        col: segmentColumn - rowOffset,
+      );
+    }
+  }
+  return null;
+}
+
+_RenderStateCellClass _classifyRenderStateCharacter(
+  String text, {
+  required GhosttyTerminalWordBoundaryPolicy policy,
+}) {
+  if (text.trim().isEmpty) {
+    return _RenderStateCellClass.whitespace;
+  }
+  if (_isRenderStateWordLikeCharacter(text, policy: policy)) {
+    return _RenderStateCellClass.word;
+  }
+  return _RenderStateCellClass.other;
+}
+
+bool _isRenderStateWordLikeCharacter(
+  String text, {
+  required GhosttyTerminalWordBoundaryPolicy policy,
+}) {
+  final extra = policy.extraWordCharacters;
+  for (final rune in text.runes) {
+    if ((rune >= 0x30 && rune <= 0x39) ||
+        (rune >= 0x41 && rune <= 0x5A) ||
+        (rune >= 0x61 && rune <= 0x7A) ||
+        extra.contains(String.fromCharCode(rune)) ||
+        (policy.treatNonAsciiAsWord && rune > 0x7F)) {
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
+enum _RenderStateCellClass { whitespace, word, other }
+
+final RegExp _renderStateUrlPattern = RegExp(
+  r'''(https?:\/\/[^\s<>"']+|mailto:[^\s<>"']+)''',
+);
+
+final class _RenderSnapshotLogicalSegment {
+  const _RenderSnapshotLogicalSegment({
+    required this.text,
+    required this.cells,
+    required this.rowCellOffsets,
+    required this.rowCellCounts,
+  });
+
+  final String text;
+  final List<String> cells;
+  final Map<int, int> rowCellOffsets;
+  final Map<int, int> rowCellCounts;
 }
 
 class _GhosttyTerminalPainter extends CustomPainter {
@@ -1097,8 +1958,11 @@ class _GhosttyTerminalPainter extends CustomPainter {
     required this.fontPackage,
     required this.letterSpacing,
     required this.padding,
+    required this.headerHeight,
+    required this.devicePixelRatio,
     required this.selection,
     required this.nativeRunPainterCache,
+    required this.nativeRunIntrinsicWidthCache,
   });
 
   final int revision;
@@ -1127,58 +1991,66 @@ class _GhosttyTerminalPainter extends CustomPainter {
   final String? fontPackage;
   final double letterSpacing;
   final EdgeInsets padding;
+  final double headerHeight;
+  final double devicePixelRatio;
   final GhosttyTerminalSelection? selection;
   final _TerminalTextPainterCache nativeRunPainterCache;
+  final _TerminalTextIntrinsicWidthCache nativeRunIntrinsicWidthCache;
 
   @override
   void paint(Canvas canvas, Size size) {
     final fullRect = Offset.zero & size;
     canvas.drawRect(fullRect, Paint()..color = backgroundColor);
 
-    const headerHeight = 28.0;
-    final headerRect = Rect.fromLTWH(0, 0, size.width, headerHeight);
-    canvas.drawRect(headerRect, Paint()..color = chromeColor);
+    if (headerHeight > 0) {
+      final headerRect = Rect.fromLTWH(0, 0, size.width, headerHeight);
+      canvas.drawRect(headerRect, Paint()..color = chromeColor);
 
-    final dotColor = running
-        ? const Color(0xFF2BD576)
-        : const Color(0xFFD65C5C);
-    canvas.drawCircle(const Offset(12, 14), 4, Paint()..color = dotColor);
+      final dotColor = running
+          ? const Color(0xFF2BD576)
+          : const Color(0xFFD65C5C);
+      canvas.drawCircle(
+        Offset(12, headerHeight / 2),
+        4,
+        Paint()..color = dotColor,
+      );
 
-    final titlePainter = TextPainter(
-      text: TextSpan(
-        text: title,
-        style: TextStyle(
-          color: foregroundColor.withValues(alpha: 0.95),
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
+      final titlePainter = TextPainter(
+        text: TextSpan(
+          text: title,
+          style: TextStyle(
+            color: foregroundColor.withValues(alpha: 0.95),
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
         ),
-      ),
-      textDirection: TextDirection.ltr,
-      maxLines: 1,
-      ellipsis: '...',
-    )..layout(maxWidth: size.width - 140);
-    titlePainter.paint(canvas, const Offset(22, 7));
+        textDirection: TextDirection.ltr,
+        maxLines: 1,
+        ellipsis: '...',
+      )..layout(maxWidth: size.width - 140);
+      titlePainter.paint(canvas, Offset(22, (headerHeight - 14) / 2));
 
-    final status = [
-      '${cols}x$rows${scrollOffsetLines > 0 ? '  +$scrollOffsetLines' : ''}',
-      _widgetModeLabel(renderer, renderSnapshot, scrollOffsetLines),
-    ].join('  •  ');
-    final statusPainter = TextPainter(
-      text: TextSpan(
-        text: status,
-        style: TextStyle(
-          color: foregroundColor.withValues(alpha: 0.68),
-          fontSize: 11,
-          fontWeight: FontWeight.w500,
+      final status = [
+        '${cols}x$rows${scrollOffsetLines > 0 ? '  +$scrollOffsetLines' : ''}',
+        _widgetModeLabel(renderer, renderSnapshot, scrollOffsetLines),
+      ].join('  •  ');
+      final statusPainter = TextPainter(
+        text: TextSpan(
+          text: status,
+          style: TextStyle(
+            color: foregroundColor.withValues(alpha: 0.68),
+            fontSize: 11,
+            fontWeight: FontWeight.w500,
+          ),
         ),
-      ),
-      textDirection: TextDirection.ltr,
-      maxLines: 1,
-    )..layout(maxWidth: size.width - 24);
-    statusPainter.paint(
-      canvas,
-      Offset(size.width - statusPainter.width - 12, 8),
-    );
+        textDirection: TextDirection.ltr,
+        maxLines: 1,
+      )..layout(maxWidth: size.width - 24);
+      statusPainter.paint(
+        canvas,
+        Offset(size.width - statusPainter.width - 12, (headerHeight - 13) / 2),
+      );
+    }
 
     final contentTop = headerHeight + padding.top;
     final contentHeight = size.height - contentTop - padding.bottom;
@@ -1206,7 +2078,8 @@ class _GhosttyTerminalPainter extends CustomPainter {
         nativeRender != null &&
         scrollOffsetLines == 0 &&
         nativeRender.hasViewportData) {
-      // Keep the renderer paint path aligned with the resolved native defaults.
+      // Respect widget defaults for the viewport baseline while still mapping
+      // native explicit colors against Ghostty's original defaults.
       canvas.drawRect(contentRect, Paint()..color = backgroundColor);
       _paintNativeRenderState(
         canvas,
@@ -1225,7 +2098,7 @@ class _GhosttyTerminalPainter extends CustomPainter {
         linePixels: linePixels,
         visibleRows: nativeRender.rowsData.length,
         cursor: nativeRender.cursor,
-        color: nativeRender.cursor.color ?? cursorColor,
+        color: cursorColor,
       );
       canvas.restore();
       if (focused) {
@@ -1238,10 +2111,16 @@ class _GhosttyTerminalPainter extends CustomPainter {
       return;
     }
 
-    var y = contentTop;
     for (var visibleIndex = 0; visibleIndex < visible.length; visibleIndex++) {
+      final rowBand = _rowBand(
+        contentTop: contentTop,
+        rowIndex: visibleIndex,
+        linePixels: linePixels,
+        devicePixelRatio: devicePixelRatio,
+      );
+      final y = rowBand.top;
       final line = visible[visibleIndex];
-      if (y > size.height) {
+      if (rowBand.top >= size.height) {
         break;
       }
 
@@ -1264,14 +2143,20 @@ class _GhosttyTerminalPainter extends CustomPainter {
         final width = run.cells * charWidth;
         if (style.background.a > 0) {
           canvas.drawRect(
-            Rect.fromLTWH(x, y, width, linePixels),
+            Rect.fromLTRB(x, rowBand.top, x + width, rowBand.bottom),
             Paint()..color = style.background,
           );
         }
         x += width;
       }
 
-      _paintSelection(canvas, line: line, row: row, y: y);
+      _paintSelection(
+        canvas,
+        line: line,
+        row: row,
+        y: rowBand.top,
+        rowHeight: rowBand.height,
+      );
 
       x = padding.left;
       for (var runIndex = 0; runIndex < line.runs.length; runIndex++) {
@@ -1290,9 +2175,22 @@ class _GhosttyTerminalPainter extends CustomPainter {
         final cellWidths = _measureTerminalCellWidths(run.text, run.cells);
         final canPaintAsSingleRun =
             graphemes.length == run.cells &&
-            cellWidths.every((widthCells) => widthCells == 1);
+            cellWidths.every((widthCells) => widthCells == 1) &&
+            _isSafeSingleRunText(run.text) &&
+            _shouldPaintTerminalRunAsSingleRun(
+              text: run.text,
+              width: run.cells * charWidth,
+              fontWeight: style.fontWeight,
+              fontStyle: style.fontStyle,
+            );
         if (canPaintAsSingleRun) {
           final rect = Rect.fromLTWH(x, y, run.cells * charWidth, linePixels);
+          final rowRect = Rect.fromLTRB(
+            rect.left,
+            rowBand.top,
+            rect.right,
+            rowBand.bottom,
+          );
           final painter = nativeRunPainterCache.resolve(
             _TerminalTextPainterKey(
               text: run.text,
@@ -1312,52 +2210,98 @@ class _GhosttyTerminalPainter extends CustomPainter {
             ),
           );
           canvas.save();
-          canvas.clipRect(rect);
-          painter.paint(canvas, Offset(rect.left, y));
+          canvas.clipRect(rowRect);
+          painter.paint(canvas, Offset(rowRect.left, rowBand.top));
           canvas.restore();
         } else {
           for (var index = 0; index < graphemes.length; index++) {
             final character = graphemes[index];
             final widthCells = cellWidths[index];
             final width = widthCells * charWidth;
+            final rect = Rect.fromLTRB(
+              textX,
+              rowBand.top,
+              textX + width,
+              rowBand.bottom,
+            );
+            if (widthCells == 1 &&
+                _paintTerminalSpecialGlyph(
+                  canvas,
+                  character,
+                  rect: rect,
+                  color: style.foreground,
+                )) {
+              textX += width;
+              continue;
+            }
+            _debugLogUnsupportedGlyph(character);
             final painter = TextPainter(
               text: TextSpan(text: character, style: textStyle),
               textDirection: TextDirection.ltr,
               maxLines: 1,
-            )..layout(minWidth: width, maxWidth: width);
-            painter.paint(canvas, Offset(textX, y));
+            )..layout();
+            painter.paint(
+              canvas,
+              _centerGlyphInCell(
+                painter,
+                character,
+                cellRect: rect,
+                fallbackHeight: rowBand.height,
+              ),
+            );
             textX += width;
           }
         }
         x += run.cells * charWidth;
       }
-
-      y += linePixels;
     }
 
-    final cursor = snapshot.cursor;
-    if (cursor != null) {
-      final cursorLine = cursor.row - start;
-      if (cursorLine >= 0 && cursorLine < visible.length) {
-        final cursorRect = Rect.fromLTWH(
-          padding.left + (cursor.col * charWidth),
-          contentTop + (cursorLine * linePixels),
-          charWidth,
-          linePixels,
-        );
-        if (focused) {
+    final shouldPaintNativeCursor =
+        scrollOffsetLines == 0 &&
+        nativeRender != null &&
+        nativeRender.hasViewportData;
+    if (shouldPaintNativeCursor) {
+      _paintNativeCursor(
+        canvas,
+        contentTop: contentTop,
+        linePixels: linePixels,
+        visibleRows: nativeRender.rowsData.length,
+        cursor: nativeRender.cursor,
+        color: cursorColor,
+      );
+    } else {
+      final shouldPaintSnapshotCursor =
+          snapshot.cursor != null && scrollOffsetLines == 0;
+      final cursor = shouldPaintSnapshotCursor ? snapshot.cursor : null;
+      if (cursor != null) {
+        final cursorLine = cursor.row - start;
+        if (cursorLine >= 0 && cursorLine < visible.length) {
+          final cursorRowBand = _rowBand(
+            contentTop: contentTop,
+            rowIndex: cursorLine,
+            linePixels: linePixels,
+            devicePixelRatio: devicePixelRatio,
+          );
+          final cursorRect = Rect.fromLTWH(
+            padding.left + (cursor.col * charWidth),
+            cursorRowBand.top,
+            charWidth,
+            cursorRowBand.height,
+          );
+          if (focused) {
+            canvas.drawRect(
+              cursorRect,
+              Paint()..color = cursorColor.withValues(alpha: 0.78),
+            );
+          }
           canvas.drawRect(
-            cursorRect,
-            Paint()..color = cursorColor.withValues(alpha: 0.78),
+            cursorRect.deflate(0.5),
+            Paint()
+              ..color = cursorColor.withValues(alpha: focused ? 1 : 0.88)
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 1,
           );
         }
-        canvas.drawRect(
-          cursorRect.deflate(0.5),
-          Paint()
-            ..color = cursorColor.withValues(alpha: focused ? 1 : 0.88)
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1,
-        );
       }
     }
     canvas.restore();
@@ -1389,6 +2333,8 @@ class _GhosttyTerminalPainter extends CustomPainter {
         fontPackage != oldDelegate.fontPackage ||
         letterSpacing != oldDelegate.letterSpacing ||
         padding != oldDelegate.padding ||
+        headerHeight != oldDelegate.headerHeight ||
+        devicePixelRatio != oldDelegate.devicePixelRatio ||
         backgroundColor != oldDelegate.backgroundColor ||
         foregroundColor != oldDelegate.foregroundColor ||
         chromeColor != oldDelegate.chromeColor ||
@@ -1416,7 +2362,13 @@ class _GhosttyTerminalPainter extends CustomPainter {
   }) {
     for (var rowIndex = 0; rowIndex < rowsData.length; rowIndex++) {
       final row = rowsData[rowIndex];
-      final y = contentTop + (rowIndex * linePixels);
+      final rowBand = _rowBand(
+        contentTop: contentTop,
+        rowIndex: rowIndex,
+        linePixels: linePixels,
+        devicePixelRatio: devicePixelRatio,
+      );
+      final y = rowBand.top;
       final logicalRow = visibleStartLine + rowIndex;
       final runs = _collectNativeRuns(
         row.cells,
@@ -1430,20 +2382,35 @@ class _GhosttyTerminalPainter extends CustomPainter {
           continue;
         }
         final width = run.width * charWidth;
-        final startCol = run.startCol;
-        final endCol = startCol + run.width - 1;
         final rect = Rect.fromLTWH(
-          padding.left + (startCol * charWidth),
-          y,
+          padding.left + (run.startCol * charWidth),
+          rowBand.top,
           width,
-          linePixels,
+          rowBand.height,
         );
         if (run.background.a > 0) {
           canvas.drawRect(rect, Paint()..color = run.background);
         }
-        if (_selectionIntersectsSpan(logicalRow, startCol, endCol)) {
-          canvas.drawRect(rect, Paint()..color = selectionColor);
+      }
+      _paintNativeSelection(
+        canvas,
+        row: logicalRow,
+        cellCount: row.cells.fold<int>(0, (sum, cell) => sum + cell.width),
+        y: rowBand.top,
+        rowHeight: rowBand.height,
+      );
+      for (final run in runs) {
+        if (run.width <= 0) {
+          continue;
         }
+        final width = run.width * charWidth;
+        final startCol = run.startCol;
+        final rect = Rect.fromLTWH(
+          padding.left + (startCol * charWidth),
+          rowBand.top,
+          width,
+          rowBand.height,
+        );
         if (run.hasRenderableText) {
           final foreground = _resolveNativeForeground(
             style: run.style,
@@ -1494,7 +2461,18 @@ class _GhosttyTerminalPainter extends CustomPainter {
                 : _measureTerminalCellWidths(run.text, run.width);
             final canPaintAsSingleRun =
                 graphemes.length == run.width &&
-                graphemeWidths.every((widthCells) => widthCells == 1);
+                graphemeWidths.every((widthCells) => widthCells == 1) &&
+                _isSafeSingleRunText(run.text) &&
+                _shouldPaintTerminalRunAsSingleRun(
+                  text: run.text,
+                  width: run.width * charWidth,
+                  fontWeight: run.style.bold
+                      ? FontWeight.w700
+                      : FontWeight.w400,
+                  fontStyle: run.style.italic
+                      ? FontStyle.italic
+                      : FontStyle.normal,
+                );
             if (canPaintAsSingleRun) {
               final painter = nativeRunPainterCache.resolve(
                 _TerminalTextPainterKey(
@@ -1536,12 +2514,37 @@ class _GhosttyTerminalPainter extends CustomPainter {
                     ? graphemeWidths[index]
                     : 1;
                 final cellWidth = widthCells * charWidth;
+                final rect = Rect.fromLTRB(
+                  textX,
+                  rowBand.top,
+                  textX + cellWidth,
+                  rowBand.bottom,
+                );
+                if (widthCells == 1 &&
+                    _paintTerminalSpecialGlyph(
+                      canvas,
+                      character,
+                      rect: rect,
+                      color: textForeground,
+                    )) {
+                  textX += cellWidth;
+                  continue;
+                }
+                _debugLogUnsupportedGlyph(character);
                 final painter = TextPainter(
                   text: TextSpan(text: character, style: textStyle),
                   textDirection: TextDirection.ltr,
                   maxLines: 1,
-                )..layout(minWidth: cellWidth, maxWidth: cellWidth);
-                painter.paint(canvas, Offset(textX, y));
+                )..layout();
+                painter.paint(
+                  canvas,
+                  _centerGlyphInCell(
+                    painter,
+                    character,
+                    cellRect: rect,
+                    fallbackHeight: rowBand.height,
+                  ),
+                );
                 textX += cellWidth;
               }
             }
@@ -1572,11 +2575,28 @@ class _GhosttyTerminalPainter extends CustomPainter {
       return;
     }
     final widthCells = cursor.onWideTail ? 2 : 1;
+    final startCol = cursor.onWideTail
+        ? math.max(0, cursor.col! - 1)
+        : cursor.col!;
+    final rowBand = _rowBand(
+      contentTop: contentTop,
+      rowIndex: cursor.row!,
+      linePixels: linePixels,
+      devicePixelRatio: devicePixelRatio,
+    );
     final cursorRect = Rect.fromLTWH(
-      padding.left + (cursor.col! * charWidth),
-      contentTop + (cursor.row! * linePixels),
+      padding.left + (startCol * charWidth),
+      rowBand.top,
       charWidth * widthCells,
-      linePixels,
+      rowBand.height,
+    );
+    final snappedCursorLeft = _snapLogicalToPhysical(
+      cursorRect.left,
+      devicePixelRatio,
+    );
+    final snappedCursorWidth = _snapLogicalExtentToPhysical(
+      cursorRect.width,
+      devicePixelRatio,
     );
     final shouldShowCursorFill = focused || !cursor.blinking;
     final drawColor = color.withValues(
@@ -1589,22 +2609,28 @@ class _GhosttyTerminalPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = math.max(0.8, linePixels * 0.08);
 
+    final barWidth = _snapLogicalExtentToPhysical(
+      math.max(2.0, charWidth * 0.2),
+      devicePixelRatio,
+    );
+    final underlineHeight = _snapLogicalExtentToPhysical(
+      math.max(1.5, linePixels * 0.12),
+      devicePixelRatio,
+    );
     final shapeRect = switch (cursor.visualStyle) {
       GhosttyRenderStateCursorVisualStyle
           .GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR =>
-        Rect.fromLTWH(
-          cursorRect.left,
-          cursorRect.top,
-          math.max(2.0, charWidth * 0.2),
-          cursorRect.height,
-        ),
+        Rect.fromLTWH(snappedCursorLeft, rowBand.top, barWidth, rowBand.height),
       GhosttyRenderStateCursorVisualStyle
           .GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE =>
         Rect.fromLTWH(
-          cursorRect.left,
-          cursorRect.bottom - math.max(1.5, linePixels * 0.12),
-          cursorRect.width,
-          math.max(1.5, linePixels * 0.12),
+          snappedCursorLeft,
+          _snapLogicalToPhysical(
+            cursorRect.bottom - underlineHeight,
+            devicePixelRatio,
+          ),
+          snappedCursorWidth,
+          underlineHeight,
         ),
       GhosttyRenderStateCursorVisualStyle
           .GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW =>
@@ -1727,6 +2753,12 @@ class _GhosttyTerminalPainter extends CustomPainter {
     required Color nativeDefaultForeground,
     required Color nativeDefaultBackground,
   }) {
+    final previousHasRenderableText = previous.text.isNotEmpty;
+    final nextHasRenderableText = next.text.isNotEmpty;
+    if (previousHasRenderableText != nextHasRenderableText) {
+      return false;
+    }
+
     return _nativeRenderStyleEquals(previous.style, next.style) &&
         _resolvedNativeBackground(
               metadataColor: _resolveMetadataBackgroundColor(
@@ -1790,44 +2822,18 @@ class _GhosttyTerminalPainter extends CustomPainter {
       defaultBackground: defaultBackground,
       metadataColor: metadataColor,
     );
-    final resolvedForeground = _resolvePaletteAwareNativeColor(
-      style.foregroundToken,
-      fallback: resolved.foreground,
-    );
-    final resolvedBackground = _resolvePaletteAwareNativeColor(
-      style.backgroundToken,
-      fallback: resolved.background,
-    );
-    final foreground = style.foreground == nativeDefaultForeground
+    final foreground =
+        !style.hasExplicitForeground &&
+            style.foreground == nativeDefaultForeground
         ? defaultForeground
-        : resolvedForeground;
+        : resolved.foreground;
     final background =
-        metadataColor == null && style.background == nativeDefaultBackground
+        metadataColor == null &&
+            !style.hasExplicitBackground &&
+            style.background == nativeDefaultBackground
         ? Colors.transparent
-        : resolvedBackground;
+        : resolved.background;
     return (foreground: foreground, background: background);
-  }
-
-  Color _resolvePaletteAwareNativeColor(
-    GhosttyTerminalColor? token, {
-    required Color fallback,
-  }) {
-    if (token == null) {
-      return fallback;
-    }
-    final rgb = token.rgb;
-    if (rgb != null) {
-      return Color.fromARGB(
-        0xFF,
-        (rgb >> 16) & 0xFF,
-        (rgb >> 8) & 0xFF,
-        rgb & 0xFF,
-      );
-    }
-    if (token.paletteIndex != null) {
-      return palette.resolve(token, fallback: fallback);
-    }
-    return fallback;
   }
 
   Color _resolvedNativeBackground({
@@ -1852,13 +2858,6 @@ class _GhosttyTerminalPainter extends CustomPainter {
     required GhosttyTerminalRenderCellMetadata metadata,
     Color? fallback,
   }) {
-    final paletteIndex = metadata.colorPaletteIndex;
-    if (paletteIndex != null) {
-      return palette.resolve(
-        GhosttyTerminalColor.palette(paletteIndex),
-        fallback: fallback ?? backgroundColor,
-      );
-    }
     return metadata.backgroundColor ?? fallback;
   }
 
@@ -1881,25 +2880,6 @@ class _GhosttyTerminalPainter extends CustomPainter {
         a.overline == b.overline &&
         a.strikethrough == b.strikethrough &&
         a.underline == b.underline;
-  }
-
-  bool _selectionIntersectsSpan(int row, int startCol, int endCol) {
-    final selection = this.selection;
-    if (selection == null) {
-      return false;
-    }
-    final normalized = selection.normalized;
-    if (row < normalized.start.row || row > normalized.end.row) {
-      return false;
-    }
-
-    final selectionStart = row == normalized.start.row
-        ? normalized.start.col
-        : 0;
-    final selectionEnd = row == normalized.end.row
-        ? normalized.end.col
-        : cols - 1;
-    return startCol <= selectionEnd && endCol >= selectionStart;
   }
 
   TextDecoration _nativeTextDecoration({
@@ -1951,6 +2931,7 @@ class _GhosttyTerminalPainter extends CustomPainter {
     required GhosttyTerminalLine line,
     required int row,
     required double y,
+    required double rowHeight,
   }) {
     final selection = this.selection;
     if (selection == null || line.cellCount == 0) {
@@ -1971,10 +2952,857 @@ class _GhosttyTerminalPainter extends CustomPainter {
     final left = padding.left + (startCol * charWidth);
     final width = (endCol - startCol + 1) * charWidth;
     canvas.drawRect(
-      Rect.fromLTWH(left, y, width, linePixels),
+      Rect.fromLTWH(left, y, width, rowHeight),
       Paint()..color = selectionColor,
     );
   }
+
+  void _paintNativeSelection(
+    Canvas canvas, {
+    required int row,
+    required int cellCount,
+    required double y,
+    required double rowHeight,
+  }) {
+    final selection = this.selection;
+    if (selection == null || cellCount <= 0) {
+      return;
+    }
+    final normalized = selection.normalized;
+    if (row < normalized.start.row || row > normalized.end.row) {
+      return;
+    }
+
+    final startCol = row == normalized.start.row ? normalized.start.col : 0;
+    final endCol = row == normalized.end.row
+        ? normalized.end.col
+        : cellCount - 1;
+    if (endCol < startCol) {
+      return;
+    }
+    final left = padding.left + (startCol * charWidth);
+    final width = (endCol - startCol + 1) * charWidth;
+    canvas.drawRect(
+      Rect.fromLTWH(left, y, width, rowHeight),
+      Paint()..color = selectionColor,
+    );
+  }
+
+  bool _shouldPaintTerminalRunAsSingleRun({
+    required String text,
+    required double width,
+    required FontWeight fontWeight,
+    required FontStyle fontStyle,
+  }) {
+    if (text.isEmpty) {
+      return false;
+    }
+
+    final measuredWidth = nativeRunIntrinsicWidthCache.resolve(
+      _TerminalIntrinsicWidthKey(
+        text: text,
+        fontSize: fontSize,
+        lineHeight: linePixels / fontSize,
+        fontFamily: fontFamily,
+        fontFamilyFallback: fontFamilyFallback,
+        fontPackage: fontPackage,
+        letterSpacing: letterSpacing,
+        fontWeight: fontWeight,
+        fontStyle: fontStyle,
+      ),
+    );
+
+    return (measuredWidth - width).abs() <= 0.75;
+  }
+
+  bool _paintTerminalSpecialGlyph(
+    Canvas canvas,
+    String text, {
+    required Rect rect,
+    required Color color,
+  }) {
+    return _paintTerminalBoxDrawingGlyph(
+          canvas,
+          text,
+          rect: rect,
+          color: color,
+        ) ||
+        _paintTerminalBlockGlyph(canvas, text, rect: rect, color: color) ||
+        _paintTerminalBrailleGlyph(canvas, text, rect: rect, color: color) ||
+        _paintTerminalGeometricGlyph(canvas, text, rect: rect, color: color) ||
+        _paintTerminalRaisedTextGlyph(canvas, text, rect: rect, color: color) ||
+        _paintTerminalSymbolGlyph(canvas, text, rect: rect, color: color);
+  }
+
+  bool _paintTerminalBoxDrawingGlyph(
+    Canvas canvas,
+    String text, {
+    required Rect rect,
+    required Color color,
+  }) {
+    final rune = text.runes.length == 1 ? text.runes.first : null;
+    if (rune == null) {
+      return false;
+    }
+
+    final spec = _terminalBoxDrawingSpec(rune);
+    if (spec == null) {
+      return false;
+    }
+
+    final horizontalStroke = _boxDrawingStrokeWidth(
+      rect,
+      heavy: spec.heavyHorizontal,
+      devicePixelRatio: devicePixelRatio,
+    );
+    final verticalStroke = _boxDrawingStrokeWidth(
+      rect,
+      heavy: spec.heavyVertical,
+      devicePixelRatio: devicePixelRatio,
+    );
+    final centerX = _pixelSnapAxis(
+      rect.left + (rect.width / 2),
+      verticalStroke,
+      devicePixelRatio: devicePixelRatio,
+    );
+    final centerY = _pixelSnapAxis(
+      rect.top + _boxDrawingCenterYOffset(rect, spec),
+      horizontalStroke,
+      devicePixelRatio: devicePixelRatio,
+    );
+    final left = _snapLogicalToPhysical(rect.left, devicePixelRatio);
+    final right = _snapLogicalToPhysical(rect.right, devicePixelRatio);
+    final top = _snapLogicalToPhysical(rect.top, devicePixelRatio);
+    final bottom = _snapLogicalToPhysical(rect.bottom, devicePixelRatio);
+
+    final horizontalPaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = horizontalStroke
+      ..strokeCap = StrokeCap.butt
+      ..strokeJoin = StrokeJoin.miter
+      ..isAntiAlias = false;
+    final verticalPaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = verticalStroke
+      ..strokeCap = StrokeCap.butt
+      ..strokeJoin = StrokeJoin.miter
+      ..isAntiAlias = false;
+
+    if (spec.rounded && ((spec.left || spec.right) && (spec.up || spec.down))) {
+      final radius = math.min(rect.width, rect.height) * 0.45;
+      final path = Path();
+      if (spec.right && spec.down) {
+        path
+          ..moveTo(right, centerY)
+          ..lineTo(centerX + radius, centerY)
+          ..quadraticBezierTo(centerX, centerY, centerX, centerY + radius)
+          ..lineTo(centerX, bottom);
+      } else if (spec.left && spec.down) {
+        path
+          ..moveTo(left, centerY)
+          ..lineTo(centerX - radius, centerY)
+          ..quadraticBezierTo(centerX, centerY, centerX, centerY + radius)
+          ..lineTo(centerX, bottom);
+      } else if (spec.right && spec.up) {
+        path
+          ..moveTo(right, centerY)
+          ..lineTo(centerX + radius, centerY)
+          ..quadraticBezierTo(centerX, centerY, centerX, centerY - radius)
+          ..lineTo(centerX, top);
+      } else if (spec.left && spec.up) {
+        path
+          ..moveTo(left, centerY)
+          ..lineTo(centerX - radius, centerY)
+          ..quadraticBezierTo(centerX, centerY, centerX, centerY - radius)
+          ..lineTo(centerX, top);
+      }
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = color
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = math.max(horizontalStroke, verticalStroke)
+          ..strokeCap = StrokeCap.butt
+          ..strokeJoin = StrokeJoin.round
+          ..isAntiAlias = true,
+      );
+      return true;
+    }
+
+    if ((spec.left || spec.right) && !(spec.up || spec.down)) {
+      canvas.drawLine(
+        Offset(spec.left ? left : centerX, centerY),
+        Offset(spec.right ? right : centerX, centerY),
+        horizontalPaint,
+      );
+      return true;
+    }
+
+    if ((spec.up || spec.down) && !(spec.left || spec.right)) {
+      canvas.drawLine(
+        Offset(centerX, spec.up ? top : centerY),
+        Offset(centerX, spec.down ? bottom : centerY),
+        verticalPaint,
+      );
+      return true;
+    }
+
+    if ((spec.left || spec.right) && (spec.up || spec.down)) {
+      if (spec.left && !spec.right && spec.down && !spec.up) {
+        canvas.drawLine(
+          Offset(left, centerY),
+          Offset(centerX, centerY),
+          horizontalPaint,
+        );
+        canvas.drawLine(
+          Offset(centerX, centerY),
+          Offset(centerX, bottom),
+          verticalPaint,
+        );
+        return true;
+      }
+      if (spec.right && !spec.left && spec.down && !spec.up) {
+        canvas.drawLine(
+          Offset(right, centerY),
+          Offset(centerX, centerY),
+          horizontalPaint,
+        );
+        canvas.drawLine(
+          Offset(centerX, centerY),
+          Offset(centerX, bottom),
+          verticalPaint,
+        );
+        return true;
+      }
+      if (spec.left && !spec.right && spec.up && !spec.down) {
+        canvas.drawLine(
+          Offset(left, centerY),
+          Offset(centerX, centerY),
+          horizontalPaint,
+        );
+        canvas.drawLine(
+          Offset(centerX, centerY),
+          Offset(centerX, top),
+          verticalPaint,
+        );
+        return true;
+      }
+      if (spec.right && !spec.left && spec.up && !spec.down) {
+        canvas.drawLine(
+          Offset(right, centerY),
+          Offset(centerX, centerY),
+          horizontalPaint,
+        );
+        canvas.drawLine(
+          Offset(centerX, centerY),
+          Offset(centerX, top),
+          verticalPaint,
+        );
+        return true;
+      }
+    }
+
+    if (spec.left || spec.right) {
+      canvas.drawLine(
+        Offset(spec.left ? left : centerX, centerY),
+        Offset(spec.right ? right : centerX, centerY),
+        horizontalPaint,
+      );
+    }
+    if (spec.up || spec.down) {
+      canvas.drawLine(
+        Offset(centerX, spec.up ? top : centerY),
+        Offset(centerX, spec.down ? bottom : centerY),
+        verticalPaint,
+      );
+    }
+
+    return true;
+  }
+
+  bool _paintTerminalGeometricGlyph(
+    Canvas canvas,
+    String text, {
+    required Rect rect,
+    required Color color,
+  }) {
+    final rune = text.runes.length == 1 ? text.runes.first : null;
+    if (rune == null) {
+      return false;
+    }
+
+    final spec = _terminalGeometricGlyphSpec(rune);
+    if (spec == null) {
+      return false;
+    }
+
+    final diameter = math.min(rect.width, rect.height) * spec.diameterScale;
+    final glyphRect = Rect.fromCenter(
+      center: Offset(
+        rect.left + (rect.width / 2),
+        rect.top + (rect.height / 2),
+      ),
+      width: diameter,
+      height: diameter,
+    );
+    final paint = Paint()
+      ..color = color
+      ..style = spec.filled ? PaintingStyle.fill : PaintingStyle.stroke
+      ..strokeWidth = spec.filled
+          ? 0
+          : math.max(1.0, diameter * spec.strokeScale)
+      ..isAntiAlias = true;
+    canvas.drawOval(glyphRect, paint);
+    return true;
+  }
+
+  bool _paintTerminalRaisedTextGlyph(
+    Canvas canvas,
+    String text, {
+    required Rect rect,
+    required Color color,
+  }) {
+    final rune = text.runes.length == 1 ? text.runes.first : null;
+    if (rune == null) {
+      return false;
+    }
+
+    final spec = _terminalRaisedTextGlyphSpec(rune);
+    if (spec == null) {
+      return false;
+    }
+
+    final painter = TextPainter(
+      text: TextSpan(
+        text: spec.text,
+        style: TextStyle(
+          color: color,
+          fontFamily: fontFamily,
+          fontFamilyFallback: fontFamilyFallback,
+          package: fontPackage,
+          fontSize: fontSize * spec.fontScale,
+          height: 1,
+          letterSpacing: letterSpacing,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+
+    final dx = rect.left + _centeredGlyphOffset(rect.width, painter.width);
+    final dy =
+        rect.top +
+        (rect.height * spec.topOffsetScale) +
+        _centeredGlyphOffset(
+          rect.height * spec.verticalSpaceScale,
+          painter.height,
+        );
+    painter.paint(canvas, Offset(dx, dy));
+    return true;
+  }
+
+  bool _paintTerminalSymbolGlyph(
+    Canvas canvas,
+    String text, {
+    required Rect rect,
+    required Color color,
+  }) {
+    final rune = text.runes.length == 1 ? text.runes.first : null;
+    if (rune == null) {
+      return false;
+    }
+
+    final spec = _terminalSymbolGlyphSpec(rune);
+    if (spec == null) {
+      return false;
+    }
+
+    final left = _snapLogicalToPhysical(rect.left, devicePixelRatio);
+    final right = _snapLogicalToPhysical(rect.right, devicePixelRatio);
+    final top = _snapLogicalToPhysical(rect.top, devicePixelRatio);
+    final bottom = _snapLogicalToPhysical(rect.bottom, devicePixelRatio);
+    final width = right - left;
+    final height = bottom - top;
+    final strokeWidth = math.max(
+      1.0 / math.max(devicePixelRatio, 1.0),
+      math.min(width, height) * spec.strokeScale,
+    );
+    final centerX = _pixelSnapAxis(
+      rect.left + (rect.width / 2),
+      strokeWidth,
+      devicePixelRatio: devicePixelRatio,
+    );
+    final centerY = _pixelSnapAxis(
+      rect.top + (rect.height / 2),
+      strokeWidth,
+      devicePixelRatio: devicePixelRatio,
+    );
+    final paint = Paint()
+      ..color = color
+      ..style = spec.filled ? PaintingStyle.fill : PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..isAntiAlias = true;
+
+    switch (spec.kind) {
+      case _TerminalSymbolGlyphKind.downTriangle:
+        final path = Path()
+          ..moveTo(centerX, top + (height * 0.8))
+          ..lineTo(left + (width * 0.22), top + (height * 0.28))
+          ..lineTo(right - (width * 0.22), top + (height * 0.28))
+          ..close();
+        canvas.drawPath(path, paint);
+        return true;
+      case _TerminalSymbolGlyphKind.upTriangle:
+        final path = Path()
+          ..moveTo(centerX, top + (height * 0.2))
+          ..lineTo(left + (width * 0.22), bottom - (height * 0.28))
+          ..lineTo(right - (width * 0.22), bottom - (height * 0.28))
+          ..close();
+        canvas.drawPath(path, paint);
+        return true;
+      case _TerminalSymbolGlyphKind.leftTriangle:
+        final path = Path()
+          ..moveTo(left + (width * 0.2), centerY)
+          ..lineTo(right - (width * 0.28), top + (height * 0.22))
+          ..lineTo(right - (width * 0.28), bottom - (height * 0.22))
+          ..close();
+        canvas.drawPath(path, paint);
+        return true;
+      case _TerminalSymbolGlyphKind.rightTriangle:
+        final path = Path()
+          ..moveTo(right - (width * 0.2), centerY)
+          ..lineTo(left + (width * 0.28), top + (height * 0.22))
+          ..lineTo(left + (width * 0.28), bottom - (height * 0.22))
+          ..close();
+        canvas.drawPath(path, paint);
+        return true;
+      case _TerminalSymbolGlyphKind.square:
+        final insetX = width * 0.2;
+        final insetY = height * 0.2;
+        canvas.drawRect(
+          Rect.fromLTRB(
+            left + insetX,
+            top + insetY,
+            right - insetX,
+            bottom - insetY,
+          ),
+          paint,
+        );
+        return true;
+      case _TerminalSymbolGlyphKind.rightArrow:
+        final startX = left + (width * 0.18);
+        final endX = right - (width * 0.22);
+        final arrowTopY = centerY - (height * 0.18);
+        final arrowBottomY = centerY + (height * 0.18);
+        canvas.drawLine(Offset(startX, centerY), Offset(endX, centerY), paint);
+        canvas.drawLine(
+          Offset(endX - (width * 0.18), arrowTopY),
+          Offset(endX, centerY),
+          paint,
+        );
+        canvas.drawLine(
+          Offset(endX - (width * 0.18), arrowBottomY),
+          Offset(endX, centerY),
+          paint,
+        );
+        return true;
+      case _TerminalSymbolGlyphKind.leftArrow:
+        final startX = right - (width * 0.18);
+        final endX = left + (width * 0.22);
+        final arrowTopY = centerY - (height * 0.18);
+        final arrowBottomY = centerY + (height * 0.18);
+        canvas.drawLine(Offset(startX, centerY), Offset(endX, centerY), paint);
+        canvas.drawLine(
+          Offset(endX + (width * 0.18), arrowTopY),
+          Offset(endX, centerY),
+          paint,
+        );
+        canvas.drawLine(
+          Offset(endX + (width * 0.18), arrowBottomY),
+          Offset(endX, centerY),
+          paint,
+        );
+        return true;
+      case _TerminalSymbolGlyphKind.upArrow:
+        final startY = bottom - (height * 0.18);
+        final endY = top + (height * 0.22);
+        final arrowLeftX = centerX - (width * 0.18);
+        final arrowRightX = centerX + (width * 0.18);
+        canvas.drawLine(Offset(centerX, startY), Offset(centerX, endY), paint);
+        canvas.drawLine(
+          Offset(arrowLeftX, endY + (height * 0.18)),
+          Offset(centerX, endY),
+          paint,
+        );
+        canvas.drawLine(
+          Offset(arrowRightX, endY + (height * 0.18)),
+          Offset(centerX, endY),
+          paint,
+        );
+        return true;
+      case _TerminalSymbolGlyphKind.downArrow:
+        final startY = top + (height * 0.18);
+        final endY = bottom - (height * 0.22);
+        final arrowLeftX = centerX - (width * 0.18);
+        final arrowRightX = centerX + (width * 0.18);
+        canvas.drawLine(Offset(centerX, startY), Offset(centerX, endY), paint);
+        canvas.drawLine(
+          Offset(arrowLeftX, endY - (height * 0.18)),
+          Offset(centerX, endY),
+          paint,
+        );
+        canvas.drawLine(
+          Offset(arrowRightX, endY - (height * 0.18)),
+          Offset(centerX, endY),
+          paint,
+        );
+        return true;
+      case _TerminalSymbolGlyphKind.checkmark:
+        final path = Path()
+          ..moveTo(left + (width * 0.18), top + (height * 0.56))
+          ..lineTo(left + (width * 0.42), top + (height * 0.78))
+          ..lineTo(right - (width * 0.16), top + (height * 0.24));
+        canvas.drawPath(path, paint);
+        return true;
+      case _TerminalSymbolGlyphKind.enterArrow:
+        final midX = right - (width * 0.26);
+        final hookY = centerY + (height * 0.18);
+        canvas.drawLine(
+          Offset(left + (width * 0.16), centerY),
+          Offset(midX, centerY),
+          paint,
+        );
+        canvas.drawLine(
+          Offset(midX, top + (height * 0.22)),
+          Offset(midX, hookY),
+          paint,
+        );
+        canvas.drawLine(
+          Offset(midX, hookY),
+          Offset(midX - (width * 0.18), hookY - (height * 0.16)),
+          paint,
+        );
+        canvas.drawLine(
+          Offset(midX, hookY),
+          Offset(midX - (width * 0.18), hookY + (height * 0.16)),
+          paint,
+        );
+        return true;
+      case _TerminalSymbolGlyphKind.emDash:
+        canvas.drawLine(
+          Offset(left + (width * 0.12), centerY),
+          Offset(right - (width * 0.12), centerY),
+          paint,
+        );
+        return true;
+      case _TerminalSymbolGlyphKind.heavyRightArrow:
+        // Heavy round-tipped rightwards arrow (➜ U+279C).
+        // Drawn as a solid filled chevron: a left-indented pentagon centred
+        // vertically in the cell — no stem, just the broad arrowhead.
+        final path = Path()
+          ..moveTo(right - (width * 0.18), centerY) // rightmost tip
+          ..lineTo(left + (width * 0.28), top + (height * 0.18)) // top-left
+          ..lineTo(left + (width * 0.48), centerY) // centre indent
+          ..lineTo(
+            left + (width * 0.28),
+            bottom - (height * 0.18),
+          ) // bottom-left
+          ..close();
+        canvas.drawPath(path, paint);
+        return true;
+    }
+  }
+
+  bool _paintTerminalBrailleGlyph(
+    Canvas canvas,
+    String text, {
+    required Rect rect,
+    required Color color,
+  }) {
+    final rune = text.runes.length == 1 ? text.runes.first : null;
+    if (rune == null || rune < 0x2800 || rune > 0x28FF) {
+      return false;
+    }
+
+    final dots = rune - 0x2800;
+    if (dots == 0) {
+      return true;
+    }
+
+    final left = rect.left;
+    final top = rect.top;
+    final width = rect.width;
+    final height = rect.height;
+    final dotRadius = math.max(
+      0.8 / math.max(devicePixelRatio, 1.0),
+      math.min(width * 0.12, height * 0.09),
+    );
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill
+      ..isAntiAlias = true;
+
+    final xPositions = <double>[left + (width * 0.32), left + (width * 0.68)];
+    final yPositions = <double>[
+      top + (height * 0.16),
+      top + (height * 0.38),
+      top + (height * 0.60),
+      top + (height * 0.82),
+    ];
+    const bitToDot = <({int bit, int col, int row})>[
+      (bit: 0x01, col: 0, row: 0),
+      (bit: 0x02, col: 0, row: 1),
+      (bit: 0x04, col: 0, row: 2),
+      (bit: 0x08, col: 1, row: 0),
+      (bit: 0x10, col: 1, row: 1),
+      (bit: 0x20, col: 1, row: 2),
+      (bit: 0x40, col: 0, row: 3),
+      (bit: 0x80, col: 1, row: 3),
+    ];
+
+    for (final dot in bitToDot) {
+      if ((dots & dot.bit) == 0) {
+        continue;
+      }
+      canvas.drawCircle(
+        Offset(xPositions[dot.col], yPositions[dot.row]),
+        dotRadius,
+        paint,
+      );
+    }
+    return true;
+  }
+
+  bool _paintTerminalBlockGlyph(
+    Canvas canvas,
+    String text, {
+    required Rect rect,
+    required Color color,
+  }) {
+    final rune = text.runes.length == 1 ? text.runes.first : null;
+    if (rune == null) {
+      return false;
+    }
+
+    final spec = _terminalBlockGlyphSpec(rune);
+    if (spec == null) {
+      return false;
+    }
+
+    final left = _snapLogicalToPhysical(rect.left, devicePixelRatio);
+    final right = _snapLogicalToPhysical(rect.right, devicePixelRatio);
+    final top = _snapLogicalToPhysical(rect.top, devicePixelRatio);
+    final bottom = _snapLogicalToPhysical(rect.bottom, devicePixelRatio);
+    final width = right - left;
+    final height = bottom - top;
+
+    if (spec.shadeAlpha case final shadeAlpha?) {
+      final shadePaint = Paint()
+        ..color = color.withValues(alpha: color.a * shadeAlpha)
+        ..style = PaintingStyle.fill
+        ..isAntiAlias = false;
+      canvas.drawRect(Rect.fromLTRB(left, top, right, bottom), shadePaint);
+      return true;
+    }
+
+    final fillLeft = left + (width * spec.leftFraction);
+    final fillTop = top + (height * spec.topFraction);
+    final fillRight = left + (width * spec.rightFraction);
+    final fillBottom = top + (height * spec.bottomFraction);
+    final fillPaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill
+      ..isAntiAlias = false;
+    canvas.drawRect(
+      Rect.fromLTRB(
+        _snapLogicalToPhysical(fillLeft, devicePixelRatio),
+        _snapLogicalToPhysical(fillTop, devicePixelRatio),
+        _snapLogicalToPhysical(fillRight, devicePixelRatio),
+        _snapLogicalToPhysical(fillBottom, devicePixelRatio),
+      ),
+      fillPaint,
+    );
+    return true;
+  }
+}
+
+double _centeredGlyphOffset(double availableExtent, double glyphExtent) {
+  if (availableExtent <= glyphExtent) {
+    return 0;
+  }
+  return (availableExtent - glyphExtent) / 2;
+}
+
+final Set<int> _loggedUnsupportedTerminalRunes = <int>{};
+
+void _debugLogUnsupportedGlyph(String text) {
+  assert(() {
+    final runes = text.runes.toList(growable: false);
+    if (runes.isEmpty) {
+      return true;
+    }
+    if (runes.length == 1) {
+      final rune = runes.first;
+      if (rune <= 0x7E ||
+          _terminalBoxDrawingSpec(rune) != null ||
+          _terminalBlockGlyphSpec(rune) != null ||
+          _terminalGeometricGlyphSpec(rune) != null ||
+          _terminalRaisedTextGlyphSpec(rune) != null ||
+          _terminalSymbolGlyphSpec(rune) != null ||
+          (rune >= 0x2800 && rune <= 0x28FF)) {
+        return true;
+      }
+      if (_loggedUnsupportedTerminalRunes.add(rune)) {
+        debugPrint(
+          'GhosttyTerminalView unsupported glyph fallback: '
+          '"$text" U+${rune.toRadixString(16).toUpperCase().padLeft(4, '0')}',
+        );
+      }
+      return true;
+    }
+
+    for (final rune in runes) {
+      if (rune <= 0x7E) {
+        continue;
+      }
+      if (_loggedUnsupportedTerminalRunes.add(rune)) {
+        debugPrint(
+          'GhosttyTerminalView unsupported grapheme fallback: '
+          '"$text" contains U+${rune.toRadixString(16).toUpperCase().padLeft(4, '0')}',
+        );
+      }
+    }
+    return true;
+  }());
+}
+
+_TerminalRowBand _rowBand({
+  required double contentTop,
+  required int rowIndex,
+  required double linePixels,
+  required double devicePixelRatio,
+}) {
+  final top = _snapLogicalToPhysical(
+    contentTop + (rowIndex * linePixels),
+    devicePixelRatio,
+  );
+  final bottom = _snapLogicalToPhysical(
+    contentTop + ((rowIndex + 1) * linePixels),
+    devicePixelRatio,
+  );
+  final minHeight = devicePixelRatio <= 0 ? 1.0 : (1 / devicePixelRatio);
+  return _TerminalRowBand(top: top, bottom: math.max(top + minHeight, bottom));
+}
+
+double _snapLogicalToPhysical(double value, double devicePixelRatio) {
+  if (devicePixelRatio <= 0) {
+    return value;
+  }
+  return (value * devicePixelRatio).roundToDouble() / devicePixelRatio;
+}
+
+double _snapLogicalExtentToPhysical(double value, double devicePixelRatio) {
+  if (devicePixelRatio <= 0) {
+    return value;
+  }
+  return math.max(
+    1 / devicePixelRatio,
+    (value * devicePixelRatio).roundToDouble() / devicePixelRatio,
+  );
+}
+
+Offset _centerGlyphInCell(
+  TextPainter painter,
+  String text, {
+  required Rect cellRect,
+  required double fallbackHeight,
+}) {
+  final bounds = _glyphBounds(painter, text);
+  if (bounds == null) {
+    return Offset(
+      cellRect.left + _centeredGlyphOffset(cellRect.width, painter.width),
+      cellRect.top + _centeredGlyphOffset(fallbackHeight, painter.height),
+    );
+  }
+
+  return Offset(
+    cellRect.left +
+        _centeredGlyphOffset(cellRect.width, bounds.width) -
+        bounds.left,
+    cellRect.top +
+        _centeredGlyphOffset(cellRect.height, bounds.height) -
+        bounds.top,
+  );
+}
+
+Rect? _glyphBounds(TextPainter painter, String text) {
+  final boxes = painter.getBoxesForSelection(
+    TextSelection(baseOffset: 0, extentOffset: text.length),
+  );
+  if (boxes.isEmpty) {
+    return null;
+  }
+
+  var left = boxes.first.left;
+  var top = boxes.first.top;
+  var right = boxes.first.right;
+  var bottom = boxes.first.bottom;
+  for (final box in boxes.skip(1)) {
+    left = math.min(left, box.left);
+    top = math.min(top, box.top);
+    right = math.max(right, box.right);
+    bottom = math.max(bottom, box.bottom);
+  }
+  return Rect.fromLTRB(left, top, right, bottom);
+}
+
+double _boxDrawingStrokeWidth(
+  Rect rect, {
+  required bool heavy,
+  required double devicePixelRatio,
+}) {
+  final onePhysicalPixel = devicePixelRatio <= 0 ? 1.0 : 1.0 / devicePixelRatio;
+  if (!heavy) {
+    return onePhysicalPixel;
+  }
+
+  final heavyStroke = rect.width * 0.2;
+  return math.max(onePhysicalPixel, heavyStroke);
+}
+
+double _pixelSnapAxis(
+  double center,
+  double strokeWidth, {
+  required double devicePixelRatio,
+}) {
+  if (devicePixelRatio <= 0) {
+    final rounded = center.roundToDouble();
+    if (strokeWidth <= 1.0) {
+      return rounded + 0.5;
+    }
+    return rounded;
+  }
+
+  final physicalCenter = center * devicePixelRatio;
+  final onePhysicalPixel = 1.0 / devicePixelRatio;
+  if (strokeWidth <= onePhysicalPixel) {
+    return ((physicalCenter - 0.5).roundToDouble() + 0.5) / devicePixelRatio;
+  }
+  return physicalCenter.roundToDouble() / devicePixelRatio;
+}
+
+double _boxDrawingCenterYOffset(Rect rect, _TerminalBoxDrawingSpec spec) {
+  final opticalOffset = spec.up && !spec.down
+      ? -0.5
+      : spec.down && !spec.up
+      ? 0.5
+      : 0.0;
+  return (rect.height / 2) + opticalOffset;
 }
 
 bool _renderSnapshotEquals(
@@ -2020,6 +3848,8 @@ class _TerminalMetrics {
   final double linePixels;
 }
 
+enum _TerminalSelectionGranularity { cell, word, line }
+
 class _TerminalViewport {
   const _TerminalViewport({
     required this.startLine,
@@ -2032,6 +3862,15 @@ class _TerminalViewport {
   final double contentTop;
   final double contentHeight;
   final int maxVisible;
+}
+
+final class _TerminalRowBand {
+  const _TerminalRowBand({required this.top, required this.bottom});
+
+  final double top;
+  final double bottom;
+
+  double get height => bottom - top;
 }
 
 final class _NativeRenderRun {
@@ -2274,6 +4113,441 @@ final class _TerminalTextPainterCache {
   }
 }
 
+final class _TerminalIntrinsicWidthKey {
+  const _TerminalIntrinsicWidthKey({
+    required this.text,
+    required this.fontSize,
+    required this.lineHeight,
+    required this.fontFamily,
+    required this.fontFamilyFallback,
+    required this.fontPackage,
+    required this.letterSpacing,
+    required this.fontWeight,
+    required this.fontStyle,
+  });
+
+  final String text;
+  final double fontSize;
+  final double lineHeight;
+  final String fontFamily;
+  final List<String>? fontFamilyFallback;
+  final String? fontPackage;
+  final double letterSpacing;
+  final FontWeight fontWeight;
+  final FontStyle fontStyle;
+
+  @override
+  bool operator ==(Object other) {
+    return other is _TerminalIntrinsicWidthKey &&
+        text == other.text &&
+        fontSize == other.fontSize &&
+        lineHeight == other.lineHeight &&
+        fontFamily == other.fontFamily &&
+        listEquals(fontFamilyFallback, other.fontFamilyFallback) &&
+        fontPackage == other.fontPackage &&
+        letterSpacing == other.letterSpacing &&
+        fontWeight == other.fontWeight &&
+        fontStyle == other.fontStyle;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    text,
+    fontSize,
+    lineHeight,
+    fontFamily,
+    Object.hashAll(fontFamilyFallback ?? const <String>[]),
+    fontPackage,
+    letterSpacing,
+    fontWeight,
+    fontStyle,
+  );
+}
+
+final class _TerminalTextIntrinsicWidthCache {
+  _TerminalTextIntrinsicWidthCache({required this.maxEntries});
+
+  final int maxEntries;
+  final Map<_TerminalIntrinsicWidthKey, double> _widths =
+      <_TerminalIntrinsicWidthKey, double>{};
+
+  double resolve(_TerminalIntrinsicWidthKey key) {
+    final cached = _widths.remove(key);
+    if (cached != null) {
+      _widths[key] = cached;
+      return cached;
+    }
+
+    final painter = TextPainter(
+      text: TextSpan(
+        text: key.text,
+        style: TextStyle(
+          fontFamily: key.fontFamily,
+          fontFamilyFallback: key.fontFamilyFallback,
+          package: key.fontPackage,
+          fontSize: key.fontSize,
+          height: key.lineHeight,
+          letterSpacing: key.letterSpacing,
+          fontWeight: key.fontWeight,
+          fontStyle: key.fontStyle,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+
+    final width = painter.width;
+    _widths[key] = width;
+    if (_widths.length > maxEntries) {
+      _widths.remove(_widths.keys.first);
+    }
+    return width;
+  }
+}
+
+bool _containsBoxDrawingCharacters(String text) {
+  for (final rune in text.runes) {
+    if (_terminalBoxDrawingSpec(rune) != null) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool _isSafeSingleRunText(String text) {
+  if (text.isEmpty || _containsBoxDrawingCharacters(text)) {
+    return false;
+  }
+
+  for (final rune in text.runes) {
+    if (rune < 0x20 || rune > 0x7E) {
+      return false;
+    }
+  }
+  return true;
+}
+
+_TerminalBoxDrawingSpec? _terminalBoxDrawingSpec(int rune) => switch (rune) {
+  0x2574 => const _TerminalBoxDrawingSpec(left: true),
+  0x2575 => const _TerminalBoxDrawingSpec(up: true),
+  0x2576 => const _TerminalBoxDrawingSpec(right: true),
+  0x2577 => const _TerminalBoxDrawingSpec(down: true),
+  0x2578 => const _TerminalBoxDrawingSpec(left: true, heavyHorizontal: true),
+  0x2579 => const _TerminalBoxDrawingSpec(up: true, heavyVertical: true),
+  0x257A => const _TerminalBoxDrawingSpec(right: true, heavyHorizontal: true),
+  0x257B => const _TerminalBoxDrawingSpec(down: true, heavyVertical: true),
+  0x256D => const _TerminalBoxDrawingSpec(
+    right: true,
+    down: true,
+    rounded: true,
+  ),
+  0x256E => const _TerminalBoxDrawingSpec(
+    left: true,
+    down: true,
+    rounded: true,
+  ),
+  0x2570 => const _TerminalBoxDrawingSpec(right: true, up: true, rounded: true),
+  0x256F => const _TerminalBoxDrawingSpec(left: true, up: true, rounded: true),
+  0x2500 ||
+  0x2504 ||
+  0x2508 ||
+  0x2509 => const _TerminalBoxDrawingSpec(left: true, right: true),
+  0x2501 || 0x2505 => const _TerminalBoxDrawingSpec(
+    left: true,
+    right: true,
+    heavyHorizontal: true,
+  ),
+  0x2502 ||
+  0x2506 ||
+  0x250A ||
+  0x250B => const _TerminalBoxDrawingSpec(up: true, down: true),
+  0x2503 || 0x2507 => const _TerminalBoxDrawingSpec(
+    up: true,
+    down: true,
+    heavyVertical: true,
+  ),
+  0x250C ||
+  0x250D ||
+  0x250E ||
+  0x250F => const _TerminalBoxDrawingSpec(right: true, down: true),
+  0x2510 ||
+  0x2511 ||
+  0x2512 ||
+  0x2513 => const _TerminalBoxDrawingSpec(left: true, down: true),
+  0x2514 ||
+  0x2515 ||
+  0x2516 ||
+  0x2517 => const _TerminalBoxDrawingSpec(right: true, up: true),
+  0x2518 ||
+  0x2519 ||
+  0x251A ||
+  0x251B => const _TerminalBoxDrawingSpec(left: true, up: true),
+  0x251C ||
+  0x251D ||
+  0x251E ||
+  0x251F ||
+  0x2520 ||
+  0x2521 ||
+  0x2522 ||
+  0x2523 => const _TerminalBoxDrawingSpec(up: true, down: true, right: true),
+  0x2524 ||
+  0x2525 ||
+  0x2526 ||
+  0x2527 ||
+  0x2528 ||
+  0x2529 ||
+  0x252A ||
+  0x252B => const _TerminalBoxDrawingSpec(up: true, down: true, left: true),
+  0x252C ||
+  0x252D ||
+  0x252E ||
+  0x252F ||
+  0x2530 ||
+  0x2531 ||
+  0x2532 ||
+  0x2533 => const _TerminalBoxDrawingSpec(left: true, right: true, down: true),
+  0x2534 ||
+  0x2535 ||
+  0x2536 ||
+  0x2537 ||
+  0x2538 ||
+  0x2539 ||
+  0x253A ||
+  0x253B => const _TerminalBoxDrawingSpec(left: true, right: true, up: true),
+  0x253C ||
+  0x253D ||
+  0x253E ||
+  0x253F ||
+  0x2540 ||
+  0x2541 ||
+  0x2542 ||
+  0x2543 ||
+  0x2544 ||
+  0x2545 ||
+  0x2546 ||
+  0x2547 ||
+  0x2548 ||
+  0x2549 ||
+  0x254A ||
+  0x254B => const _TerminalBoxDrawingSpec(
+    up: true,
+    down: true,
+    left: true,
+    right: true,
+  ),
+  _ => null,
+};
+
+final class _TerminalBoxDrawingSpec {
+  const _TerminalBoxDrawingSpec({
+    this.up = false,
+    this.down = false,
+    this.left = false,
+    this.right = false,
+    this.heavyHorizontal = false,
+    this.heavyVertical = false,
+    this.rounded = false,
+  });
+
+  final bool up;
+  final bool down;
+  final bool left;
+  final bool right;
+  final bool heavyHorizontal;
+  final bool heavyVertical;
+  final bool rounded;
+}
+
+_TerminalGeometricGlyphSpec? _terminalGeometricGlyphSpec(int rune) =>
+    switch (rune) {
+      0x00B0 => const _TerminalGeometricGlyphSpec(
+        diameterScale: 0.42,
+        strokeScale: 0.12,
+      ),
+      0x25CB || 0x25EF => const _TerminalGeometricGlyphSpec(
+        diameterScale: 0.88,
+        strokeScale: 0.12,
+      ),
+      0x25E6 => const _TerminalGeometricGlyphSpec(
+        diameterScale: 0.4,
+        strokeScale: 0.14,
+      ),
+      0x25CF || 0x25C9 => const _TerminalGeometricGlyphSpec(
+        filled: true,
+        diameterScale: 0.58,
+      ),
+      _ => null,
+    };
+
+final class _TerminalGeometricGlyphSpec {
+  const _TerminalGeometricGlyphSpec({
+    this.filled = false,
+    required this.diameterScale,
+    this.strokeScale = 0.14,
+  });
+
+  final bool filled;
+  final double diameterScale;
+  final double strokeScale;
+}
+
+_TerminalRaisedTextGlyphSpec? _terminalRaisedTextGlyphSpec(int rune) =>
+    switch (rune) {
+      0x2070 => const _TerminalRaisedTextGlyphSpec(text: '0'),
+      0x00B9 => const _TerminalRaisedTextGlyphSpec(text: '1'),
+      0x00B2 => const _TerminalRaisedTextGlyphSpec(text: '2'),
+      0x00B3 => const _TerminalRaisedTextGlyphSpec(text: '3'),
+      0x2075 => const _TerminalRaisedTextGlyphSpec(text: '5'),
+      0x2076 => const _TerminalRaisedTextGlyphSpec(text: '6'),
+      0x2077 => const _TerminalRaisedTextGlyphSpec(text: '7'),
+      0x2078 => const _TerminalRaisedTextGlyphSpec(text: '8'),
+      0x2079 => const _TerminalRaisedTextGlyphSpec(text: '9'),
+      0x207A => const _TerminalRaisedTextGlyphSpec(text: '+'),
+      0x207B => const _TerminalRaisedTextGlyphSpec(text: '-'),
+      0x2074 => const _TerminalRaisedTextGlyphSpec(text: '4'),
+      _ => null,
+    };
+
+final class _TerminalRaisedTextGlyphSpec {
+  const _TerminalRaisedTextGlyphSpec({required this.text});
+
+  final String text;
+  final double fontScale = 0.7;
+  final double topOffsetScale = 0.02;
+  final double verticalSpaceScale = 0.72;
+}
+
+_TerminalSymbolGlyphSpec? _terminalSymbolGlyphSpec(int rune) => switch (rune) {
+  0x25C0 => const _TerminalSymbolGlyphSpec(
+    kind: _TerminalSymbolGlyphKind.leftTriangle,
+    filled: true,
+    strokeScale: 0.1,
+  ),
+  0x25B6 => const _TerminalSymbolGlyphSpec(
+    kind: _TerminalSymbolGlyphKind.rightTriangle,
+    filled: true,
+    strokeScale: 0.1,
+  ),
+  0x25B2 => const _TerminalSymbolGlyphSpec(
+    kind: _TerminalSymbolGlyphKind.upTriangle,
+    filled: true,
+    strokeScale: 0.1,
+  ),
+  0x25BC => const _TerminalSymbolGlyphSpec(
+    kind: _TerminalSymbolGlyphKind.downTriangle,
+    filled: true,
+    strokeScale: 0.1,
+  ),
+  0x25A0 => const _TerminalSymbolGlyphSpec(
+    kind: _TerminalSymbolGlyphKind.square,
+    filled: true,
+    strokeScale: 0.1,
+  ),
+  0x2190 => const _TerminalSymbolGlyphSpec(
+    kind: _TerminalSymbolGlyphKind.leftArrow,
+    strokeScale: 0.12,
+  ),
+  0x2192 => const _TerminalSymbolGlyphSpec(
+    kind: _TerminalSymbolGlyphKind.rightArrow,
+    strokeScale: 0.12,
+  ),
+  0x2191 => const _TerminalSymbolGlyphSpec(
+    kind: _TerminalSymbolGlyphKind.upArrow,
+    strokeScale: 0.12,
+  ),
+  0x2193 => const _TerminalSymbolGlyphSpec(
+    kind: _TerminalSymbolGlyphKind.downArrow,
+    strokeScale: 0.12,
+  ),
+  0x21B5 => const _TerminalSymbolGlyphSpec(
+    kind: _TerminalSymbolGlyphKind.enterArrow,
+    strokeScale: 0.12,
+  ),
+  0x2713 => const _TerminalSymbolGlyphSpec(
+    kind: _TerminalSymbolGlyphKind.checkmark,
+    strokeScale: 0.14,
+  ),
+  0x2014 => const _TerminalSymbolGlyphSpec(
+    kind: _TerminalSymbolGlyphKind.emDash,
+    strokeScale: 0.1,
+  ),
+  // Heavy round-tipped rightwards arrow (U+279C) — common in zsh prompts.
+  0x279C => const _TerminalSymbolGlyphSpec(
+    kind: _TerminalSymbolGlyphKind.heavyRightArrow,
+    filled: true,
+    strokeScale: 0.1,
+  ),
+  _ => null,
+};
+
+enum _TerminalSymbolGlyphKind {
+  upTriangle,
+  downTriangle,
+  leftTriangle,
+  rightTriangle,
+  square,
+  leftArrow,
+  rightArrow,
+  upArrow,
+  downArrow,
+  enterArrow,
+  checkmark,
+  emDash,
+  heavyRightArrow,
+}
+
+final class _TerminalSymbolGlyphSpec {
+  const _TerminalSymbolGlyphSpec({
+    required this.kind,
+    required this.strokeScale,
+    this.filled = false,
+  });
+
+  final _TerminalSymbolGlyphKind kind;
+  final double strokeScale;
+  final bool filled;
+}
+
+_TerminalBlockGlyphSpec? _terminalBlockGlyphSpec(int rune) => switch (rune) {
+  0x2580 => const _TerminalBlockGlyphSpec(bottomFraction: 0.5),
+  0x2581 => const _TerminalBlockGlyphSpec(topFraction: 7 / 8),
+  0x2582 => const _TerminalBlockGlyphSpec(topFraction: 6 / 8),
+  0x2583 => const _TerminalBlockGlyphSpec(topFraction: 5 / 8),
+  0x2584 => const _TerminalBlockGlyphSpec(topFraction: 0.5),
+  0x2585 => const _TerminalBlockGlyphSpec(topFraction: 3 / 8),
+  0x2586 => const _TerminalBlockGlyphSpec(topFraction: 2 / 8),
+  0x2587 => const _TerminalBlockGlyphSpec(topFraction: 1 / 8),
+  0x2588 => const _TerminalBlockGlyphSpec(),
+  0x2589 => const _TerminalBlockGlyphSpec(rightFraction: 7 / 8),
+  0x258A => const _TerminalBlockGlyphSpec(rightFraction: 6 / 8),
+  0x258B => const _TerminalBlockGlyphSpec(rightFraction: 5 / 8),
+  0x258C => const _TerminalBlockGlyphSpec(rightFraction: 0.5),
+  0x258D => const _TerminalBlockGlyphSpec(rightFraction: 3 / 8),
+  0x258E => const _TerminalBlockGlyphSpec(rightFraction: 2 / 8),
+  0x258F => const _TerminalBlockGlyphSpec(rightFraction: 1 / 8),
+  0x2590 => const _TerminalBlockGlyphSpec(leftFraction: 0.5),
+  0x2591 => const _TerminalBlockGlyphSpec(shadeAlpha: 0.25),
+  0x2592 => const _TerminalBlockGlyphSpec(shadeAlpha: 0.5),
+  0x2593 => const _TerminalBlockGlyphSpec(shadeAlpha: 0.75),
+  _ => null,
+};
+
+final class _TerminalBlockGlyphSpec {
+  const _TerminalBlockGlyphSpec({
+    this.leftFraction = 0,
+    this.topFraction = 0,
+    this.rightFraction = 1,
+    this.bottomFraction = 1,
+    this.shadeAlpha,
+  });
+
+  final double leftFraction;
+  final double topFraction;
+  final double rightFraction;
+  final double bottomFraction;
+  final double? shadeAlpha;
+}
+
 Iterable<String> _splitTerminalCells(String text) sync* {
   if (text.isEmpty) {
     return;
@@ -2281,6 +4555,50 @@ Iterable<String> _splitTerminalCells(String text) sync* {
   yield* text.characters;
 }
 
+/// Returns `true` if [rune] is a Unicode "wide" character that occupies two
+/// terminal columns (East Asian Wide / Fullwidth, wide emoji, etc.).
+bool _isWideRune(int rune) {
+  // Zero-width joiner — always narrow (combines preceding/following characters).
+  if (rune == 0x200D) return false;
+  // Variation selectors (U+FE00–U+FE0F) — narrow combining characters that
+  // select a presentation variant; must not be counted as wide.
+  if (rune >= 0xFE00 && rune <= 0xFE0F) return false;
+  // Regional Indicator Symbols (U+1F1E6–U+1F1FF) — pairs form flag emoji and
+  // each symbol occupies two terminal columns.
+  if (rune >= 0x1F1E6 && rune <= 0x1F1FF) return true;
+  // Hangul Jamo
+  if (rune >= 0x1100 && rune <= 0x115F) return true;
+  // CJK Radicals Supplement … CJK Unified Ideographs Extension A
+  if (rune >= 0x2E80 && rune <= 0x303E) return true;
+  // Hiragana … Yi Radicals (covers Katakana, Bopomofo, CJK Unified Ideographs…)
+  if (rune >= 0x3040 && rune <= 0xA4CF) return true;
+  // Hangul Syllables
+  if (rune >= 0xAC00 && rune <= 0xD7A3) return true;
+  // CJK Compatibility Ideographs
+  if (rune >= 0xF900 && rune <= 0xFAFF) return true;
+  // Vertical forms
+  if (rune >= 0xFE10 && rune <= 0xFE1F) return true;
+  // CJK Compatibility Forms … Small Form Variants
+  if (rune >= 0xFE30 && rune <= 0xFE6F) return true;
+  // Fullwidth Latin / Halfwidth and Fullwidth Forms (fullwidth block)
+  if (rune >= 0xFF01 && rune <= 0xFF60) return true;
+  // Fullwidth cent / pound / yen / won / fullwidth macron
+  if (rune >= 0xFFE0 && rune <= 0xFFE6) return true;
+  // Wide emoji / pictographs (plane 1 wide blocks)
+  if (rune >= 0x1F004 && rune <= 0x1F9FF) return true;
+  // CJK Unified Ideographs Extension B–F and Compatibility Supplement
+  if (rune >= 0x20000 && rune <= 0x2FA1F) return true;
+  return false;
+}
+
+/// Assigns a display-cell width to each grapheme cluster in [text] using
+/// Unicode display-width rules, cross-checked against [totalCells].
+///
+/// Each grapheme cluster is assigned width 2 if its first rune is a "wide"
+/// Unicode character (East Asian Wide / Fullwidth), and width 1 otherwise.
+/// If the resulting sum disagrees with [totalCells] (e.g. because the terminal
+/// uses a different width table), the excess or deficit is distributed across
+/// graphemes as a fallback.
 List<int> _measureTerminalCellWidths(String text, int totalCells) {
   final graphemes = _splitTerminalCells(text).toList(growable: false);
   if (graphemes.isEmpty) {
@@ -2291,34 +4609,29 @@ List<int> _measureTerminalCellWidths(String text, int totalCells) {
     return List<int>.filled(graphemes.length, 1, growable: false);
   }
 
-  final widths = List<int>.filled(graphemes.length, 1, growable: false);
-  var delta = totalCells - widths.fold(0, (sum, value) => sum + value);
+  // Assign widths based on Unicode display-width of the first rune.
+  final widths = <int>[
+    for (final g in graphemes)
+      g.isNotEmpty && _isWideRune(g.runes.first) ? 2 : 1,
+  ];
+
+  // Cross-check against totalCells and adjust if they disagree.
+  var delta = totalCells - widths.fold<int>(0, (sum, v) => sum + v);
   if (delta > 0) {
-    final growOrder = <int>[for (var i = 0; i < widths.length; i++) i];
-    var cursor = 0;
-    while (delta > 0 && growOrder.isNotEmpty) {
-      final index = growOrder[cursor % growOrder.length];
-      widths[index]++;
+    // More cells than we accounted for — distribute extra cells to trailing
+    // graphemes first so that ambiguous-width glyphs (e.g. emoji sequences
+    // that the terminal counts as wide) absorb the surplus before leading
+    // narrow characters do.
+    for (var i = widths.length - 1; delta > 0 && i >= 0; i--) {
+      widths[i]++;
       delta--;
-      cursor++;
     }
   } else if (delta < 0) {
-    final shrinkOrder = <int>[
-      for (var i = widths.length - 1; i >= 0; i--)
-        if (widths[i] > 1) i,
-      for (var i = widths.length - 1; i >= 0; i--)
-        if (widths[i] == 1) i,
-    ];
-    var cursor = 0;
-    while (delta < 0 && shrinkOrder.isNotEmpty) {
-      final index = shrinkOrder[cursor % shrinkOrder.length];
-      if (widths[index] > 1) {
-        widths[index]--;
+    // Fewer cells than we accounted for — shrink wide graphemes first.
+    for (var i = 0; delta < 0 && i < widths.length; i++) {
+      if (widths[i] > 1) {
+        widths[i]--;
         delta++;
-      }
-      cursor++;
-      if (cursor > shrinkOrder.length * 4) {
-        break;
       }
     }
   }

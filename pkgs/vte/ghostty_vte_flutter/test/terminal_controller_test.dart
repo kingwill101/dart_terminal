@@ -258,7 +258,7 @@ void main() {
     );
 
     expect(find.byType(GhosttyTerminalView), findsOneWidget);
-    expect(find.byType(CustomPaint), findsOneWidget);
+    expect(find.byKey(const ValueKey('terminalPainter')), findsOneWidget);
   });
 }
 

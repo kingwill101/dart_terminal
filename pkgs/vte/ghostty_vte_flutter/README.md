@@ -31,7 +31,7 @@ single import.
 | macOS    |      yes     |    yes     |
 | Windows  |      yes     |    yes     |
 | Android  |      yes     |    yes     |
-| iOS      |       --     |    yes     |
+| iOS      |      yes     |    yes     |
 
 ## Installation
 
@@ -398,7 +398,8 @@ GhosttyTerminalView(
   foregroundColor: const Color(0xFFE6EDF3),
   fontSize: 14,
   lineHeight: 1.35,
-  fontFamily: 'JetBrainsMono Nerd Font',
+  fontFamily: 'Noto Sans Mono',
+  fontFamilyFallback: const ['Noto Sans Symbols 2'],
   cellWidthScale: 1.0,
   padding: const EdgeInsets.all(12),
   palette: GhosttyTerminalPalette.xterm,
@@ -408,7 +409,7 @@ GhosttyTerminalView(
   renderer: GhosttyTerminalRendererMode.formatter,
   interactionPolicy: GhosttyTerminalInteractionPolicy.auto,
   onSelectionChanged: (selection) { /* ... */ },
-  onCopySelection: (content) { /* ... */ },
+  onCopySelection: (text) { /* ... */ },
   onPasteRequest: () async => clipboardText,
   onOpenHyperlink: (uri) { /* ... */ },
 )
@@ -440,6 +441,27 @@ GhosttyTerminalView(
 | `onCopySelection` | callback | `null` | Called with selection content for clipboard copy |
 | `onPasteRequest` | callback | `null` | Called to retrieve clipboard text for paste |
 | `onOpenHyperlink` | callback | `null` | Called when a hyperlink is activated |
+
+### Recommended font setup
+
+For more consistent terminal rendering across platforms, use a stable
+monospace font together with a symbol fallback. These fonts are supplied by
+the host app, not by `ghostty_vte_flutter`, so add them as assets or load them
+with a package such as `google_fonts` before using the configuration below. A
+good starting point is:
+
+- `Noto Sans Mono` for terminal text
+- `Noto Sans Symbols 2` as a fallback for arrows, checkmarks, and other symbols
+
+Example:
+
+```dart
+GhosttyTerminalView(
+  controller: ctrl,
+  fontFamily: 'Noto Sans Mono',
+  fontFamilyFallback: const ['Noto Sans Symbols 2'],
+)
+```
 
 ### Renderer modes
 
@@ -498,8 +520,8 @@ GhosttyTerminalView(
     extraWordCharacters: '._/~:@%#?&=+-',
     treatNonAsciiAsWord: true,
   ),
-  onCopySelection: (content) {
-    Clipboard.setData(ClipboardData(text: content.text));
+  onCopySelection: (text) {
+    Clipboard.setData(ClipboardData(text: text));
   },
   onPasteRequest: () async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
@@ -595,10 +617,10 @@ class _TerminalScreenState extends State<TerminalScreen> {
         backgroundColor: const Color(0xFF0A0F14),
         foregroundColor: const Color(0xFFE6EDF3),
         fontSize: 14,
-        fontFamily: 'JetBrainsMono Nerd Font',
-        fontFamilyFallback: const ['monospace'],
-        onCopySelection: (content) {
-          Clipboard.setData(ClipboardData(text: content.text));
+        fontFamily: 'Noto Sans Mono',
+        fontFamilyFallback: const ['Noto Sans Symbols 2'],
+        onCopySelection: (text) {
+          Clipboard.setData(ClipboardData(text: text));
         },
         onPasteRequest: () async {
           final data = await Clipboard.getData(Clipboard.kTextPlain);
@@ -609,6 +631,10 @@ class _TerminalScreenState extends State<TerminalScreen> {
   }
 }
 ```
+
+The example above assumes your app provides those font families. They are not
+bundled with `ghostty_vte_flutter`, so include them in your app assets or load
+them through a package such as `google_fonts` to avoid platform fallback.
 
 ## Web setup
 

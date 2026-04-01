@@ -5,6 +5,62 @@ import 'platform_shell_lookup_stub.dart'
     as platform_shell;
 import 'shell_environment.dart';
 
+/// Returns the best available default shell path for the current platform.
+///
+/// [isWindows], [isAndroid], and [isIOS] mirror `dart:io` `Platform` flags and
+/// are accepted as explicit parameters so that callers running on `dart:io` can
+/// pass the real values while tests can supply fakes.
+///
+/// * **Windows**: the `ComSpec` environment variable is used, falling back to
+///   `cmd.exe`.
+/// * **Android**: `/system/bin/sh` is probed first, then `/bin/sh`.
+/// * **iOS**: `/bin/sh` is always returned (the POSIX-mandated shell that is
+///   always present in the app sandbox).
+/// * **All other platforms**: the `SHELL` environment variable is honoured
+///   first; if it is absent or empty the function probes `/bin/bash`,
+///   `/usr/bin/bash`, `/bin/zsh`, `/usr/bin/zsh`, and finally `/bin/sh` in
+///   order, returning the first path that exists on disk.
+String ghosttyTerminalDefaultShell({
+  bool isWindows = false,
+  bool isAndroid = false,
+  bool isIOS = false,
+  Map<String, String>? platformEnvironment,
+}) {
+  final env = platformEnvironment ?? ghosttyTerminalPlatformEnvironment();
+
+  if (isWindows) {
+    return env['ComSpec'] ?? 'cmd.exe';
+  }
+
+  if (isAndroid) {
+    return platform_shell.ghosttyTerminalResolveFirstExistingShell(
+          const <String>['/system/bin/sh', '/bin/sh'],
+        ) ??
+        '/system/bin/sh';
+  }
+
+  if (isIOS) {
+    // iOS does not expose $SHELL in the process environment; use the
+    // POSIX-mandated sh which is always present in the app's sandbox.
+    return '/bin/sh';
+  }
+
+  // Unix (Linux / macOS): honour $SHELL first, then probe well-known paths.
+  final envShell = env['SHELL'];
+  if (envShell != null && envShell.isNotEmpty) {
+    return envShell;
+  }
+
+  return platform_shell.ghosttyTerminalResolveFirstExistingShell(const <String>[
+        '/bin/bash',
+        '/usr/bin/bash',
+        '/bin/zsh',
+        '/usr/bin/zsh',
+        '/bin/sh',
+      ]) ??
+      '/bin/sh';
+}
+
 /// Shared shell profiles used by the example apps and terminal demos.
 enum GhosttyTerminalShellProfile { auto, cleanBash, cleanZsh, userShell }
 
@@ -127,7 +183,7 @@ List<GhosttyTerminalShellLaunch> ghosttyTerminalShellLaunches({
 
   GhosttyTerminalShellLaunch? shLaunch() {
     final sh = platform_shell.ghosttyTerminalResolveFirstExistingShell(
-      const <String>['/bin/sh', '/usr/bin/sh'],
+      const <String>['/system/bin/sh', '/bin/sh', '/usr/bin/sh'],
     );
     if (sh == null) {
       return null;

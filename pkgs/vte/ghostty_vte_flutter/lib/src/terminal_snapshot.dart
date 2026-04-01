@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:characters/characters.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 import 'package:ghostty_vte/ghostty_vte.dart';
@@ -21,11 +22,21 @@ final class GhosttyTerminalSnapshot
       cursor = const GhosttyTerminalCursor(row: 0, col: 0);
 
   /// Parses VT-formatted terminal output into styled lines and cursor state.
+  ///
+  /// [wrappedRows] is an optional set of zero-based row indices (in the
+  /// formatted output) that are soft-wrapped — i.e. the terminal line
+  /// continues on the next row rather than ending with a hard newline.  When
+  /// provided, the corresponding [GhosttyTerminalLine] is constructed with
+  /// `wrap: true` and its successor with `wrapContinuation: true`.
   factory GhosttyTerminalSnapshot.fromFormattedVt(
     String text, {
     int maxLines = 2000,
+    Set<int>? wrappedRows,
   }) {
-    return _GhosttyTerminalSnapshotParser(maxLines: maxLines).parse(text);
+    return _GhosttyTerminalSnapshotParser(
+      maxLines: maxLines,
+      wrappedRows: wrappedRows,
+    ).parse(text);
   }
 
   final List<GhosttyTerminalLine> lines;
@@ -56,7 +67,10 @@ final class GhosttyTerminalSnapshot
         buffer.write(options.trimTrailingSpaces ? text.trimRight() : text);
       }
       if (row != endRow) {
-        buffer.write('\n');
+        final nextLine = lines[row + 1];
+        final joinsWrappedLine =
+            options.joinWrappedLines && line.wrap && nextLine.wrapContinuation;
+        buffer.write(joinsWrappedLine ? options.wrappedLineJoiner : '\n');
       }
     }
     return buffer.toString();
@@ -99,6 +113,9 @@ final class GhosttyTerminalSnapshot
     if (lines.isEmpty || position.row < 0 || position.row >= lines.length) {
       return null;
     }
+    if (position.col < 0 || position.col >= lines[position.row].cellCount) {
+      return null;
+    }
     return lines[position.row].hyperlinkAtCell(position.col);
   }
 
@@ -110,6 +127,10 @@ final class GhosttyTerminalSnapshot
         const GhosttyTerminalWordBoundaryPolicy(),
   }) {
     if (lines.isEmpty || position.row < 0 || position.row >= lines.length) {
+      return null;
+    }
+    final cells = lines[position.row]._lineCells();
+    if (position.col < 0 || position.col >= cells.length) {
       return null;
     }
     return lines[position.row].wordSelectionAtCell(
@@ -228,6 +249,9 @@ final class GhosttyTerminalCellPosition
 
   @override
   int get hashCode => Object.hash(row, col);
+
+  @override
+  String toString() => 'row: $row, col: $col';
 }
 
 /// Inclusive terminal text selection.
@@ -280,11 +304,24 @@ final class GhosttyTerminalSelection {
 /// Single styled line within a [GhosttyTerminalSnapshot].
 @immutable
 final class GhosttyTerminalLine {
-  const GhosttyTerminalLine(this.runs);
+  const GhosttyTerminalLine(
+    this.runs, {
+    this.wrap = false,
+    this.wrapContinuation = false,
+  });
 
-  const GhosttyTerminalLine.empty() : runs = const <GhosttyTerminalRun>[];
+  const GhosttyTerminalLine.empty()
+    : runs = const <GhosttyTerminalRun>[],
+      wrap = false,
+      wrapContinuation = false;
 
   final List<GhosttyTerminalRun> runs;
+
+  /// Whether this line soft-wraps into the next line.
+  final bool wrap;
+
+  /// Whether this line continues a previous soft-wrapped line.
+  final bool wrapContinuation;
 
   String get text => runs.map((run) => run.text).join();
 
@@ -306,11 +343,17 @@ final class GhosttyTerminalLine {
     final buffer = StringBuffer();
     var cellIndex = 0;
     for (final run in runs) {
-      for (final character in _splitCharacters(run.text)) {
-        if (cellIndex >= normalizedStart && cellIndex <= normalizedEnd) {
+      final characters = _splitCharacters(run.text).toList(growable: false);
+      final cellWidths = _measureTerminalCellWidths(run.text, run.cells);
+      for (var index = 0; index < characters.length; index++) {
+        final character = characters[index];
+        final widthCells = cellWidths[index];
+        final cellStart = cellIndex;
+        final cellEnd = cellIndex + widthCells - 1;
+        if (cellEnd >= normalizedStart && cellStart <= normalizedEnd) {
           buffer.write(character);
         }
-        cellIndex++;
+        cellIndex += widthCells;
         if (cellIndex > normalizedEnd) {
           return buffer.toString();
         }
@@ -372,8 +415,16 @@ final class GhosttyTerminalLine {
   List<_GhosttyTerminalLineCell> _lineCells() {
     final cells = <_GhosttyTerminalLineCell>[];
     for (final run in runs) {
-      for (final character in _splitCharacters(run.text)) {
-        cells.add(_GhosttyTerminalLineCell(text: character, style: run.style));
+      final characters = _splitCharacters(run.text).toList(growable: false);
+      final cellWidths = _measureTerminalCellWidths(run.text, run.cells);
+      for (var index = 0; index < characters.length; index++) {
+        final character = characters[index];
+        final widthCells = cellWidths[index];
+        for (var cell = 0; cell < widthCells; cell++) {
+          cells.add(
+            _GhosttyTerminalLineCell(text: character, style: run.style),
+          );
+        }
       }
     }
     return cells;
@@ -469,11 +520,14 @@ final class GhosttyTerminalLine {
 
   @override
   bool operator ==(Object other) {
-    return other is GhosttyTerminalLine && listEquals(other.runs, runs);
+    return other is GhosttyTerminalLine &&
+        other.wrap == wrap &&
+        other.wrapContinuation == wrapContinuation &&
+        listEquals(other.runs, runs);
   }
 
   @override
-  int get hashCode => Object.hashAll(runs);
+  int get hashCode => Object.hash(Object.hashAll(runs), wrap, wrapContinuation);
 }
 
 final class _GhosttyTerminalLineCell {
@@ -779,25 +833,106 @@ final class GhosttyTerminalPalette {
 }
 
 Iterable<String> _splitCharacters(String text) sync* {
-  for (var index = 0; index < text.length;) {
-    final unit = text.codeUnitAt(index);
-    if (unit >= 0xD800 && unit <= 0xDBFF && index + 1 < text.length) {
-      final next = text.codeUnitAt(index + 1);
-      if (next >= 0xDC00 && next <= 0xDFFF) {
-        yield text.substring(index, index + 2);
-        index += 2;
-        continue;
+  if (text.isEmpty) {
+    return;
+  }
+  yield* text.characters;
+}
+
+/// Returns `true` if [rune] is a Unicode "wide" character that occupies two
+/// terminal columns (East Asian Wide / Fullwidth, wide emoji, etc.).
+bool _isWideRune(int rune) {
+  // Zero-width joiner — always narrow (combines preceding/following characters).
+  if (rune == 0x200D) return false;
+  // Variation selectors (U+FE00–U+FE0F) — narrow combining characters that
+  // select a presentation variant; must not be counted as wide.
+  if (rune >= 0xFE00 && rune <= 0xFE0F) return false;
+  // Regional Indicator Symbols (U+1F1E6–U+1F1FF) — pairs form flag emoji and
+  // each symbol occupies two terminal columns.
+  if (rune >= 0x1F1E6 && rune <= 0x1F1FF) return true;
+  // Hangul Jamo
+  if (rune >= 0x1100 && rune <= 0x115F) return true;
+  // CJK Radicals Supplement … CJK Unified Ideographs Extension A
+  if (rune >= 0x2E80 && rune <= 0x303E) return true;
+  // Hiragana … Yi Radicals (covers Katakana, Bopomofo, CJK Unified Ideographs…)
+  if (rune >= 0x3040 && rune <= 0xA4CF) return true;
+  // Hangul Syllables
+  if (rune >= 0xAC00 && rune <= 0xD7A3) return true;
+  // CJK Compatibility Ideographs
+  if (rune >= 0xF900 && rune <= 0xFAFF) return true;
+  // Vertical forms
+  if (rune >= 0xFE10 && rune <= 0xFE1F) return true;
+  // CJK Compatibility Forms … Small Form Variants
+  if (rune >= 0xFE30 && rune <= 0xFE6F) return true;
+  // Fullwidth Latin / Halfwidth and Fullwidth Forms (fullwidth block)
+  if (rune >= 0xFF01 && rune <= 0xFF60) return true;
+  // Fullwidth cent / pound / yen / won / fullwidth macron
+  if (rune >= 0xFFE0 && rune <= 0xFFE6) return true;
+  // Wide emoji / pictographs (plane 1 wide blocks)
+  if (rune >= 0x1F004 && rune <= 0x1F9FF) return true;
+  // CJK Unified Ideographs Extension B–F and Compatibility Supplement
+  if (rune >= 0x20000 && rune <= 0x2FA1F) return true;
+  return false;
+}
+
+/// Assigns a display-cell width to each grapheme cluster in [text] using
+/// Unicode display-width rules, cross-checked against [totalCells].
+///
+/// Each grapheme cluster is assigned width 2 if its first rune is a "wide"
+/// Unicode character (East Asian Wide / Fullwidth), and width 1 otherwise.
+/// If the resulting sum disagrees with [totalCells] (e.g. because the terminal
+/// uses a different width table), the excess or deficit is distributed across
+/// graphemes as a fallback.
+List<int> _measureTerminalCellWidths(String text, int totalCells) {
+  final graphemes = _splitCharacters(text).toList(growable: false);
+  if (graphemes.isEmpty) {
+    return const <int>[];
+  }
+
+  if (totalCells <= 0) {
+    return List<int>.filled(graphemes.length, 1, growable: false);
+  }
+
+  // Assign widths based on Unicode display-width of the first rune.
+  final widths = <int>[
+    for (final g in graphemes)
+      g.isNotEmpty && _isWideRune(g.runes.first) ? 2 : 1,
+  ];
+
+  // Cross-check against totalCells and adjust if they disagree.
+  var delta = totalCells - widths.fold<int>(0, (sum, v) => sum + v);
+  if (delta > 0) {
+    // More cells than we accounted for — distribute extra cells to trailing
+    // graphemes first so that ambiguous-width glyphs (e.g. emoji sequences
+    // that the terminal counts as wide) absorb the surplus before leading
+    // narrow characters do.
+    for (var i = widths.length - 1; delta > 0 && i >= 0; i--) {
+      widths[i]++;
+      delta--;
+    }
+  } else if (delta < 0) {
+    // Fewer cells than we accounted for — shrink wide graphemes first.
+    for (var i = 0; delta < 0 && i < widths.length; i++) {
+      if (widths[i] > 1) {
+        widths[i]--;
+        delta++;
       }
     }
-    yield text.substring(index, index + 1);
-    index++;
   }
+
+  return widths;
 }
 
 final class _GhosttyTerminalSnapshotParser {
-  _GhosttyTerminalSnapshotParser({required this.maxLines});
+  _GhosttyTerminalSnapshotParser({required this.maxLines, this.wrappedRows});
 
   final int maxLines;
+
+  /// Zero-based row indices (in the formatted output) that are soft-wrapped.
+  /// Row `i` in [wrappedRows] will have `wrap: true`; row `i + 1` will have
+  /// `wrapContinuation: true`.
+  final Set<int>? wrappedRows;
+
   final VtSgrParser _sgrParser = VtSgrParser();
 
   final List<List<_GhosttyTerminalCell?>> _lines =
@@ -1239,6 +1374,24 @@ final class _GhosttyTerminalSnapshotParser {
             ? const GhosttyTerminalLine.empty()
             : GhosttyTerminalLine(runs),
       );
+    }
+
+    // Apply soft-wrap flags so that selection and copy logic can join
+    // soft-wrapped lines correctly.
+    final wrapped = wrappedRows;
+    if (wrapped != null && wrapped.isNotEmpty) {
+      for (var i = 0; i < compacted.length; i++) {
+        final isWrapped = wrapped.contains(i);
+        final isContinuation = i > 0 && wrapped.contains(i - 1);
+        if (isWrapped || isContinuation) {
+          final existing = compacted[i];
+          compacted[i] = GhosttyTerminalLine(
+            existing.runs,
+            wrap: isWrapped,
+            wrapContinuation: isContinuation,
+          );
+        }
+      }
     }
 
     if (compacted.length > maxLines) {

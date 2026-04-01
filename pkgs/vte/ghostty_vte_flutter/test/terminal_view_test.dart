@@ -9,6 +9,37 @@ import 'package:ghostty_vte_flutter/ghostty_vte_flutter.dart';
 
 final bool _hasNativeTerminal = _hasNativeTerminalSupport();
 
+/// Measured rendering metrics derived at runtime from the same [TextStyle]
+/// that [buildView] uses (`fontSize: 14, lineHeight: 1.35, fontFamily:
+/// 'monospace'`) plus the default padding of `EdgeInsets.all(12)`.
+///
+/// Prefer calling [_measureTestMetrics] inside each test after pumping the
+/// widget so that the values reflect the actual font metrics reported by the
+/// Flutter test engine rather than hand-tuned constants.
+typedef _TestMetrics = ({int charWidth, int linePixels, int padding});
+
+/// Measures [_TestMetrics] using the font metrics in effect for the current
+/// test environment.
+///
+/// Must be called after at least one [WidgetTester.pumpWidget] so that the
+/// font is loaded.
+_TestMetrics _measureTestMetrics() {
+  const style = TextStyle(
+    fontSize: 14,
+    fontFamily: 'monospace',
+    letterSpacing: 0,
+  );
+  final painter = TextPainter(
+    text: const TextSpan(text: 'M', style: style),
+    textDirection: TextDirection.ltr,
+  )..layout();
+  final charWidth = painter.width.round();
+  final linePixels = (14 * 1.35).ceil();
+  painter.dispose();
+  const padding = 12; // matches the EdgeInsets.all(12) default in buildView()
+  return (charWidth: charWidth, linePixels: linePixels, padding: padding);
+}
+
 bool _hasNativeTerminalSupport() {
   try {
     final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
@@ -34,9 +65,16 @@ void main() {
     Widget buildView({
       GhosttyTerminalController? terminalController,
       bool autofocus = false,
+      bool showHeader = true,
+      bool showVerticalScrollbar = false,
+      ScrollController? scrollController,
+      bool autoFollowOnActivity = false,
       FocusNode? focusNode,
       Color? backgroundColor,
       Color? foregroundColor,
+      Color? cursorColor,
+      Color? hyperlinkColor,
+      Color? selectionColor,
       double? fontSize,
       double? lineHeight,
       GhosttyTerminalRendererMode renderer =
@@ -61,9 +99,16 @@ void main() {
             child: GhosttyTerminalView(
               controller: terminalController ?? controller,
               autofocus: autofocus,
+              showHeader: showHeader,
+              showVerticalScrollbar: showVerticalScrollbar,
+              scrollController: scrollController,
+              autoFollowOnActivity: autoFollowOnActivity,
               focusNode: focusNode,
               backgroundColor: backgroundColor ?? const Color(0xFF0A0F14),
               foregroundColor: foregroundColor ?? const Color(0xFFE6EDF3),
+              cursorColor: cursorColor ?? const Color(0xFF9AD1C0),
+              hyperlinkColor: hyperlinkColor ?? const Color(0xFF61AFEF),
+              selectionColor: selectionColor ?? const Color(0x665DA9FF),
               fontSize: fontSize ?? 14,
               lineHeight: lineHeight ?? 1.35,
               renderer: renderer,
@@ -88,6 +133,31 @@ void main() {
       expect(find.byType(CustomPaint), findsWidgets);
       expect(controller.cols, greaterThan(0));
       expect(controller.rows, greaterThan(0));
+    });
+
+    testWidgets('can render without the terminal header', (tester) async {
+      // Render with header to get the baseline row count.
+      await tester.pumpWidget(buildView(showHeader: true));
+      await tester.pump();
+      final rowsWithHeader = controller.rows;
+
+      // The header sentinel widget should be present when showHeader: true.
+      expect(find.byKey(const ValueKey('terminalHeader')), findsOneWidget);
+
+      // Render without header — the extra space should yield more rows.
+      await tester.pumpWidget(buildView(showHeader: false));
+      await tester.pump();
+
+      // The header sentinel widget must be absent when showHeader: false.
+      expect(find.byKey(const ValueKey('terminalHeader')), findsNothing);
+
+      expect(find.byType(GhosttyTerminalView), findsOneWidget);
+      expect(controller.cols, greaterThan(0));
+      expect(controller.rows, greaterThan(0));
+      // Without the header the terminal has more vertical space, so it should
+      // expose at least as many rows (strictly more when the header height is
+      // large enough to gain a full line).
+      expect(controller.rows, greaterThanOrEqualTo(rowsWithHeader));
     });
 
     testWidgets('renders VT-backed controller output', (tester) async {
@@ -219,6 +289,546 @@ void main() {
     );
 
     testWidgets(
+      'renderState honors widget default background and foreground colors',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        const widgetBackground = Color(0xFF112233);
+        const widgetForeground = Color(0xFF55E0D0);
+
+        controller.appendDebugOutput('MMMM');
+
+        final key = GlobalKey();
+        await tester.pumpWidget(
+          RepaintBoundary(
+            key: key,
+            child: buildView(
+              showHeader: false,
+              renderer: GhosttyTerminalRendererMode.renderState,
+              backgroundColor: widgetBackground,
+              foregroundColor: widgetForeground,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final image = await _captureTerminalImageData(key);
+
+        expect(
+          _pixelMatchesColor(
+            image,
+            x: image.width - 20,
+            y: image.height ~/ 2,
+            color: widgetBackground,
+          ),
+          isTrue,
+        );
+        expect(
+          _countPixelsNearColor(image, color: widgetForeground, tolerance: 32),
+          greaterThan(12),
+        );
+      },
+    );
+
+    testWidgets(
+      'renderState keeps explicit native default colors distinct from widget defaults',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        const widgetBackground = Color(0xFF112233);
+        const widgetForeground = Color(0xFF55E0D0);
+
+        await tester.pumpWidget(
+          buildView(
+            showHeader: false,
+            renderer: GhosttyTerminalRendererMode.renderState,
+            backgroundColor: widgetBackground,
+            foregroundColor: widgetForeground,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final nativeRender = controller.renderSnapshot;
+        expect(nativeRender, isNotNull);
+        final nativeForeground = nativeRender!.foregroundColor;
+        final nativeBackground = nativeRender.backgroundColor;
+
+        String rgb(Color color) =>
+            '${_colorRed8(color)};${_colorGreen8(color)};${_colorBlue8(color)}';
+
+        controller.appendDebugOutput(
+          '\x1b[48;2;${rgb(nativeBackground)}m '
+          '\x1b[0m '
+          '\x1b[38;2;${rgb(nativeForeground)}m██\x1b[0m',
+        );
+
+        final key = GlobalKey();
+        await tester.pumpWidget(
+          RepaintBoundary(
+            key: key,
+            child: buildView(
+              showHeader: false,
+              renderer: GhosttyTerminalRendererMode.renderState,
+              backgroundColor: widgetBackground,
+              foregroundColor: widgetForeground,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final image = await _captureTerminalImageData(key);
+        final (:charWidth, :linePixels, :padding) = _measureTestMetrics();
+        final rowCenterY = padding + (linePixels ~/ 2);
+        final explicitBackgroundX = padding + (charWidth ~/ 2);
+
+        expect(
+          _pixelMatchesColor(
+            image,
+            x: explicitBackgroundX,
+            y: rowCenterY,
+            color: nativeBackground,
+            tolerance: 8,
+          ),
+          isTrue,
+        );
+        expect(
+          _pixelMatchesColor(
+            image,
+            x: explicitBackgroundX,
+            y: rowCenterY,
+            color: widgetBackground,
+            tolerance: 8,
+          ),
+          isFalse,
+        );
+        expect(
+          _countPixelsNearColor(image, color: nativeForeground, tolerance: 24),
+          greaterThan(8),
+        );
+      },
+    );
+
+    testWidgets('renderState honors widget cursor color', (tester) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      const widgetCursor = Color(0xFFFF4FD8);
+
+      controller.appendDebugOutput('abc');
+
+      final key = GlobalKey();
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: key,
+          child: buildView(
+            showHeader: false,
+            autofocus: true,
+            renderer: GhosttyTerminalRendererMode.renderState,
+            backgroundColor: const Color(0xFF112233),
+            foregroundColor: const Color(0xFFE6EDF3),
+            cursorColor: widgetCursor,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final image = await _captureTerminalImageData(key);
+      final (:charWidth, :linePixels, :padding) = _measureTestMetrics();
+      final cursorCenterX = padding + (3 * charWidth) + (charWidth ~/ 2);
+      final cursorCenterY = padding + (linePixels ~/ 2);
+
+      expect(
+        _pixelMatchesColor(
+          image,
+          x: cursorCenterX,
+          y: cursorCenterY,
+          color: widgetCursor,
+          tolerance: 24,
+        ),
+        isTrue,
+      );
+    });
+
+    testWidgets('formatter prefers the native cursor position when available', (
+      tester,
+    ) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      const widgetCursor = Color(0xFFFF4FD8);
+
+      controller.appendDebugOutput('abc');
+
+      final key = GlobalKey();
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: key,
+          child: buildView(
+            showHeader: false,
+            autofocus: true,
+            renderer: GhosttyTerminalRendererMode.formatter,
+            backgroundColor: const Color(0xFF112233),
+            foregroundColor: const Color(0xFFE6EDF3),
+            cursorColor: widgetCursor,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final image = await _captureTerminalImageData(key);
+      final (:charWidth, :linePixels, :padding) = _measureTestMetrics();
+      final cursorCenterX = padding + (3 * charWidth) + (charWidth ~/ 2);
+      final cursorCenterY = padding + (linePixels ~/ 2);
+
+      expect(
+        _pixelMatchesColor(
+          image,
+          x: cursorCenterX,
+          y: cursorCenterY,
+          color: widgetCursor,
+          tolerance: 24,
+        ),
+        isTrue,
+      );
+    });
+
+    testWidgets('renderState wide-tail cursor covers the full wide cell', (
+      tester,
+    ) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      const widgetCursor = Color(0xFFFF44AA);
+      controller.appendDebugOutput('界\x1b[D');
+      expect(controller.renderSnapshot?.cursor.onWideTail, isTrue);
+
+      final key = GlobalKey();
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: key,
+          child: buildView(
+            showHeader: false,
+            renderer: GhosttyTerminalRendererMode.renderState,
+            backgroundColor: const Color(0xFF112233),
+            foregroundColor: const Color(0xFFE6EDF3),
+            cursorColor: widgetCursor,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final image = await _captureTerminalImageData(key);
+      final (:charWidth, :linePixels, :padding) = _measureTestMetrics();
+      final rowCenterY = padding + (linePixels ~/ 2);
+      final firstCellCenterX = padding + (charWidth ~/ 2);
+      final secondCellCenterX = padding + charWidth + (charWidth ~/ 2);
+      final thirdCellCenterX = padding + (2 * charWidth) + (charWidth ~/ 2);
+
+      expect(
+        _pixelMatchesColor(
+          image,
+          x: firstCellCenterX,
+          y: rowCenterY,
+          color: widgetCursor,
+          tolerance: 30,
+        ),
+        isTrue,
+      );
+      expect(
+        _pixelMatchesColor(
+          image,
+          x: secondCellCenterX,
+          y: rowCenterY,
+          color: widgetCursor,
+          tolerance: 30,
+        ),
+        isTrue,
+      );
+      expect(
+        _pixelMatchesColor(
+          image,
+          x: thirdCellCenterX,
+          y: rowCenterY,
+          color: widgetCursor,
+          tolerance: 30,
+        ),
+        isFalse,
+      );
+    });
+
+    testWidgets('renderState underline cursor paints on the bottom row edge', (
+      tester,
+    ) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      const widgetCursor = Color(0xFF44D7FF);
+      controller.appendDebugOutput('\x1b[4 qA');
+      expect(
+        controller.renderSnapshot?.cursor.visualStyle,
+        GhosttyRenderStateCursorVisualStyle
+            .GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE,
+      );
+
+      final key = GlobalKey();
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: key,
+          child: buildView(
+            showHeader: false,
+            renderer: GhosttyTerminalRendererMode.renderState,
+            backgroundColor: const Color(0xFF112233),
+            foregroundColor: const Color(0xFFE6EDF3),
+            cursorColor: widgetCursor,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final image = await _captureTerminalImageData(key);
+      final (:charWidth, :linePixels, :padding) = _measureTestMetrics();
+      final cursorX = padding + (charWidth ~/ 2);
+      final cursorY = padding + linePixels - 2;
+
+      expect(
+        _pixelMatchesColor(
+          image,
+          x: cursorX,
+          y: cursorY,
+          color: widgetCursor,
+          tolerance: 30,
+        ),
+        isTrue,
+      );
+    });
+
+    testWidgets('renderState bar cursor stays on the leading cell edge', (
+      tester,
+    ) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      const widgetCursor = Color(0xFF6EE7B7);
+      controller.appendDebugOutput('\x1b[6 qA');
+      expect(
+        controller.renderSnapshot?.cursor.visualStyle,
+        GhosttyRenderStateCursorVisualStyle
+            .GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR,
+      );
+
+      final key = GlobalKey();
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: key,
+          child: buildView(
+            showHeader: false,
+            renderer: GhosttyTerminalRendererMode.renderState,
+            backgroundColor: const Color(0xFF112233),
+            foregroundColor: const Color(0xFFE6EDF3),
+            cursorColor: widgetCursor,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final image = await _captureTerminalImageData(key);
+      final (:charWidth, :linePixels, :padding) = _measureTestMetrics();
+      final rowCenterY = padding + (linePixels ~/ 2);
+      final leadingEdgeX = padding + 1;
+      final trailingCellX = padding + charWidth + (charWidth ~/ 2);
+
+      expect(
+        _pixelMatchesColor(
+          image,
+          x: leadingEdgeX,
+          y: rowCenterY,
+          color: widgetCursor,
+          tolerance: 30,
+        ),
+        isTrue,
+      );
+      expect(
+        _pixelMatchesColor(
+          image,
+          x: trailingCellX,
+          y: rowCenterY,
+          color: widgetCursor,
+          tolerance: 30,
+        ),
+        isFalse,
+      );
+    });
+
+    testWidgets('renderState honors widget hyperlink color', (tester) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      const widgetHyperlink = Color(0xFFFFA347);
+      controller.appendDebugOutput(
+        '\x1b]8;;https://example.com\x1b\\\\link\x1b]8;;\x1b\\\\',
+      );
+
+      final key = GlobalKey();
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: key,
+          child: buildView(
+            showHeader: false,
+            renderer: GhosttyTerminalRendererMode.renderState,
+            backgroundColor: const Color(0xFF112233),
+            foregroundColor: const Color(0xFFE6EDF3),
+            hyperlinkColor: widgetHyperlink,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final image = await _captureTerminalImageData(key);
+      expect(
+        _countPixelsNearColor(image, color: widgetHyperlink, tolerance: 28),
+        greaterThan(10),
+      );
+    });
+
+    testWidgets('scrollback does not paint the snapshot cursor', (
+      tester,
+    ) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      Future<void> expectNoCursorInScrollback(
+        GhosttyTerminalRendererMode renderer,
+      ) async {
+        final scrollController = ScrollController();
+        addTearDown(scrollController.dispose);
+        const widgetCursor = Color(0xFFFF00FF);
+        final key = GlobalKey();
+
+        controller.clear();
+        controller.appendDebugOutput(
+          List<String>.generate(120, (index) => 'Line $index').join('\r\n'),
+        );
+
+        await tester.pumpWidget(
+          RepaintBoundary(
+            key: key,
+            child: buildView(
+              showHeader: false,
+              renderer: renderer,
+              scrollController: scrollController,
+              cursorColor: widgetCursor,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        scrollController.jumpTo(300);
+        await tester.pumpAndSettle();
+
+        final image = await _captureTerminalImageData(key);
+        expect(
+          _countPixelsNearColor(image, color: widgetCursor, tolerance: 20),
+          0,
+        );
+      }
+
+      await expectNoCursorInScrollback(GhosttyTerminalRendererMode.formatter);
+      await expectNoCursorInScrollback(GhosttyTerminalRendererMode.renderState);
+    });
+
+    testWidgets('renderState honors widget selection color', (tester) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      const widgetSelection = Color(0xCCFF6A3D);
+      controller.appendDebugOutput('select me');
+
+      final key = GlobalKey();
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: key,
+          child: buildView(
+            showHeader: false,
+            autofocus: true,
+            renderer: GhosttyTerminalRendererMode.renderState,
+            backgroundColor: const Color(0xFF112233),
+            foregroundColor: const Color(0xFFE6EDF3),
+            selectionColor: widgetSelection,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.keyA);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.keyA);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      final image = await _captureTerminalImageData(key);
+      expect(
+        _countPixelsNearColor(image, color: widgetSelection, tolerance: 32),
+        greaterThan(20),
+      );
+    });
+
+    testWidgets(
+      'renderState selection remains visible over explicit native backgrounds',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        const widgetSelection = Color(0xCC34D399);
+        controller.appendDebugOutput('\x1b[44;97mBLUE\x1b[0m normal');
+
+        final key = GlobalKey();
+        await tester.pumpWidget(
+          RepaintBoundary(
+            key: key,
+            child: buildView(
+              showHeader: false,
+              autofocus: true,
+              renderer: GhosttyTerminalRendererMode.renderState,
+              backgroundColor: const Color(0xFF112233),
+              foregroundColor: const Color(0xFFE6EDF3),
+              selectionColor: widgetSelection,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.keyA);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.keyA);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+        await tester.pumpAndSettle();
+
+        final image = await _captureTerminalImageData(key);
+        expect(
+          _countPixelsNearColor(image, color: widgetSelection, tolerance: 32),
+          greaterThan(20),
+        );
+      },
+    );
+
+    testWidgets(
       'formatter and renderState paint comparable mixed-width pixel coverage',
       (tester) async {
         if (!_hasNativeTerminal) {
@@ -285,12 +895,565 @@ void main() {
       },
     );
 
+    testWidgets('box drawing borders paint as continuous strokes', (
+      tester,
+    ) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      controller.appendDebugOutput('┌────┐\r\n│    │\r\n└────┘');
+
+      final key = GlobalKey();
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: key,
+          child: buildView(
+            renderer: GhosttyTerminalRendererMode.renderState,
+            backgroundColor: const Color(0xFF0A0F14),
+            foregroundColor: const Color(0xFFE6EDF3),
+            fontSize: 14,
+            lineHeight: 1.35,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final image = await _captureTerminalImageData(key);
+      const headerHeight = 28;
+      final (:charWidth, :linePixels, :padding) = _measureTestMetrics();
+      final topRowY = headerHeight + padding + (linePixels ~/ 2);
+      final leftColX = padding + charWidth;
+      final firstCellCenterX = padding + charWidth;
+      final lastCellCenterX = padding + (5 * charWidth) + charWidth;
+      final middleRowY =
+          headerHeight + padding + linePixels + (linePixels ~/ 2);
+      final bottomRowY =
+          headerHeight + padding + (2 * linePixels) + (linePixels ~/ 2);
+
+      expect(
+        _countNonBackgroundPixelsInHorizontalSpan(
+          image,
+          y: topRowY,
+          startX: firstCellCenterX,
+          endX: lastCellCenterX,
+        ),
+        greaterThanOrEqualTo(lastCellCenterX - firstCellCenterX - 2),
+      );
+      expect(
+        _countNonBackgroundPixelsInVerticalSpan(
+          image,
+          x: leftColX,
+          startY: topRowY,
+          endY: bottomRowY,
+        ),
+        greaterThanOrEqualTo(bottomRowY - topRowY - 2),
+      );
+      expect(_pixelIsNonBackground(image, x: leftColX, y: middleRowY), isTrue);
+    });
+
+    testWidgets('single-cell circle glyphs keep spacing inside the cell', (
+      tester,
+    ) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      controller.appendDebugOutput('○A');
+
+      final key = GlobalKey();
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: key,
+          child: buildView(
+            renderer: GhosttyTerminalRendererMode.renderState,
+            backgroundColor: const Color(0xFF0A0F14),
+            foregroundColor: const Color(0xFFE6EDF3),
+            fontSize: 14,
+            lineHeight: 1.35,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final image = await _captureTerminalImageData(key);
+      const headerHeight = 28;
+      final (:charWidth, :linePixels, :padding) = _measureTestMetrics();
+      final cellCenterY = headerHeight + padding + (linePixels ~/ 2);
+      final circleCenterX = padding + (charWidth ~/ 2);
+      final circleRightEdgeX = padding + charWidth - 1;
+
+      expect(
+        _pixelIsNonBackground(image, x: circleCenterX, y: cellCenterY),
+        isTrue,
+      );
+      expect(
+        _pixelIsNonBackground(image, x: circleRightEdgeX, y: cellCenterY),
+        isFalse,
+      );
+    });
+
+    testWidgets('rounded box corners paint into the expected quadrants', (
+      tester,
+    ) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      controller.appendDebugOutput('╭─╮\r\n│ │\r\n╰─╯');
+
+      final key = GlobalKey();
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: key,
+          child: buildView(
+            renderer: GhosttyTerminalRendererMode.renderState,
+            backgroundColor: const Color(0xFF0A0F14),
+            foregroundColor: const Color(0xFFE6EDF3),
+            fontSize: 14,
+            lineHeight: 1.35,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final image = await _captureTerminalImageData(key);
+      const headerHeight = 28;
+      final (:charWidth, :linePixels, :padding) = _measureTestMetrics();
+
+      final topRowY = headerHeight + padding + (linePixels ~/ 2);
+      final bottomRowY =
+          headerHeight + padding + (2 * linePixels) + (linePixels ~/ 2);
+      final leftCornerX = padding + 2;
+      final rightCornerX = padding + (2 * charWidth) + 4;
+
+      expect(
+        _pixelIsNonBackground(image, x: leftCornerX, y: topRowY + 3),
+        isTrue,
+      );
+      expect(
+        _pixelIsNonBackground(image, x: leftCornerX, y: topRowY - 3),
+        isFalse,
+      );
+      expect(
+        _pixelIsNonBackground(image, x: rightCornerX, y: topRowY + 3),
+        isTrue,
+      );
+      expect(
+        _pixelIsNonBackground(image, x: rightCornerX, y: topRowY - 3),
+        isFalse,
+      );
+      expect(
+        _pixelIsNonBackground(image, x: leftCornerX, y: bottomRowY - 3),
+        isTrue,
+      );
+      expect(
+        _pixelIsNonBackground(image, x: leftCornerX, y: bottomRowY + 3),
+        isFalse,
+      );
+      expect(
+        _pixelIsNonBackground(image, x: rightCornerX, y: bottomRowY - 3),
+        isTrue,
+      );
+      expect(
+        _pixelIsNonBackground(image, x: rightCornerX, y: bottomRowY + 3),
+        isFalse,
+      );
+    });
+
+    testWidgets('renderState paints common tui symbols with visible coverage', (
+      tester,
+    ) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      controller.appendDebugOutput('✓→▼—');
+
+      final formatterStats = await _captureModePaintStats(
+        tester,
+        buildView: buildView,
+        renderer: GhosttyTerminalRendererMode.formatter,
+      );
+      final renderStateStats = await _captureModePaintStats(
+        tester,
+        buildView: buildView,
+        renderer: GhosttyTerminalRendererMode.renderState,
+      );
+
+      expect(formatterStats.nonBackgroundPixels, greaterThan(0));
+      expect(renderStateStats.nonBackgroundPixels, greaterThan(0));
+
+      final ratio =
+          renderStateStats.nonBackgroundPixels /
+          formatterStats.nonBackgroundPixels;
+      expect(ratio, inInclusiveRange(0.55, 1.8));
+    });
+
+    testWidgets(
+      'renderState paints btop braille and symbol glyphs with visible coverage',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        controller.appendDebugOutput('▲■←↑↓↵°¹²³⁴ ⢰⢸⣀⣿');
+
+        final formatterStats = await _captureModePaintStats(
+          tester,
+          buildView: buildView,
+          renderer: GhosttyTerminalRendererMode.formatter,
+        );
+        final renderStateStats = await _captureModePaintStats(
+          tester,
+          buildView: buildView,
+          renderer: GhosttyTerminalRendererMode.renderState,
+        );
+
+        expect(formatterStats.nonBackgroundPixels, greaterThan(0));
+        expect(renderStateStats.nonBackgroundPixels, greaterThan(0));
+
+        final ratio =
+            renderStateStats.nonBackgroundPixels /
+            formatterStats.nonBackgroundPixels;
+        expect(ratio, inInclusiveRange(0.45, 2.2));
+      },
+    );
+
+    testWidgets(
+      'renderState preserves explicit blank cells between separated glyphs',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        controller.appendDebugOutput('A\x1b[3CB');
+
+        final formatterKey = GlobalKey();
+        await tester.pumpWidget(
+          RepaintBoundary(
+            key: formatterKey,
+            child: buildView(
+              renderer: GhosttyTerminalRendererMode.formatter,
+              backgroundColor: const Color(0xFF0A0F14),
+              foregroundColor: const Color(0xFFE6EDF3),
+              fontSize: 14,
+              lineHeight: 1.35,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final formatterImage = await _captureTerminalImageData(formatterKey);
+
+        final renderStateKey = GlobalKey();
+        await tester.pumpWidget(
+          RepaintBoundary(
+            key: renderStateKey,
+            child: buildView(
+              renderer: GhosttyTerminalRendererMode.renderState,
+              backgroundColor: const Color(0xFF0A0F14),
+              foregroundColor: const Color(0xFFE6EDF3),
+              fontSize: 14,
+              lineHeight: 1.35,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final renderStateImage = await _captureTerminalImageData(
+          renderStateKey,
+        );
+
+        const headerHeight = 28;
+        final (:charWidth, :linePixels, :padding) = _measureTestMetrics();
+        final rowCenterY = headerHeight + padding + (linePixels ~/ 2);
+
+        expect(
+          _pixelIsNonBackground(
+            formatterImage,
+            x: padding + (charWidth ~/ 2),
+            y: rowCenterY,
+          ),
+          isTrue,
+        );
+        expect(
+          _pixelIsNonBackground(
+            formatterImage,
+            x: padding + (4 * charWidth) + (charWidth ~/ 2),
+            y: rowCenterY,
+          ),
+          isTrue,
+        );
+        expect(
+          _pixelIsNonBackground(
+            renderStateImage,
+            x: padding + (charWidth ~/ 2),
+            y: rowCenterY,
+          ),
+          isTrue,
+        );
+        expect(
+          _pixelIsNonBackground(
+            renderStateImage,
+            x: padding + (4 * charWidth) + (charWidth ~/ 2),
+            y: rowCenterY,
+          ),
+          isTrue,
+        );
+
+        for (final gapCol in <int>[1, 2, 3]) {
+          final gapCenterX = padding + (gapCol * charWidth) + (charWidth ~/ 2);
+          expect(
+            _pixelIsNonBackground(formatterImage, x: gapCenterX, y: rowCenterY),
+            isFalse,
+          );
+          expect(
+            _pixelIsNonBackground(
+              renderStateImage,
+              x: gapCenterX,
+              y: rowCenterY,
+            ),
+            isFalse,
+          );
+        }
+      },
+    );
+
+    testWidgets('renderState preserves wide glyph advance before later cells', (
+      tester,
+    ) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      controller.appendDebugOutput('界\x1b[2CX');
+
+      final formatterKey = GlobalKey();
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: formatterKey,
+          child: buildView(
+            renderer: GhosttyTerminalRendererMode.formatter,
+            backgroundColor: const Color(0xFF0A0F14),
+            foregroundColor: const Color(0xFFE6EDF3),
+            fontSize: 14,
+            lineHeight: 1.35,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final formatterImage = await _captureTerminalImageData(formatterKey);
+
+      final renderStateKey = GlobalKey();
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: renderStateKey,
+          child: buildView(
+            renderer: GhosttyTerminalRendererMode.renderState,
+            backgroundColor: const Color(0xFF0A0F14),
+            foregroundColor: const Color(0xFFE6EDF3),
+            fontSize: 14,
+            lineHeight: 1.35,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final renderStateImage = await _captureTerminalImageData(renderStateKey);
+
+      const headerHeight = 28;
+      final (:charWidth, :linePixels, :padding) = _measureTestMetrics();
+      final rowCenterY = headerHeight + padding + (linePixels ~/ 2);
+
+      expect(
+        _pixelIsNonBackground(
+          formatterImage,
+          x: padding + (charWidth ~/ 2),
+          y: rowCenterY,
+        ),
+        isTrue,
+      );
+      expect(
+        _pixelIsNonBackground(
+          renderStateImage,
+          x: padding + (charWidth ~/ 2),
+          y: rowCenterY,
+        ),
+        isTrue,
+      );
+
+      for (final gapCol in <int>[2, 3]) {
+        final gapCenterX = padding + (gapCol * charWidth) + (charWidth ~/ 2);
+        expect(
+          _pixelIsNonBackground(formatterImage, x: gapCenterX, y: rowCenterY),
+          isFalse,
+        );
+        expect(
+          _pixelIsNonBackground(renderStateImage, x: gapCenterX, y: rowCenterY),
+          isFalse,
+        );
+      }
+
+      final trailingGlyphX = padding + (4 * charWidth) + (charWidth ~/ 2);
+      expect(
+        _pixelIsNonBackground(formatterImage, x: trailingGlyphX, y: rowCenterY),
+        isTrue,
+      );
+      expect(
+        _pixelIsNonBackground(
+          renderStateImage,
+          x: trailingGlyphX,
+          y: rowCenterY,
+        ),
+        isTrue,
+      );
+    });
+
+    testWidgets(
+      'formatter and renderState paint comparable underline coverage',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        controller.appendDebugOutput('plain \x1b[4;34mblue\x1b[0m');
+
+        final formatterKey = GlobalKey();
+        await tester.pumpWidget(
+          RepaintBoundary(
+            key: formatterKey,
+            child: buildView(
+              renderer: GhosttyTerminalRendererMode.formatter,
+              backgroundColor: const Color(0xFF0A0F14),
+              foregroundColor: const Color(0xFFE6EDF3),
+              fontSize: 14,
+              lineHeight: 1.35,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final formatterImage = await _captureTerminalImageData(formatterKey);
+
+        final renderStateKey = GlobalKey();
+        await tester.pumpWidget(
+          RepaintBoundary(
+            key: renderStateKey,
+            child: buildView(
+              renderer: GhosttyTerminalRendererMode.renderState,
+              backgroundColor: const Color(0xFF0A0F14),
+              foregroundColor: const Color(0xFFE6EDF3),
+              fontSize: 14,
+              lineHeight: 1.35,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final renderStateImage = await _captureTerminalImageData(
+          renderStateKey,
+        );
+
+        const headerHeight = 28;
+        final (:charWidth, :linePixels, :padding) = _measureTestMetrics();
+        final underlineY = headerHeight + padding + linePixels - 3;
+        final underlineStartX = padding + (6 * charWidth);
+        final underlineEndX = padding + (10 * charWidth) - 2;
+
+        final formatterUnderlinePixels =
+            _countNonBackgroundPixelsInHorizontalSpan(
+              formatterImage,
+              y: underlineY,
+              startX: underlineStartX,
+              endX: underlineEndX,
+            );
+        final renderStateUnderlinePixels =
+            _countNonBackgroundPixelsInHorizontalSpan(
+              renderStateImage,
+              y: underlineY,
+              startX: underlineStartX,
+              endX: underlineEndX,
+            );
+
+        expect(formatterUnderlinePixels, greaterThan(0));
+        expect(renderStateUnderlinePixels, greaterThan(0));
+
+        final underlineRatio =
+            renderStateUnderlinePixels / formatterUnderlinePixels;
+        expect(underlineRatio, inInclusiveRange(0.45, 1.9));
+      },
+    );
+
+    testWidgets(
+      'formatter and renderState paint comparable selection coverage over custom glyphs',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        controller.appendDebugOutput('╭─╮\r\n│✓│\r\n╰─╯');
+
+        Future<_TerminalPaintStats> captureSelectedStats(
+          GhosttyTerminalRendererMode renderer,
+        ) async {
+          final key = GlobalKey();
+          await tester.pumpWidget(
+            RepaintBoundary(
+              key: key,
+              child: buildView(
+                autofocus: true,
+                renderer: renderer,
+                backgroundColor: const Color(0xFF0A0F14),
+                foregroundColor: const Color(0xFFE6EDF3),
+                fontSize: 14,
+                lineHeight: 1.35,
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+
+          await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+          await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+          await tester.sendKeyDownEvent(LogicalKeyboardKey.keyA);
+          await tester.sendKeyUpEvent(LogicalKeyboardKey.keyA);
+          await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+          await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+          await tester.pumpAndSettle();
+
+          return _captureTerminalPaintStats(key);
+        }
+
+        final formatterStats = await captureSelectedStats(
+          GhosttyTerminalRendererMode.formatter,
+        );
+        final renderStateStats = await captureSelectedStats(
+          GhosttyTerminalRendererMode.renderState,
+        );
+
+        expect(formatterStats.bluePixels, greaterThan(0));
+        expect(renderStateStats.bluePixels, greaterThan(0));
+
+        final blueRatio =
+            renderStateStats.bluePixels / formatterStats.bluePixels;
+        final nonBackgroundRatio =
+            renderStateStats.nonBackgroundPixels /
+            formatterStats.nonBackgroundPixels;
+
+        expect(blueRatio, inInclusiveRange(0.4, 2.5));
+        expect(nonBackgroundRatio, inInclusiveRange(0.55, 1.9));
+      },
+    );
+
     testWidgets('updates when controller notifies', (tester) async {
       if (!_hasNativeTerminal) {
         return;
       }
 
-      await tester.pumpWidget(buildView());
+      GhosttyTerminalSelectionContent<GhosttyTerminalSelection>? currentContent;
+
+      await tester.pumpWidget(
+        buildView(
+          showHeader: false,
+          autofocus: true,
+          onSelectionContentChanged: (c) => currentContent = c,
+        ),
+      );
 
       final initialRevision = controller.revision;
       controller.appendDebugOutput('new output');
@@ -298,6 +1461,20 @@ void main() {
 
       expect(controller.revision, greaterThan(initialRevision));
       expect(controller.lines.single, 'new output');
+
+      // Verify the rendered widget tree reflects the new content by selecting
+      // the word at the first visible row via triple-tap.
+      const firstRowTarget = Offset(30, 24);
+      await tester.tapAt(firstRowTarget);
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.tapAt(firstRowTarget);
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.tapAt(firstRowTarget);
+      await tester.pumpAndSettle();
+
+      expect(currentContent, isNotNull);
+      // The rendered first row contains the newly appended text.
+      expect(currentContent?.text, anyOf(equals('new'), equals('output')));
     });
 
     testWidgets('autofocus requests focus on build', (tester) async {
@@ -413,6 +1590,346 @@ void main() {
       expect(controller.lines.last, 'Line 199');
     });
 
+    testWidgets('vertical scrollbar drag updates the visible transcript', (
+      tester,
+    ) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      GhosttyTerminalSelectionContent<GhosttyTerminalSelection>? currentContent;
+      controller.appendDebugOutput(
+        List<String>.generate(120, (index) => 'Line $index').join('\r\n'),
+      );
+
+      await tester.pumpWidget(
+        buildView(
+          showHeader: false,
+          showVerticalScrollbar: true,
+          autofocus: true,
+          onSelectionContentChanged: (content) => currentContent = content,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      const firstRowTarget = Offset(30, 24);
+      await tester.tapAt(firstRowTarget);
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.tapAt(firstRowTarget);
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.tapAt(firstRowTarget);
+      await tester.pumpAndSettle();
+
+      expect(currentContent?.text, 'Line 0');
+
+      final scrollbar = await tester.startGesture(const Offset(595, 48));
+      await scrollbar.moveTo(const Offset(595, 320));
+      await scrollbar.up();
+      await tester.pumpAndSettle();
+
+      await tester.tapAt(firstRowTarget);
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.tapAt(firstRowTarget);
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.tapAt(firstRowTarget);
+      await tester.pumpAndSettle();
+
+      expect(currentContent, isNotNull);
+      expect(currentContent?.text, isNot('Line 0'));
+    });
+
+    testWidgets(
+      'ancestor NotificationListener receives terminal scroll notifications',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        final scrollController = ScrollController();
+        addTearDown(scrollController.dispose);
+        final notifications = <ScrollNotification>[];
+
+        controller.appendDebugOutput(
+          List<String>.generate(120, (index) => 'Line $index').join('\r\n'),
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: NotificationListener<ScrollNotification>(
+                onNotification: (notification) {
+                  notifications.add(notification);
+                  return false;
+                },
+                child: SizedBox(
+                  width: 600,
+                  height: 400,
+                  child: GhosttyTerminalView(
+                    controller: controller,
+                    showHeader: false,
+                    scrollController: scrollController,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        scrollController.jumpTo(300);
+        await tester.pumpAndSettle();
+
+        expect(notifications, isNotEmpty);
+      },
+    );
+
+    testWidgets('external ScrollController drives transcript scrolling', (
+      tester,
+    ) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+      GhosttyTerminalSelectionContent<GhosttyTerminalSelection>? currentContent;
+      controller.appendDebugOutput(
+        List<String>.generate(120, (index) => 'Line $index').join('\r\n'),
+      );
+
+      await tester.pumpWidget(
+        buildView(
+          showHeader: false,
+          autofocus: true,
+          scrollController: scrollController,
+          onSelectionContentChanged: (content) => currentContent = content,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      const firstRowTarget = Offset(30, 24);
+      await tester.tapAt(firstRowTarget);
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.tapAt(firstRowTarget);
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.tapAt(firstRowTarget);
+      await tester.pumpAndSettle();
+      expect(currentContent?.text, 'Line 0');
+
+      scrollController.jumpTo(300);
+      await tester.pumpAndSettle();
+
+      await tester.tapAt(firstRowTarget);
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.tapAt(firstRowTarget);
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.tapAt(firstRowTarget);
+      await tester.pumpAndSettle();
+
+      expect(currentContent, isNotNull);
+      expect(currentContent?.text, isNot('Line 0'));
+    });
+
+    testWidgets(
+      'new terminal activity snaps the viewport back to the live bottom when enabled',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        final scrollController = ScrollController();
+        addTearDown(scrollController.dispose);
+        GhosttyTerminalSelectionContent<GhosttyTerminalSelection>?
+        currentContent;
+
+        controller.appendDebugOutput(
+          List<String>.generate(120, (index) => 'Line $index').join('\r\n'),
+        );
+
+        await tester.pumpWidget(
+          buildView(
+            showHeader: false,
+            autofocus: true,
+            scrollController: scrollController,
+            autoFollowOnActivity: true,
+            onSelectionContentChanged: (c) => currentContent = c,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // Probe the visible first row before scrolling — should be near the
+        // bottom of the transcript (offset is 0, content runs to "Line 119").
+        const firstRowTarget = Offset(30, 24);
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pumpAndSettle();
+        // The rendered first row at the live bottom must not be "Line 0".
+        expect(currentContent?.text, isNot('Line 0'));
+
+        scrollController.jumpTo(300);
+        await tester.pumpAndSettle();
+        expect(scrollController.offset, greaterThan(0));
+
+        // Triple-tap the first visible row at the scrolled position.
+        currentContent = null;
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pumpAndSettle();
+        // Scrolled up, so the first visible row should be from earlier lines.
+        expect(currentContent?.text, isNot('Tail'));
+
+        controller.appendDebugOutput('\r\nTail');
+        await tester.pumpAndSettle();
+
+        // Auto-follow snaps back to offset 0.
+        expect(scrollController.offset, 0);
+
+        // Probe the rendered first row after snap — should be near the bottom,
+        // not "Line 0" which is far up the transcript.
+        currentContent = null;
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pumpAndSettle();
+        expect(currentContent, isNotNull);
+        expect(currentContent?.text, isNot('Line 0'));
+      },
+    );
+
+    testWidgets(
+      'new terminal activity does not move the viewport when auto follow is disabled',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        final scrollController = ScrollController();
+        addTearDown(scrollController.dispose);
+        GhosttyTerminalSelectionContent<GhosttyTerminalSelection>?
+        currentContent;
+
+        controller.appendDebugOutput(
+          List<String>.generate(120, (index) => 'Line $index').join('\r\n'),
+        );
+
+        await tester.pumpWidget(
+          buildView(
+            showHeader: false,
+            autofocus: true,
+            scrollController: scrollController,
+            autoFollowOnActivity: false,
+            onSelectionContentChanged: (c) => currentContent = c,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        scrollController.jumpTo(300);
+        await tester.pumpAndSettle();
+        final preservedOffset = scrollController.offset;
+        expect(preservedOffset, greaterThan(0));
+
+        // Probe the first visible row at the scrolled position.
+        const firstRowTarget = Offset(30, 24);
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pumpAndSettle();
+        // Scrolled up — first row is not the live-bottom tail.
+        expect(currentContent?.text, isNot('Tail'));
+        final scrolledRowText = currentContent?.text;
+
+        controller.appendDebugOutput('\r\nTail');
+        await tester.pumpAndSettle();
+
+        // Without auto-follow the viewport stays put.
+        expect(scrollController.offset, preservedOffset);
+
+        // The rendered first row must still show the same content as before the
+        // new output arrived — the viewport did not move.
+        currentContent = null;
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pumpAndSettle();
+        expect(currentContent, isNotNull);
+        expect(currentContent?.text, scrolledRowText);
+      },
+    );
+
+    testWidgets(
+      'keyboard input jumps back to the live bottom even when auto follow is disabled',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        final scrollController = ScrollController();
+        addTearDown(scrollController.dispose);
+        GhosttyTerminalSelectionContent<GhosttyTerminalSelection>?
+        currentContent;
+
+        controller.appendDebugOutput(
+          List<String>.generate(120, (index) => 'Line $index').join('\r\n'),
+        );
+
+        await tester.pumpWidget(
+          buildView(
+            showHeader: false,
+            autofocus: true,
+            scrollController: scrollController,
+            autoFollowOnActivity: false,
+            onSelectionContentChanged: (c) => currentContent = c,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        scrollController.jumpTo(300);
+        await tester.pumpAndSettle();
+        expect(scrollController.offset, greaterThan(0));
+
+        // Probe the rendered first row at the scrolled position — should be
+        // somewhere in the middle of the transcript (e.g. a mid-range "Line N").
+        const firstRowTarget = Offset(30, 24);
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pumpAndSettle();
+        expect(currentContent?.text, isNot('Line 119'));
+
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pumpAndSettle();
+
+        // Keyboard input snaps back to the live bottom.
+        expect(scrollController.offset, 0);
+
+        // The rendered first row must now show content from near the bottom of
+        // the transcript — not from far-up "Line 0".
+        currentContent = null;
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pumpAndSettle();
+        expect(currentContent, isNotNull);
+        expect(currentContent?.text, isNot('Line 0'));
+      },
+    );
+
     testWidgets('handles empty lines and explicit line starts', (tester) async {
       if (!_hasNativeTerminal) {
         return;
@@ -463,6 +1980,454 @@ void main() {
 
       expect(currentSelection, isNull);
       expect(currentContent, isNull);
+    });
+
+    testWidgets('double click selects the whole word', (tester) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      GhosttyTerminalSelection? currentSelection;
+      controller.appendDebugOutput('hello world');
+
+      await tester.pumpWidget(
+        buildView(
+          showHeader: false,
+          autofocus: true,
+          onSelectionChanged: (selection) => currentSelection = selection,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      const target = Offset(30, 24);
+      await tester.tapAt(target);
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.tapAt(target);
+      await tester.pumpAndSettle();
+
+      expect(currentSelection, isNotNull);
+      expect(controller.snapshot.textForSelection(currentSelection!), 'hello');
+    });
+
+    testWidgets(
+      'renderState double click selects words on wrapped visible rows',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        GhosttyTerminalSelectionContent<GhosttyTerminalSelection>?
+        currentContent;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 120,
+                height: 160,
+                child: GhosttyTerminalView(
+                  controller: controller,
+                  autofocus: true,
+                  showHeader: false,
+                  renderer: GhosttyTerminalRendererMode.renderState,
+                  onSelectionContentChanged: (content) =>
+                      currentContent = content,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        controller.appendDebugOutput('${'a' * (controller.cols - 1)} target');
+        await tester.pumpAndSettle();
+
+        const target = Offset(30, 43);
+        await tester.tapAt(target);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(target);
+        await tester.pumpAndSettle();
+
+        expect(currentContent, isNotNull);
+        expect(currentContent?.text, 'target');
+      },
+    );
+
+    testWidgets('renderState taps open visible URLs on wrapped rows', (
+      tester,
+    ) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      String? openedUri;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 120,
+              height: 160,
+              child: GhosttyTerminalView(
+                controller: controller,
+                autofocus: true,
+                showHeader: false,
+                renderer: GhosttyTerminalRendererMode.renderState,
+                onOpenHyperlink: (uri) async {
+                  openedUri = uri;
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      controller.appendDebugOutput(
+        '${'a' * (controller.cols - 1)} https://example.com/docs',
+      );
+      await tester.pumpAndSettle();
+
+      const target = Offset(30, 43);
+      await tester.tapAt(target);
+      await tester.pumpAndSettle();
+
+      expect(openedUri, 'https://example.com/docs');
+    });
+
+    testWidgets(
+      'renderState double click selects wrapped URLs across visible rows',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        GhosttyTerminalSelectionContent<GhosttyTerminalSelection>?
+        currentContent;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 120,
+                height: 160,
+                child: GhosttyTerminalView(
+                  controller: controller,
+                  autofocus: true,
+                  showHeader: false,
+                  renderer: GhosttyTerminalRendererMode.renderState,
+                  onSelectionContentChanged: (content) =>
+                      currentContent = content,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        controller.appendDebugOutput(
+          '${'a' * (controller.cols - 1)} https://example.com/docs',
+        );
+        await tester.pumpAndSettle();
+
+        const target = Offset(30, 43);
+        await tester.tapAt(target);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(target);
+        await tester.pumpAndSettle();
+
+        expect(currentContent, isNotNull);
+        expect(currentContent?.text, 'https://example.com/docs');
+      },
+    );
+
+    testWidgets(
+      'renderState triple click selects the full wrapped logical line',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        GhosttyTerminalSelectionContent<GhosttyTerminalSelection>?
+        currentContent;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 120,
+                height: 160,
+                child: GhosttyTerminalView(
+                  controller: controller,
+                  autofocus: true,
+                  showHeader: false,
+                  renderer: GhosttyTerminalRendererMode.renderState,
+                  copyOptions: const GhosttyTerminalCopyOptions(
+                    joinWrappedLines: true,
+                  ),
+                  onSelectionContentChanged: (content) =>
+                      currentContent = content,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final wrappedLine = '${'a' * (controller.cols - 1)} target';
+        controller.appendDebugOutput(wrappedLine);
+        await tester.pumpAndSettle();
+
+        const target = Offset(30, 43);
+        await tester.tapAt(target);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(target);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(target);
+        await tester.pumpAndSettle();
+
+        expect(currentContent, isNotNull);
+        expect(currentContent?.text, wrappedLine);
+      },
+    );
+
+    testWidgets('triple click selects the whole line', (tester) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      GhosttyTerminalSelection? currentSelection;
+      controller.appendDebugOutput('hello world\r\nsecond line');
+
+      await tester.pumpWidget(
+        buildView(
+          showHeader: false,
+          autofocus: true,
+          onSelectionChanged: (selection) => currentSelection = selection,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      const target = Offset(30, 24);
+      await tester.tapAt(target);
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.tapAt(target);
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.tapAt(target);
+      await tester.pumpAndSettle();
+
+      expect(currentSelection, isNotNull);
+      expect(
+        controller.snapshot.textForSelection(currentSelection!),
+        'hello world',
+      );
+    });
+
+    testWidgets('double click drag expands selection by words', (tester) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      GhosttyTerminalSelection? currentSelection;
+      controller.appendDebugOutput('hello brave world');
+
+      await tester.pumpWidget(
+        buildView(
+          showHeader: false,
+          autofocus: true,
+          onSelectionChanged: (selection) => currentSelection = selection,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      const start = Offset(30, 24);
+      const end = Offset(110, 24);
+
+      await tester.tapAt(start);
+      await tester.pump(const Duration(milliseconds: 40));
+
+      final gesture = await tester.startGesture(start);
+      await tester.pump(const Duration(milliseconds: 40));
+      await gesture.moveTo(end);
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(currentSelection, isNotNull);
+      expect(
+        controller.snapshot.textForSelection(currentSelection!),
+        'hello brave world',
+      );
+    });
+
+    testWidgets(
+      'double click drag keeps word granularity across multiple moves',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        GhosttyTerminalSelection? currentSelection;
+        controller.appendDebugOutput('hello brave new world');
+
+        await tester.pumpWidget(
+          buildView(
+            showHeader: false,
+            autofocus: true,
+            onSelectionChanged: (selection) => currentSelection = selection,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        const start = Offset(30, 24);
+        const middle = Offset(84, 24);
+        const end = Offset(142, 24);
+
+        await tester.tapAt(start);
+        await tester.pump(const Duration(milliseconds: 40));
+
+        final gesture = await tester.startGesture(start);
+        await tester.pump(const Duration(milliseconds: 40));
+        await gesture.moveTo(middle);
+        await tester.pump();
+        await gesture.moveTo(end);
+        await tester.pump();
+        await gesture.up();
+        await tester.pumpAndSettle();
+
+        expect(currentSelection, isNotNull);
+        expect(
+          controller.snapshot.textForSelection(currentSelection!),
+          'hello brave new world',
+        );
+      },
+    );
+
+    testWidgets('triple click drag expands selection by lines', (tester) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      GhosttyTerminalSelection? currentSelection;
+      controller.appendDebugOutput('hello world\r\nsecond line\r\nthird line');
+
+      await tester.pumpWidget(
+        buildView(
+          showHeader: false,
+          autofocus: true,
+          onSelectionChanged: (selection) => currentSelection = selection,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      const start = Offset(30, 24);
+      const end = Offset(30, 44);
+
+      await tester.tapAt(start);
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.tapAt(start);
+      await tester.pump(const Duration(milliseconds: 40));
+
+      final gesture = await tester.startGesture(start);
+      await tester.pump(const Duration(milliseconds: 40));
+      await gesture.moveTo(end);
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(currentSelection, isNotNull);
+      expect(
+        controller.snapshot.textForSelection(currentSelection!),
+        'hello world\nsecond line',
+      );
+    });
+
+    testWidgets(
+      'triple click drag keeps line granularity across multiple moves',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        GhosttyTerminalSelection? currentSelection;
+        controller.appendDebugOutput(
+          'hello world\r\nsecond line\r\nthird line\r\nfourth line',
+        );
+
+        await tester.pumpWidget(
+          buildView(
+            showHeader: false,
+            autofocus: true,
+            onSelectionChanged: (selection) => currentSelection = selection,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        const start = Offset(30, 24);
+        const middle = Offset(30, 44);
+        const end = Offset(30, 64);
+
+        await tester.tapAt(start);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(start);
+        await tester.pump(const Duration(milliseconds: 40));
+
+        final gesture = await tester.startGesture(start);
+        await tester.pump(const Duration(milliseconds: 40));
+        await gesture.moveTo(middle);
+        await tester.pump();
+        await gesture.moveTo(end);
+        await tester.pump();
+        await gesture.up();
+        await tester.pumpAndSettle();
+
+        expect(currentSelection, isNotNull);
+        expect(
+          controller.snapshot.textForSelection(currentSelection!),
+          'hello world\nsecond line\nthird line',
+        );
+      },
+    );
+
+    testWidgets('shift click extends the existing selection', (tester) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      GhosttyTerminalSelection? currentSelection;
+      controller.appendDebugOutput('hello world');
+
+      await tester.pumpWidget(
+        buildView(
+          showHeader: false,
+          autofocus: true,
+          onSelectionChanged: (selection) => currentSelection = selection,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final gesture = await tester.startGesture(const Offset(30, 24));
+      await tester.pump();
+      await gesture.moveTo(const Offset(50, 24));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(currentSelection, isNotNull);
+      expect(controller.snapshot.textForSelection(currentSelection!), 'hell');
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pump();
+      await tester.tapAt(const Offset(78, 24));
+      await tester.pumpAndSettle();
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pump();
+
+      expect(currentSelection, isNotNull);
+      expect(
+        controller.snapshot.textForSelection(currentSelection!),
+        'hello world',
+      );
     });
   });
 
@@ -515,6 +2480,127 @@ void main() {
         'hello  \nsecond',
       );
       expect(snapshot.selectAllSelection(), selection);
+    });
+
+    test('wrapped line copy options join soft-wrapped rows', () {
+      const snapshot = GhosttyTerminalSnapshot(
+        lines: <GhosttyTerminalLine>[
+          GhosttyTerminalLine(<GhosttyTerminalRun>[
+            GhosttyTerminalRun(text: 'hello', cells: 5),
+          ], wrap: true),
+          GhosttyTerminalLine(<GhosttyTerminalRun>[
+            GhosttyTerminalRun(text: 'world', cells: 5),
+          ], wrapContinuation: true),
+          GhosttyTerminalLine(<GhosttyTerminalRun>[
+            GhosttyTerminalRun(text: 'tail', cells: 4),
+          ]),
+        ],
+      );
+
+      final selection = snapshot.lineSelectionBetweenRows(0, 2);
+      expect(selection, isNotNull);
+      expect(snapshot.textForSelection(selection!), 'hello\nworld\ntail');
+      expect(
+        snapshot.textForSelection(
+          selection,
+          options: const GhosttyTerminalCopyOptions(joinWrappedLines: true),
+        ),
+        'helloworld\ntail',
+      );
+      expect(
+        snapshot.textForSelection(
+          selection,
+          options: const GhosttyTerminalCopyOptions(
+            joinWrappedLines: true,
+            wrappedLineJoiner: ' ',
+          ),
+        ),
+        'hello world\ntail',
+      );
+    });
+
+    test(
+      'trailing blank cells do not resolve as the last word or hyperlink',
+      () {
+        const snapshot = GhosttyTerminalSnapshot(
+          lines: <GhosttyTerminalLine>[
+            GhosttyTerminalLine(<GhosttyTerminalRun>[
+              GhosttyTerminalRun(text: 'see https://example.com', cells: 23),
+            ]),
+          ],
+        );
+
+        const trailingBlank = GhosttyTerminalCellPosition(row: 0, col: 30);
+        expect(snapshot.hyperlinkAt(trailingBlank), isNull);
+        expect(snapshot.wordSelectionAt(trailingBlank), isNull);
+      },
+    );
+
+    test('wide-tail columns do not break snapshot word selection', () {
+      const snapshot = GhosttyTerminalSnapshot(
+        lines: <GhosttyTerminalLine>[
+          GhosttyTerminalLine(<GhosttyTerminalRun>[
+            GhosttyTerminalRun(text: '界', cells: 2),
+            GhosttyTerminalRun(text: ' next', cells: 5),
+          ]),
+        ],
+      );
+
+      final selection = snapshot.wordSelectionAt(
+        const GhosttyTerminalCellPosition(row: 0, col: 1),
+      );
+
+      expect(selection, isNotNull);
+      expect(snapshot.textForSelection(selection!), '界');
+    });
+
+    testWidgets('renderState selection content joins wrapped visible rows', (
+      tester,
+    ) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      final controller = GhosttyTerminalController();
+      addTearDown(controller.dispose);
+      GhosttyTerminalSelectionContent<GhosttyTerminalSelection>? currentContent;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 120,
+              height: 160,
+              child: GhosttyTerminalView(
+                controller: controller,
+                autofocus: true,
+                showHeader: false,
+                renderer: GhosttyTerminalRendererMode.renderState,
+                copyOptions: const GhosttyTerminalCopyOptions(
+                  joinWrappedLines: true,
+                ),
+                onSelectionContentChanged: (content) =>
+                    currentContent = content,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      controller.appendDebugOutput('abcdefghijklmnopqrstuvwxyz');
+      await tester.pumpAndSettle();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.keyA);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.keyA);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      expect(currentContent, isNotNull);
+      expect(currentContent?.text, 'abcdefghijklmnopqrstuvwxyz');
     });
   });
 
@@ -1515,13 +3601,21 @@ String _lastNonEmptyLine(List<String> lines) {
 }
 
 Future<_TerminalPaintStats> _captureTerminalPaintStats(GlobalKey key) async {
+  final image = await _captureTerminalImageData(key);
+  return _measureTerminalPaintStats(image.rgba);
+}
+
+Future<_TerminalImageData> _captureTerminalImageData(GlobalKey key) async {
   final boundary =
       key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
   final image = await boundary.toImage(pixelRatio: 1);
   try {
     final byteData = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
-    final bytes = byteData!.buffer.asUint8List();
-    return _measureTerminalPaintStats(bytes);
+    return _TerminalImageData(
+      width: image.width,
+      height: image.height,
+      rgba: byteData!.buffer.asUint8List(),
+    );
   } finally {
     image.dispose();
   }
@@ -1616,4 +3710,123 @@ final class _TerminalPaintStats {
   final int redPixels;
   final int greenPixels;
   final int bluePixels;
+}
+
+final class _TerminalImageData {
+  const _TerminalImageData({
+    required this.width,
+    required this.height,
+    required this.rgba,
+  });
+
+  final int width;
+  final int height;
+  final Uint8List rgba;
+}
+
+bool _pixelIsNonBackground(
+  _TerminalImageData image, {
+  required int x,
+  required int y,
+}) {
+  if (x < 0 || x >= image.width || y < 0 || y >= image.height) {
+    return false;
+  }
+
+  final index = ((y * image.width) + x) * 4;
+  final r = image.rgba[index];
+  final g = image.rgba[index + 1];
+  final b = image.rgba[index + 2];
+  final a = image.rgba[index + 3];
+  if (a == 0) {
+    return false;
+  }
+
+  return (r - 0x0A).abs() > 10 ||
+      (g - 0x0F).abs() > 10 ||
+      (b - 0x14).abs() > 10;
+}
+
+bool _pixelMatchesColor(
+  _TerminalImageData image, {
+  required int x,
+  required int y,
+  required Color color,
+  int tolerance = 4,
+}) {
+  if (x < 0 || x >= image.width || y < 0 || y >= image.height) {
+    return false;
+  }
+
+  final index = ((y * image.width) + x) * 4;
+  final r = image.rgba[index];
+  final g = image.rgba[index + 1];
+  final b = image.rgba[index + 2];
+  final a = image.rgba[index + 3];
+  if (a == 0) {
+    return false;
+  }
+
+  return (r - _colorRed8(color)).abs() <= tolerance &&
+      (g - _colorGreen8(color)).abs() <= tolerance &&
+      (b - _colorBlue8(color)).abs() <= tolerance;
+}
+
+int _countPixelsNearColor(
+  _TerminalImageData image, {
+  required Color color,
+  int tolerance = 24,
+}) {
+  var count = 0;
+  for (var index = 0; index + 3 < image.rgba.length; index += 4) {
+    final r = image.rgba[index];
+    final g = image.rgba[index + 1];
+    final b = image.rgba[index + 2];
+    final a = image.rgba[index + 3];
+    if (a == 0) {
+      continue;
+    }
+    if ((r - _colorRed8(color)).abs() <= tolerance &&
+        (g - _colorGreen8(color)).abs() <= tolerance &&
+        (b - _colorBlue8(color)).abs() <= tolerance) {
+      count++;
+    }
+  }
+  return count;
+}
+
+int _colorRed8(Color color) => (color.toARGB32() >> 16) & 0xFF;
+
+int _colorGreen8(Color color) => (color.toARGB32() >> 8) & 0xFF;
+
+int _colorBlue8(Color color) => color.toARGB32() & 0xFF;
+
+int _countNonBackgroundPixelsInHorizontalSpan(
+  _TerminalImageData image, {
+  required int y,
+  required int startX,
+  required int endX,
+}) {
+  var count = 0;
+  for (var x = startX; x <= endX; x++) {
+    if (_pixelIsNonBackground(image, x: x, y: y)) {
+      count++;
+    }
+  }
+  return count;
+}
+
+int _countNonBackgroundPixelsInVerticalSpan(
+  _TerminalImageData image, {
+  required int x,
+  required int startY,
+  required int endY,
+}) {
+  var count = 0;
+  for (var y = startY; y <= endY; y++) {
+    if (_pixelIsNonBackground(image, x: x, y: y)) {
+      count++;
+    }
+  }
+  return count;
 }

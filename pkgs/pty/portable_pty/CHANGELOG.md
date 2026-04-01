@@ -1,3 +1,15 @@
+# Changelog
+
+## 0.0.3+3-wip
+
+- Default native shell resolution now uses `/system/bin/sh` on Android instead
+  of `/bin/sh`, matching the platform shell layout.
+- Android PTY startup now normalizes termios flags on the opened TTY so line
+  discipline, echo, newline handling, and UTF-8 input behave like an
+  interactive shell session.
+- Native Android artifacts need to be rebuilt for this change before the next
+  prebuilt release.
+
 ## 0.0.3+2
 
 - Build-hook progress now logs to stdout so successful prebuilt selection does

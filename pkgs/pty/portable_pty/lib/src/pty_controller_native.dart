@@ -75,7 +75,11 @@ class PortablePtyController with PtyListenable {
     final resolvedShell =
         shell ??
         defaultShell ??
-        (Platform.isWindows ? 'C:\\Windows\\System32\\cmd.exe' : '/bin/sh');
+        switch (Platform.operatingSystem) {
+          'windows' => 'C:\\Windows\\System32\\cmd.exe',
+          'android' => '/system/bin/sh',
+          _ => '/bin/sh',
+        };
 
     _pty = PortablePty.open(rows: rows, cols: cols, transport: transport);
     _pty!.spawn(resolvedShell, args: arguments.isNotEmpty ? arguments : null);
