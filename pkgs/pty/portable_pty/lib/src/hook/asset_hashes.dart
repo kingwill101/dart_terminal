@@ -28,7 +28,7 @@ const Map<String, AssetHash> assetHashes = {
   ),
   'windows-x64': AssetHash(
     tarball: 'pty-windows-x64.tar.gz',
-    hash: 'c777a9f4c164146cc135189619bc920d922e72024e507ab449488e02dc493214',
+    hash: 'f6e85ea9072532d3a4b4a635bf5c44008c7f44bfa2cc52afb921cd43df5e820c',
   ),
   'android-arm64': AssetHash(
     tarball: 'pty-android-arm64.tar.gz',
