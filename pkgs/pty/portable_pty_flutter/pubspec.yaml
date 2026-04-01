@@ -23,7 +23,7 @@ resolution: workspace
 dependencies:
   flutter:
     sdk: flutter
-  portable_pty: ^0.0.3
+  portable_pty: ^0.0.4
 
 dev_dependencies:
   flutter_test:

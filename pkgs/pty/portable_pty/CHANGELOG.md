@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.0.3+3-wip
+## 0.0.4
 
 - Default native shell resolution now uses `/system/bin/sh` on Android instead
   of `/bin/sh`, matching the platform shell layout.

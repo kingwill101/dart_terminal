@@ -1,4 +1,4 @@
-## 0.1.1-dev.2-wip
+## 0.1.2
 
 - Added `showHeader`, `focusOnInteraction`, and `onTapTerminal` on
   `GhosttyTerminalView` so embedders can hide the terminal chrome row and
