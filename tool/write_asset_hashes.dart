@@ -1,11 +1,15 @@
-/// Generates or verifies the `asset_hashes.dart` files for VTE and PTY.
+/// Generates or verifies the `asset_hashes.dart` files for VTE and/or PTY.
 ///
 /// Usage:
-///   # Generate hashes from downloaded artifacts in .prebuilt/:
-///   dart run tool/write_asset_hashes.dart --tag v0.0.3
+///   # Generate hashes for both packages:
+///   dart run tool/write_asset_hashes.dart --tag ghostty_vte-v0.1.2
+///
+///   # Generate hashes for a single package only:
+///   dart run tool/write_asset_hashes.dart --tag ghostty_vte-v0.1.2 --package vte
+///   dart run tool/write_asset_hashes.dart --tag portable_pty-v0.0.4 --package pty
 ///
 ///   # Verify existing hashes match (for CI release checks):
-///   dart run tool/write_asset_hashes.dart --tag v0.0.3 --verify
+///   dart run tool/write_asset_hashes.dart --tag ghostty_vte-v0.1.2 --verify
 ///
 /// This downloads all release artifacts, computes SHA256 hashes of the
 /// extracted libraries, and writes/verifies the asset_hashes.dart files
@@ -48,6 +52,7 @@ const _ptyArtifacts = <String, String>{
 Future<void> main(List<String> args) async {
   String? tag;
   var verify = false;
+  var package = 'all'; // vte | pty | all
 
   for (var i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -56,13 +61,24 @@ Future<void> main(List<String> args) async {
         tag = args[++i];
       case '--verify':
         verify = true;
+      case '--package':
+      case '-p':
+        package = args[++i];
+        if (!{'vte', 'pty', 'all'}.contains(package)) {
+          stderr.writeln(
+            "Error: --package must be one of: vte, pty, all (got '$package')",
+          );
+          exitCode = 1;
+          return;
+        }
       case '--help':
       case '-h':
         stdout.writeln(
-          'Usage: dart run tool/write_asset_hashes.dart --tag <tag> [--verify]\n'
+          'Usage: dart run tool/write_asset_hashes.dart --tag <tag> [--package vte|pty|all] [--verify]\n'
           '\n'
-          '  --tag, -t    Release tag (required)\n'
-          '  --verify     Verify existing files match instead of overwriting\n',
+          '  --tag, -t        Release tag (required)\n'
+          '  --package, -p    Which package to process: vte, pty, or all (default: all)\n'
+          '  --verify         Verify existing files match instead of overwriting\n',
         );
         return;
     }
@@ -77,39 +93,66 @@ Future<void> main(List<String> args) async {
   final tmpDir = await Directory.systemTemp.createTemp('asset_hashes_');
 
   try {
-    // Download and hash VTE artifacts.
-    stdout.writeln('Processing VTE artifacts for $tag...');
-    final vteHashes = await _downloadAndHash(tag, _vteArtifacts, tmpDir, 'vte');
+    if (package == 'vte' || package == 'all') {
+      // Download and hash VTE artifacts.
+      stdout.writeln('Processing VTE artifacts for $tag...');
+      final vteHashes = await _downloadAndHash(
+        tag,
+        _vteArtifacts,
+        tmpDir,
+        'vte',
+      );
 
-    // Download and hash PTY artifacts.
-    stdout.writeln('Processing PTY artifacts for $tag...');
-    final ptyHashes = await _downloadAndHash(tag, _ptyArtifacts, tmpDir, 'pty');
+      final vteContent = _generateDart(tag, vteHashes, 'vte');
+      final vtePath = 'pkgs/vte/ghostty_vte/lib/src/hook/asset_hashes.dart';
 
-    // Generate/verify VTE asset_hashes.dart.
-    final vteContent = _generateDart(tag, vteHashes, 'vte');
-    final vtePath = 'pkgs/vte/ghostty_vte/lib/src/hook/asset_hashes.dart';
+      if (verify) {
+        if (!_verifyFile(vtePath, vteContent)) {
+          stderr.writeln(
+            '\nVerification failed. Run without --verify to regenerate.',
+          );
+          exitCode = 1;
+          return;
+        } else {
+          stdout.writeln('OK: $vtePath');
+        }
+      } else {
+        File(vtePath).writeAsStringSync(vteContent);
+        stdout.writeln('Wrote $vtePath');
+      }
+    }
 
-    // Generate/verify PTY asset_hashes.dart.
-    final ptyContent = _generateDart(tag, ptyHashes, 'pty');
-    final ptyPath = 'pkgs/pty/portable_pty/lib/src/hook/asset_hashes.dart';
+    if (package == 'pty' || package == 'all') {
+      // Download and hash PTY artifacts.
+      stdout.writeln('Processing PTY artifacts for $tag...');
+      final ptyHashes = await _downloadAndHash(
+        tag,
+        _ptyArtifacts,
+        tmpDir,
+        'pty',
+      );
+
+      final ptyContent = _generateDart(tag, ptyHashes, 'pty');
+      final ptyPath = 'pkgs/pty/portable_pty/lib/src/hook/asset_hashes.dart';
+
+      if (verify) {
+        if (!_verifyFile(ptyPath, ptyContent)) {
+          stderr.writeln(
+            '\nVerification failed. Run without --verify to regenerate.',
+          );
+          exitCode = 1;
+          return;
+        } else {
+          stdout.writeln('OK: $ptyPath');
+        }
+      } else {
+        File(ptyPath).writeAsStringSync(ptyContent);
+        stdout.writeln('Wrote $ptyPath');
+      }
+    }
 
     if (verify) {
-      var ok = true;
-      ok &= _verifyFile(vtePath, vteContent);
-      ok &= _verifyFile(ptyPath, ptyContent);
-      if (!ok) {
-        stderr.writeln(
-          '\nVerification failed. Run without --verify to regenerate.',
-        );
-        exitCode = 1;
-      } else {
-        stdout.writeln('\nAll asset hashes verified successfully.');
-      }
-    } else {
-      File(vtePath).writeAsStringSync(vteContent);
-      stdout.writeln('Wrote $vtePath');
-      File(ptyPath).writeAsStringSync(ptyContent);
-      stdout.writeln('Wrote $ptyPath');
+      stdout.writeln('\nAll asset hashes verified successfully.');
     }
   } finally {
     tmpDir.deleteSync(recursive: true);

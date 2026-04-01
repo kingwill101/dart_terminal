@@ -1,3 +1,5 @@
+// ignore_for_file: avoid_print
+
 import 'package:ghostty_vte/ghostty_vte.dart';
 
 void main() {
