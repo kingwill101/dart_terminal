@@ -1025,7 +1025,6 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
       0,
       widget.controller.snapshot.lines.length - 1,
     );
-    final lines = widget.controller.snapshot.lines;
     final col = ((resolvedX - widget.padding.left) / metrics.charWidth).floor();
     final maxCol = math.max(0, widget.controller.cols - 1);
     return GhosttyTerminalCellPosition(row: row, col: col.clamp(0, maxCol));
@@ -2395,7 +2394,6 @@ class _GhosttyTerminalPainter extends CustomPainter {
         }
         final width = run.width * charWidth;
         final startCol = run.startCol;
-        final endCol = startCol + run.width - 1;
         final rect = Rect.fromLTWH(
           padding.left + (startCol * charWidth),
           rowBand.top,
@@ -2871,25 +2869,6 @@ class _GhosttyTerminalPainter extends CustomPainter {
         a.overline == b.overline &&
         a.strikethrough == b.strikethrough &&
         a.underline == b.underline;
-  }
-
-  bool _selectionIntersectsSpan(int row, int startCol, int endCol) {
-    final selection = this.selection;
-    if (selection == null) {
-      return false;
-    }
-    final normalized = selection.normalized;
-    if (row < normalized.start.row || row > normalized.end.row) {
-      return false;
-    }
-
-    final selectionStart = row == normalized.start.row
-        ? normalized.start.col
-        : 0;
-    final selectionEnd = row == normalized.end.row
-        ? normalized.end.col
-        : cols - 1;
-    return startCol <= selectionEnd && endCol >= selectionStart;
   }
 
   TextDecoration _nativeTextDecoration({
@@ -4404,17 +4383,12 @@ _TerminalRaisedTextGlyphSpec? _terminalRaisedTextGlyphSpec(int rune) =>
     };
 
 final class _TerminalRaisedTextGlyphSpec {
-  const _TerminalRaisedTextGlyphSpec({
-    required this.text,
-    this.fontScale = 0.7,
-    this.topOffsetScale = 0.02,
-    this.verticalSpaceScale = 0.72,
-  });
+  const _TerminalRaisedTextGlyphSpec({required this.text});
 
   final String text;
-  final double fontScale;
-  final double topOffsetScale;
-  final double verticalSpaceScale;
+  final double fontScale = 0.7;
+  final double topOffsetScale = 0.02;
+  final double verticalSpaceScale = 0.72;
 }
 
 _TerminalSymbolGlyphSpec? _terminalSymbolGlyphSpec(int rune) => switch (rune) {
