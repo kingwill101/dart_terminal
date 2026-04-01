@@ -1,3 +1,7 @@
+## 0.0.4
+
+- Bumped `portable_pty` dependency to `^0.0.4`.
+
 ## 0.0.3+1
 
 - Bumped `portable_pty` dependency to `^0.0.3` for auto-download support.
