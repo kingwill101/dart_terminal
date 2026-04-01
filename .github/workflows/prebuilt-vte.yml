@@ -249,10 +249,13 @@ jobs:
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             PRERELEASE="${{ github.event.inputs.prerelease }}"
-          elif printf '%s' "$TAG" | grep -q -- '-'; then
-            PRERELEASE=true
           else
-            PRERELEASE=false
+            VERSION="${TAG##*-v}"
+            if printf '%s' "$VERSION" | grep -q -- '-'; then
+              PRERELEASE=true
+            else
+              PRERELEASE=false
+            fi
           fi
 
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
