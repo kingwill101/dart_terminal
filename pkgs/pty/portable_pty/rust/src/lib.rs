@@ -19,7 +19,11 @@
 use libc;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize, SlavePty};
 use std::ffi::{c_char, c_int, CStr};
+#[cfg(target_os = "android")]
+use std::fs::OpenOptions;
 use std::io::{Read, Write};
+#[cfg(target_os = "android")]
+use std::os::fd::AsRawFd;
 #[cfg(unix)]
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Mutex;
@@ -28,6 +32,40 @@ use std::sync::Mutex;
 #[cfg(unix)]
 fn get_errno() -> c_int {
     std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+}
+
+#[cfg(target_os = "android")]
+fn normalize_android_pty_termios(master: &Box<dyn MasterPty + Send>) {
+    let Some(tty_path) = master.tty_name() else {
+        return;
+    };
+
+    let Ok(tty) = OpenOptions::new().read(true).write(true).open(&tty_path) else {
+        return;
+    };
+
+    let fd = tty.as_raw_fd();
+    let mut termios = std::mem::MaybeUninit::<libc::termios>::uninit();
+    if unsafe { libc::tcgetattr(fd, termios.as_mut_ptr()) } != 0 {
+        return;
+    }
+    let mut termios = unsafe { termios.assume_init() };
+
+    termios.c_iflag |= libc::BRKINT | libc::ICRNL | libc::IXON;
+    #[cfg(any(target_os = "android", target_os = "linux"))]
+    {
+        termios.c_iflag |= libc::IUTF8;
+    }
+    termios.c_oflag |= libc::OPOST | libc::ONLCR;
+    termios.c_cflag |= libc::CREAD;
+    termios.c_lflag |=
+        libc::ECHO | libc::ECHOE | libc::ECHOK | libc::ICANON | libc::IEXTEN | libc::ISIG;
+    termios.c_cc[libc::VMIN] = 1;
+    termios.c_cc[libc::VTIME] = 0;
+
+    unsafe {
+        let _ = libc::tcsetattr(fd, libc::TCSANOW, &termios);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -344,6 +382,9 @@ pub extern "C" fn portable_pty_open(
         Ok(pair) => pair,
         Err(_) => return PortablePtyResult::ErrOpen,
     };
+
+    #[cfg(target_os = "android")]
+    normalize_android_pty_termios(&pair.master);
 
     let reader = match pair.master.try_clone_reader() {
         Ok(r) => r,
