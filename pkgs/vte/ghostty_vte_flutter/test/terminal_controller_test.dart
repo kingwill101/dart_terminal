@@ -237,6 +237,58 @@ void main() {
     },
   );
 
+  test(
+    'formatted snapshot keeps emoji variation selectors attached to graphemes',
+    () {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      final controller = GhosttyTerminalController();
+      addTearDown(controller.dispose);
+
+      controller.appendDebugOutput('☺️ ❤\uFE0F ⚠\uFE0F ℹ\uFE0F');
+
+      expect(controller.lines, ['☺️ ❤️ ⚠️ ℹ️']);
+
+      final runs = controller.snapshot.lines.first.runs;
+      expect(runs, hasLength(1));
+      expect(runs.first.text, '☺️ ❤️ ⚠️ ℹ️');
+      expect(runs.first.cells, 11);
+    },
+  );
+
+  test(
+    'render snapshot keeps emoji variation selectors attached to graphemes',
+    () {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      final controller = GhosttyTerminalController();
+      addTearDown(controller.dispose);
+
+      controller.appendDebugOutput('❤️ ⚠️ ℹ️ ⌨️ ⚙️');
+
+      final renderSnapshot = controller.renderSnapshot;
+      expect(renderSnapshot, isNotNull);
+
+      final textCells = renderSnapshot!.rowsData.first.cells
+          .where((cell) => cell.text.isNotEmpty)
+          .toList(growable: false);
+      expect(textCells.map((cell) => cell.text).join(), '❤️ ⚠️ ℹ️ ⌨️ ⚙️');
+      expect(textCells.where((cell) => cell.text == '\uFE0F'), isEmpty);
+
+      final emojiCells = textCells
+          .where((cell) => cell.text.trim().isNotEmpty && cell.text != ' ')
+          .toList(growable: false);
+      expect(
+        emojiCells.map((cell) => cell.width).toList(growable: false),
+        everyElement(2),
+      );
+    },
+  );
+
   testWidgets('terminal view renders custom painter', (tester) async {
     if (!_hasNativeTerminal) {
       return;

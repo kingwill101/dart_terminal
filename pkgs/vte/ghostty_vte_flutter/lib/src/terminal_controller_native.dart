@@ -11,6 +11,7 @@ import 'shell_launch.dart';
 import 'terminal_render_model.dart';
 import 'terminal_snapshot.dart';
 import 'terminal_surface_contract.dart';
+import 'terminal_text_normalization.dart';
 
 /// Controller for a terminal session backed by a subprocess.
 ///
@@ -500,6 +501,7 @@ class GhosttyTerminalController extends ChangeNotifier
   /// When [sanitizePaste] is true, unsafe multi-line paste payloads are rejected.
   @override
   bool write(String text, {bool sanitizePaste = false}) {
+    text = ghosttyTerminalNormalizeInputText(text);
     if (sanitizePaste && !GhosttyVt.isPasteSafe(text)) {
       return false;
     }
@@ -904,45 +906,11 @@ GhosttyTerminalRenderSnapshot _toRenderSnapshot(VtRenderSnapshot snapshot) {
           hasHyperlink: row.raw.hasHyperlink,
           semanticPrompt: row.raw.semanticPrompt,
           kittyVirtualPlaceholder: row.raw.kittyVirtualPlaceholder,
-          cells: row.cells
-              .where(
-                (cell) =>
-                    cell.raw.wide !=
-                    GhosttyCellWide.GHOSTTY_CELL_WIDE_SPACER_TAIL,
-              )
-              .map(
-                (cell) => GhosttyTerminalRenderCell(
-                  text: cell.graphemes,
-                  width: switch (cell.raw.wide) {
-                    GhosttyCellWide.GHOSTTY_CELL_WIDE_WIDE => 2,
-                    _ => 1,
-                  },
-                  hasText: cell.raw.hasText,
-                  hasStyling: cell.raw.hasStyling,
-                  hasHyperlink: cell.raw.hasHyperlink,
-                  isProtected: cell.raw.isProtected,
-                  semanticContent: cell.raw.semanticContent,
-                  metadata: () {
-                    final bgColor = resolveCellBackgroundColor(cell.raw);
-                    return GhosttyTerminalRenderCellMetadata(
-                      codepoint: cell.raw.codepoint,
-                      contentTag: cell.raw.contentTag,
-                      styleId: cell.raw.styleId,
-                      colorPaletteIndex: cell.raw.colorPaletteIndex,
-                      colorRgb: bgColor,
-                      wide: cell.raw.wide,
-                      hasBackgroundColor: bgColor != null,
-                      backgroundColor: bgColor,
-                    );
-                  }(),
-                  style:
-                      GhosttyTerminalResolvedStyle.fromNativeStyleWithRenderColors(
-                        style: cell.style,
-                        colors: snapshot.colors,
-                      ),
-                ),
-              )
-              .toList(growable: false),
+          cells: _toRenderCells(
+            row.cells,
+            resolveCellBackgroundColor: resolveCellBackgroundColor,
+            colors: snapshot.colors,
+          ),
         ),
       )
       .toList(growable: false);
@@ -965,5 +933,116 @@ GhosttyTerminalRenderSnapshot _toRenderSnapshot(VtRenderSnapshot snapshot) {
       color: cursorColor,
     ),
     rowsData: rows,
+  );
+}
+
+List<GhosttyTerminalRenderCell> _toRenderCells(
+  List<VtRenderCellSnapshot> cells, {
+  required Color? Function(VtCellSnapshot rawCell) resolveCellBackgroundColor,
+  required VtRenderColors colors,
+}) {
+  final renderCells = <GhosttyTerminalRenderCell>[];
+
+  for (final cell in cells) {
+    if (cell.raw.wide == GhosttyCellWide.GHOSTTY_CELL_WIDE_SPACER_TAIL) {
+      continue;
+    }
+
+    final renderCell = _toRenderCell(
+      cell,
+      resolveCellBackgroundColor: resolveCellBackgroundColor,
+      colors: colors,
+    );
+
+    if (_isRenderCellGraphemeExtender(renderCell) && renderCells.isNotEmpty) {
+      final previous = renderCells.removeLast();
+      renderCells.add(_mergeRenderCells(previous, renderCell));
+      continue;
+    }
+
+    renderCells.add(renderCell);
+  }
+  return List<GhosttyTerminalRenderCell>.unmodifiable(renderCells);
+}
+
+GhosttyTerminalRenderCell _toRenderCell(
+  VtRenderCellSnapshot cell, {
+  required Color? Function(VtCellSnapshot rawCell) resolveCellBackgroundColor,
+  required VtRenderColors colors,
+}) {
+  final bgColor = resolveCellBackgroundColor(cell.raw);
+  final graphemes = ghosttyTerminalNormalizeInputText(cell.graphemes);
+  return GhosttyTerminalRenderCell(
+    text: graphemes,
+    width: switch (cell.raw.wide) {
+      GhosttyCellWide.GHOSTTY_CELL_WIDE_WIDE => 2,
+      _ => 1,
+    },
+    hasText: cell.raw.hasText,
+    hasStyling: cell.raw.hasStyling,
+    hasHyperlink: cell.raw.hasHyperlink,
+    isProtected: cell.raw.isProtected,
+    semanticContent: cell.raw.semanticContent,
+    metadata: GhosttyTerminalRenderCellMetadata(
+      codepoint: cell.raw.codepoint,
+      contentTag: cell.raw.contentTag,
+      styleId: cell.raw.styleId,
+      colorPaletteIndex: cell.raw.colorPaletteIndex,
+      colorRgb: bgColor,
+      wide: cell.raw.wide,
+      hasBackgroundColor: bgColor != null,
+      backgroundColor: bgColor,
+    ),
+    style: GhosttyTerminalResolvedStyle.fromNativeStyleWithRenderColors(
+      style: cell.style,
+      colors: colors,
+    ),
+  );
+}
+
+bool _isRenderCellGraphemeExtender(GhosttyTerminalRenderCell cell) {
+  final codepoint = cell.metadata.codepoint;
+  if (codepoint == 0x200D ||
+      codepoint == 0x20E3 ||
+      (codepoint >= 0xFE00 && codepoint <= 0xFE0F) ||
+      (codepoint >= 0x1F3FB && codepoint <= 0x1F3FF) ||
+      (codepoint >= 0xE0020 && codepoint <= 0xE007F)) {
+    return true;
+  }
+
+  final normalizedText = ghosttyTerminalNormalizeInputText(cell.text);
+  if (normalizedText.isEmpty) {
+    return false;
+  }
+  return normalizedText.runes.every(
+    (rune) =>
+        rune == 0x200D ||
+        rune == 0x20E3 ||
+        (rune >= 0xFE00 && rune <= 0xFE0F) ||
+        (rune >= 0x1F3FB && rune <= 0x1F3FF) ||
+        (rune >= 0xE0020 && rune <= 0xE007F),
+  );
+}
+
+GhosttyTerminalRenderCell _mergeRenderCells(
+  GhosttyTerminalRenderCell previous,
+  GhosttyTerminalRenderCell extender,
+) {
+  final extenderText = extender.text.isNotEmpty
+      ? extender.text
+      : String.fromCharCode(extender.metadata.codepoint);
+  final mergedText = '${previous.text}$extenderText';
+
+  return GhosttyTerminalRenderCell(
+    text: mergedText,
+    width: previous.width + extender.width,
+    hasText:
+        previous.hasText || extender.hasText || mergedText.trim().isNotEmpty,
+    hasStyling: previous.hasStyling || extender.hasStyling,
+    hasHyperlink: previous.hasHyperlink || extender.hasHyperlink,
+    isProtected: previous.isProtected || extender.isProtected,
+    semanticContent: previous.semanticContent,
+    metadata: previous.metadata,
+    style: previous.style,
   );
 }

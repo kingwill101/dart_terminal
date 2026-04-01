@@ -982,7 +982,7 @@ final class _GhosttyTerminalSnapshotParser {
         }
 
         final character = _readCharacter(text, index);
-        _writeCell(character);
+        _writeCell(character, widthCells: _measureTerminalGraphemeCellWidth(character));
         index += character.length;
       }
 
@@ -1292,17 +1292,14 @@ final class _GhosttyTerminalSnapshotParser {
   }
 
   String _readCharacter(String text, int index) {
-    final unit = text.codeUnitAt(index);
-    if (unit >= 0xD800 && unit <= 0xDBFF && index + 1 < text.length) {
-      final next = text.codeUnitAt(index + 1);
-      if (next >= 0xDC00 && next <= 0xDFFF) {
-        return text.substring(index, index + 2);
-      }
+    final range = CharacterRange.at(text, index);
+    if (!range.moveNext()) {
+      return text.substring(index, index + 1);
     }
-    return text.substring(index, index + 1);
+    return range.current;
   }
 
-  void _writeCell(String text) {
+  void _writeCell(String text, {int widthCells = 1}) {
     _ensureLine(_row);
     final line = _lines[_row];
     while (line.length < _col) {
@@ -1313,7 +1310,18 @@ final class _GhosttyTerminalSnapshotParser {
     } else {
       line[_col] = _GhosttyTerminalCell(text: text, style: _style);
     }
-    _col++;
+    for (var extra = 1; extra < widthCells; extra++) {
+      final continuationCol = _col + extra;
+      while (line.length < continuationCol) {
+        line.add(null);
+      }
+      if (line.length == continuationCol) {
+        line.add(_GhosttyTerminalCell(text: '', style: _style));
+      } else {
+        line[continuationCol] = _GhosttyTerminalCell(text: '', style: _style);
+      }
+    }
+    _col += widthCells;
     _cursor = GhosttyTerminalCursor(row: _row, col: _col);
   }
 
@@ -1409,6 +1417,33 @@ final class _GhosttyTerminalSnapshotParser {
 
     return compacted;
   }
+}
+
+int _measureTerminalGraphemeCellWidth(String grapheme) {
+  if (grapheme.isEmpty) {
+    return 1;
+  }
+
+  final runes = grapheme.runes.toList(growable: false);
+  final firstRune = runes.first;
+
+  if (_isWideRune(firstRune)) {
+    return 2;
+  }
+
+  if (runes.any((rune) => rune == 0x200D || rune == 0xFE0F)) {
+    return 2;
+  }
+
+  if (runes.length >= 2 &&
+      runes.first >= 0x1F1E6 &&
+      runes.first <= 0x1F1FF &&
+      runes[1] >= 0x1F1E6 &&
+      runes[1] <= 0x1F1FF) {
+    return 2;
+  }
+
+  return 1;
 }
 
 @immutable

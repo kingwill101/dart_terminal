@@ -3,6 +3,8 @@ library;
 import 'package:flutter/services.dart';
 import 'package:ghostty_vte/ghostty_vte.dart';
 
+import 'terminal_text_normalization.dart';
+
 /// Normalized hardware modifier state for terminal input dispatch.
 final class GhosttyTerminalModifierState {
   const GhosttyTerminalModifierState({
@@ -236,7 +238,7 @@ String ghosttyTerminalPrintableText(
   KeyEvent event, {
   required GhosttyTerminalModifierState modifiers,
 }) {
-  final character = event.character ?? '';
+  final character = ghosttyTerminalNormalizeInputText(event.character ?? '');
 
   if (modifiers.blocksPrintableText) {
     return '';
@@ -274,6 +276,7 @@ String ghosttyTerminalPrintableText(
   }
   return '';
 }
+
 
 /// Resolves ASCII control characters for Ctrl-based key chords such as
 /// `Ctrl+C`, `Ctrl+D`, and `Ctrl+L`.

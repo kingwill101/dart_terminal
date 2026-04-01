@@ -16,6 +16,7 @@ import 'terminal_pointer_flow.dart';
 import 'terminal_render_model.dart';
 import 'terminal_snapshot.dart';
 import 'terminal_selection_session.dart';
+import 'terminal_text_normalization.dart';
 
 /// Paint backend used by [GhosttyTerminalView].
 enum GhosttyTerminalRendererMode {
@@ -268,6 +269,9 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
 
   void _recordSerialTapDown(SerialTapDownDetails details) {
     _pendingSerialTapCount = details.count;
+    if (details.count < 3) {
+      _selectionSession.clearLineSelectionAnchorRow();
+    }
   }
 
   @override
@@ -2162,27 +2166,34 @@ class _GhosttyTerminalPainter extends CustomPainter {
       for (var runIndex = 0; runIndex < line.runs.length; runIndex++) {
         final run = line.runs[runIndex];
         final style = resolvedStyles[runIndex];
+        final runFontStack = _textPainterFontStackFor(run.text);
         final textStyle = style.toTextStyle(
           fontSize: fontSize,
           lineHeight: linePixels / fontSize,
-          fontFamily: fontFamily,
-          fontFamilyFallback: fontFamilyFallback,
+          fontFamily: runFontStack.fontFamily,
+          fontFamilyFallback: runFontStack.fontFamilyFallback,
           fontPackage: fontPackage,
           letterSpacing: letterSpacing,
         );
         var textX = x;
         final graphemes = _splitTerminalCells(run.text).toList(growable: false);
         final cellWidths = _measureTerminalCellWidths(run.text, run.cells);
+        final prefersSingleRunTextPainter = _shouldPreferSingleRunTextPainter(
+          run.text,
+        );
         final canPaintAsSingleRun =
-            graphemes.length == run.cells &&
-            cellWidths.every((widthCells) => widthCells == 1) &&
-            _isSafeSingleRunText(run.text) &&
-            _shouldPaintTerminalRunAsSingleRun(
-              text: run.text,
-              width: run.cells * charWidth,
-              fontWeight: style.fontWeight,
-              fontStyle: style.fontStyle,
-            );
+            prefersSingleRunTextPainter ||
+            ((graphemes.length == run.cells &&
+                    cellWidths.every((widthCells) => widthCells == 1) &&
+                    _isSafeSingleRunText(run.text)) &&
+                _shouldPaintTerminalRunAsSingleRun(
+                  text: run.text,
+                  width: run.cells * charWidth,
+                  fontWeight: style.fontWeight,
+                  fontStyle: style.fontStyle,
+                  fontFamily: runFontStack.fontFamily,
+                  fontFamilyFallback: runFontStack.fontFamilyFallback,
+                ));
         if (canPaintAsSingleRun) {
           final rect = Rect.fromLTWH(x, y, run.cells * charWidth, linePixels);
           final rowRect = Rect.fromLTRB(
@@ -2197,8 +2208,8 @@ class _GhosttyTerminalPainter extends CustomPainter {
               width: rect.width,
               fontSize: fontSize,
               lineHeight: linePixels / fontSize,
-              fontFamily: fontFamily,
-              fontFamilyFallback: fontFamilyFallback,
+              fontFamily: runFontStack.fontFamily,
+              fontFamilyFallback: runFontStack.fontFamilyFallback,
               fontPackage: fontPackage,
               letterSpacing: letterSpacing,
               color: style.foreground,
@@ -2218,13 +2229,17 @@ class _GhosttyTerminalPainter extends CustomPainter {
             final character = graphemes[index];
             final widthCells = cellWidths[index];
             final width = widthCells * charWidth;
+            final preferTextPainterGlyph = _shouldPreferTextPainterGlyph(
+              character,
+            );
             final rect = Rect.fromLTRB(
               textX,
               rowBand.top,
               textX + width,
               rowBand.bottom,
             );
-            if (widthCells == 1 &&
+            if (!preferTextPainterGlyph &&
+                widthCells == 1 &&
                 _paintTerminalSpecialGlyph(
                   canvas,
                   character,
@@ -2234,7 +2249,9 @@ class _GhosttyTerminalPainter extends CustomPainter {
               textX += width;
               continue;
             }
-            _debugLogUnsupportedGlyph(character);
+            if (!preferTextPainterGlyph) {
+              _debugLogUnsupportedGlyph(character);
+            }
             final painter = TextPainter(
               text: TextSpan(text: character, style: textStyle),
               textDirection: TextDirection.ltr,
@@ -2412,6 +2429,7 @@ class _GhosttyTerminalPainter extends CustomPainter {
           rowBand.height,
         );
         if (run.hasRenderableText) {
+          final runFontStack = _textPainterFontStackFor(run.text);
           final foreground = _resolveNativeForeground(
             style: run.style,
             defaultForeground: defaultForeground,
@@ -2433,8 +2451,8 @@ class _GhosttyTerminalPainter extends CustomPainter {
               : textForeground;
           final textStyle = TextStyle(
             color: textForeground,
-            fontFamily: fontFamily,
-            fontFamilyFallback: fontFamilyFallback,
+            fontFamily: runFontStack.fontFamily,
+            fontFamilyFallback: runFontStack.fontFamilyFallback,
             package: fontPackage,
             fontSize: fontSize,
             height: linePixels / fontSize,
@@ -2459,20 +2477,25 @@ class _GhosttyTerminalPainter extends CustomPainter {
                 run.graphemeCellWidths.length == graphemes.length
                 ? run.graphemeCellWidths
                 : _measureTerminalCellWidths(run.text, run.width);
+            final prefersSingleRunTextPainter =
+                _shouldPreferSingleRunTextPainter(run.text);
             final canPaintAsSingleRun =
-                graphemes.length == run.width &&
-                graphemeWidths.every((widthCells) => widthCells == 1) &&
-                _isSafeSingleRunText(run.text) &&
-                _shouldPaintTerminalRunAsSingleRun(
-                  text: run.text,
-                  width: run.width * charWidth,
-                  fontWeight: run.style.bold
-                      ? FontWeight.w700
-                      : FontWeight.w400,
-                  fontStyle: run.style.italic
-                      ? FontStyle.italic
-                      : FontStyle.normal,
-                );
+                prefersSingleRunTextPainter ||
+                ((graphemes.length == run.width &&
+                        graphemeWidths.every((widthCells) => widthCells == 1) &&
+                        _isSafeSingleRunText(run.text)) &&
+                    _shouldPaintTerminalRunAsSingleRun(
+                      text: run.text,
+                      width: run.width * charWidth,
+                      fontWeight: run.style.bold
+                          ? FontWeight.w700
+                          : FontWeight.w400,
+                      fontStyle: run.style.italic
+                          ? FontStyle.italic
+                          : FontStyle.normal,
+                      fontFamily: runFontStack.fontFamily,
+                      fontFamilyFallback: runFontStack.fontFamilyFallback,
+                    ));
             if (canPaintAsSingleRun) {
               final painter = nativeRunPainterCache.resolve(
                 _TerminalTextPainterKey(
@@ -2480,8 +2503,8 @@ class _GhosttyTerminalPainter extends CustomPainter {
                   width: rect.width,
                   fontSize: fontSize,
                   lineHeight: linePixels / fontSize,
-                  fontFamily: fontFamily,
-                  fontFamilyFallback: fontFamilyFallback,
+                  fontFamily: runFontStack.fontFamily,
+                  fontFamilyFallback: runFontStack.fontFamilyFallback,
                   fontPackage: fontPackage,
                   letterSpacing: letterSpacing,
                   color: textForeground,
@@ -2514,13 +2537,17 @@ class _GhosttyTerminalPainter extends CustomPainter {
                     ? graphemeWidths[index]
                     : 1;
                 final cellWidth = widthCells * charWidth;
+                final preferTextPainterGlyph = _shouldPreferTextPainterGlyph(
+                  character,
+                );
                 final rect = Rect.fromLTRB(
                   textX,
                   rowBand.top,
                   textX + cellWidth,
                   rowBand.bottom,
                 );
-                if (widthCells == 1 &&
+                if (!preferTextPainterGlyph &&
+                    widthCells == 1 &&
                     _paintTerminalSpecialGlyph(
                       canvas,
                       character,
@@ -2530,9 +2557,19 @@ class _GhosttyTerminalPainter extends CustomPainter {
                   textX += cellWidth;
                   continue;
                 }
-                _debugLogUnsupportedGlyph(character);
+                if (!preferTextPainterGlyph) {
+                  _debugLogUnsupportedGlyph(character);
+                }
+                final glyphFontStack = _textPainterFontStackFor(character);
                 final painter = TextPainter(
-                  text: TextSpan(text: character, style: textStyle),
+                  text: TextSpan(
+                    text: character,
+                    style: textStyle.copyWith(
+                      fontFamily: glyphFontStack.fontFamily,
+                      fontFamilyFallback: glyphFontStack.fontFamilyFallback,
+                      package: fontPackage,
+                    ),
+                  ),
                   textDirection: TextDirection.ltr,
                   maxLines: 1,
                 )..layout();
@@ -2993,6 +3030,8 @@ class _GhosttyTerminalPainter extends CustomPainter {
     required double width,
     required FontWeight fontWeight,
     required FontStyle fontStyle,
+    required String fontFamily,
+    required List<String>? fontFamilyFallback,
   }) {
     if (text.isEmpty) {
       return false;
@@ -3013,6 +3052,31 @@ class _GhosttyTerminalPainter extends CustomPainter {
     );
 
     return (measuredWidth - width).abs() <= 0.75;
+  }
+
+  ({String fontFamily, List<String>? fontFamilyFallback})
+  _textPainterFontStackFor(String text) {
+    final preferredFamily = _preferredTextPainterFontFamily(
+      text,
+      baseFontFamily: fontFamily,
+      fallbackFamilies: fontFamilyFallback,
+    );
+    if (preferredFamily == null || preferredFamily == fontFamily) {
+      return (fontFamily: fontFamily, fontFamilyFallback: fontFamilyFallback);
+    }
+
+    final nextFallback = <String>[
+      for (final family in fontFamilyFallback ?? const <String>[])
+        if (family != preferredFamily) family,
+      if (fontFamily != preferredFamily) fontFamily,
+    ];
+
+    return (
+      fontFamily: preferredFamily,
+      fontFamilyFallback: nextFallback.isEmpty
+          ? null
+          : List<String>.unmodifiable(nextFallback),
+    );
   }
 
   bool _paintTerminalSpecialGlyph(
@@ -3515,6 +3579,173 @@ class _GhosttyTerminalPainter extends CustomPainter {
           ..close();
         canvas.drawPath(path, paint);
         return true;
+      case _TerminalSymbolGlyphKind.cent:
+        final arcRect = Rect.fromCenter(
+          center: Offset(centerX, centerY),
+          width: width * 0.44,
+          height: height * 0.54,
+        );
+        canvas.drawArc(arcRect, math.pi * 0.24, math.pi * 1.52, false, paint);
+        canvas.drawLine(
+          Offset(centerX, top + (height * 0.16)),
+          Offset(centerX, bottom - (height * 0.16)),
+          paint,
+        );
+        return true;
+      case _TerminalSymbolGlyphKind.pi:
+        final stemTop = top + (height * 0.26);
+        final stemBottom = bottom - (height * 0.14);
+        canvas.drawLine(
+          Offset(left + (width * 0.22), stemTop),
+          Offset(right - (width * 0.18), stemTop),
+          paint,
+        );
+        canvas.drawLine(
+          Offset(left + (width * 0.32), stemTop),
+          Offset(left + (width * 0.32), stemBottom),
+          paint,
+        );
+        canvas.drawLine(
+          Offset(right - (width * 0.24), stemTop),
+          Offset(right - (width * 0.24), stemBottom),
+          paint,
+        );
+        return true;
+      case _TerminalSymbolGlyphKind.squareRoot:
+        final path = Path()
+          ..moveTo(left + (width * 0.14), centerY + (height * 0.02))
+          ..lineTo(left + (width * 0.28), centerY + (height * 0.18))
+          ..lineTo(left + (width * 0.42), top + (height * 0.18))
+          ..lineTo(right - (width * 0.10), top + (height * 0.18));
+        canvas.drawPath(path, paint);
+        return true;
+      case _TerminalSymbolGlyphKind.multiply:
+        canvas.drawLine(
+          Offset(left + (width * 0.2), top + (height * 0.2)),
+          Offset(right - (width * 0.2), bottom - (height * 0.2)),
+          paint,
+        );
+        canvas.drawLine(
+          Offset(right - (width * 0.2), top + (height * 0.2)),
+          Offset(left + (width * 0.2), bottom - (height * 0.2)),
+          paint,
+        );
+        return true;
+      case _TerminalSymbolGlyphKind.divide:
+        final dotPaint = Paint()
+          ..color = color
+          ..style = PaintingStyle.fill
+          ..isAntiAlias = true;
+        canvas.drawLine(
+          Offset(left + (width * 0.2), centerY),
+          Offset(right - (width * 0.2), centerY),
+          paint,
+        );
+        final dotRadius = math.min(width, height) * 0.05;
+        canvas.drawCircle(
+          Offset(centerX, centerY - (height * 0.2)),
+          dotRadius,
+          dotPaint,
+        );
+        canvas.drawCircle(
+          Offset(centerX, centerY + (height * 0.2)),
+          dotRadius,
+          dotPaint,
+        );
+        return true;
+      case _TerminalSymbolGlyphKind.euro:
+        final arcRect = Rect.fromCenter(
+          center: Offset(centerX + (width * 0.02), centerY),
+          width: width * 0.48,
+          height: height * 0.58,
+        );
+        canvas.drawArc(arcRect, math.pi * 0.32, math.pi * 1.36, false, paint);
+        canvas.drawLine(
+          Offset(left + (width * 0.22), centerY - (height * 0.10)),
+          Offset(right - (width * 0.12), centerY - (height * 0.10)),
+          paint,
+        );
+        canvas.drawLine(
+          Offset(left + (width * 0.22), centerY + (height * 0.10)),
+          Offset(right - (width * 0.12), centerY + (height * 0.10)),
+          paint,
+        );
+        return true;
+      case _TerminalSymbolGlyphKind.yen:
+        final splitY = top + (height * 0.42);
+        canvas.drawLine(
+          Offset(left + (width * 0.22), top + (height * 0.18)),
+          Offset(centerX, splitY),
+          paint,
+        );
+        canvas.drawLine(
+          Offset(right - (width * 0.22), top + (height * 0.18)),
+          Offset(centerX, splitY),
+          paint,
+        );
+        canvas.drawLine(
+          Offset(centerX, splitY),
+          Offset(centerX, bottom - (height * 0.14)),
+          paint,
+        );
+        canvas.drawLine(
+          Offset(left + (width * 0.24), centerY - (height * 0.06)),
+          Offset(right - (width * 0.24), centerY - (height * 0.06)),
+          paint,
+        );
+        canvas.drawLine(
+          Offset(left + (width * 0.24), centerY + (height * 0.10)),
+          Offset(right - (width * 0.24), centerY + (height * 0.10)),
+          paint,
+        );
+        return true;
+      case _TerminalSymbolGlyphKind.delta:
+        final path = Path()
+          ..moveTo(centerX, top + (height * 0.16))
+          ..lineTo(left + (width * 0.22), bottom - (height * 0.18))
+          ..lineTo(right - (width * 0.22), bottom - (height * 0.18))
+          ..close();
+        canvas.drawPath(path, paint);
+        return true;
+      case _TerminalSymbolGlyphKind.section:
+        final path = Path()
+          ..moveTo(right - (width * 0.26), top + (height * 0.16))
+          ..quadraticBezierTo(
+            left + (width * 0.18),
+            top + (height * 0.08),
+            left + (width * 0.26),
+            centerY - (height * 0.04),
+          )
+          ..quadraticBezierTo(
+            left + (width * 0.34),
+            centerY + (height * 0.08),
+            right - (width * 0.22),
+            centerY + (height * 0.02),
+          )
+          ..quadraticBezierTo(
+            right - (width * 0.08),
+            centerY - (height * 0.02),
+            right - (width * 0.28),
+            bottom - (height * 0.12),
+          )
+          ..quadraticBezierTo(
+            left + (width * 0.18),
+            bottom - (height * 0.02),
+            left + (width * 0.28),
+            bottom - (height * 0.18),
+          );
+        canvas.drawPath(path, paint);
+        canvas.drawLine(
+          Offset(centerX - (width * 0.06), top + (height * 0.08)),
+          Offset(centerX - (width * 0.02), top + (height * 0.28)),
+          paint,
+        );
+        canvas.drawLine(
+          Offset(centerX + (width * 0.02), bottom - (height * 0.08)),
+          Offset(centerX + (width * 0.06), bottom - (height * 0.28)),
+          paint,
+        );
+        return true;
     }
   }
 
@@ -3639,9 +3870,11 @@ double _centeredGlyphOffset(double availableExtent, double glyphExtent) {
 }
 
 final Set<int> _loggedUnsupportedTerminalRunes = <int>{};
-
 void _debugLogUnsupportedGlyph(String text) {
   assert(() {
+    if (!kDebugMode) {
+      return true;
+    }
     final runes = text.runes.toList(growable: false);
     if (runes.isEmpty) {
       return true;
@@ -4215,11 +4448,12 @@ bool _containsBoxDrawingCharacters(String text) {
 }
 
 bool _isSafeSingleRunText(String text) {
-  if (text.isEmpty || _containsBoxDrawingCharacters(text)) {
+  final normalizedText = ghosttyTerminalNormalizeInputText(text);
+  if (normalizedText.isEmpty || _containsBoxDrawingCharacters(normalizedText)) {
     return false;
   }
 
-  for (final rune in text.runes) {
+  for (final rune in normalizedText.runes) {
     if (rune < 0x20 || rune > 0x7E) {
       return false;
     }
@@ -4372,6 +4606,10 @@ _TerminalGeometricGlyphSpec? _terminalGeometricGlyphSpec(int rune) =>
         diameterScale: 0.4,
         strokeScale: 0.14,
       ),
+      0x2022 => const _TerminalGeometricGlyphSpec(
+        filled: true,
+        diameterScale: 0.42,
+      ),
       0x25CF || 0x25C9 => const _TerminalGeometricGlyphSpec(
         filled: true,
         diameterScale: 0.58,
@@ -4477,6 +4715,42 @@ _TerminalSymbolGlyphSpec? _terminalSymbolGlyphSpec(int rune) => switch (rune) {
     filled: true,
     strokeScale: 0.1,
   ),
+  0x00A2 => const _TerminalSymbolGlyphSpec(
+    kind: _TerminalSymbolGlyphKind.cent,
+    strokeScale: 0.11,
+  ),
+  0x03C0 => const _TerminalSymbolGlyphSpec(
+    kind: _TerminalSymbolGlyphKind.pi,
+    strokeScale: 0.1,
+  ),
+  0x221A => const _TerminalSymbolGlyphSpec(
+    kind: _TerminalSymbolGlyphKind.squareRoot,
+    strokeScale: 0.1,
+  ),
+  0x0394 => const _TerminalSymbolGlyphSpec(
+    kind: _TerminalSymbolGlyphKind.delta,
+    strokeScale: 0.1,
+  ),
+  0x00A7 => const _TerminalSymbolGlyphSpec(
+    kind: _TerminalSymbolGlyphKind.section,
+    strokeScale: 0.09,
+  ),
+  0x00D7 => const _TerminalSymbolGlyphSpec(
+    kind: _TerminalSymbolGlyphKind.multiply,
+    strokeScale: 0.1,
+  ),
+  0x00F7 => const _TerminalSymbolGlyphSpec(
+    kind: _TerminalSymbolGlyphKind.divide,
+    strokeScale: 0.1,
+  ),
+  0x20AC => const _TerminalSymbolGlyphSpec(
+    kind: _TerminalSymbolGlyphKind.euro,
+    strokeScale: 0.09,
+  ),
+  0x00A5 => const _TerminalSymbolGlyphSpec(
+    kind: _TerminalSymbolGlyphKind.yen,
+    strokeScale: 0.09,
+  ),
   _ => null,
 };
 
@@ -4494,6 +4768,15 @@ enum _TerminalSymbolGlyphKind {
   checkmark,
   emDash,
   heavyRightArrow,
+  cent,
+  pi,
+  squareRoot,
+  delta,
+  section,
+  multiply,
+  divide,
+  euro,
+  yen,
 }
 
 final class _TerminalSymbolGlyphSpec {
@@ -4548,11 +4831,131 @@ final class _TerminalBlockGlyphSpec {
   final double? shadeAlpha;
 }
 
+const Set<int> _emojiSensitiveTextSymbols = <int>{
+  0x263A, // white smiling face
+  0x00A9, // copyright sign
+  0x00AE, // registered sign
+  0x2122, // trade mark sign
+  0x279C, // heavy round-tipped rightwards arrow
+  0x2139, // information source
+  0x26A0, // warning sign
+  0x2764, // heavy black heart
+  0x2B50, // white medium star
+  0x2705, // white heavy check mark
+  0x274C, // cross mark
+  0x2753, // black question mark ornament
+  0x2757, // heavy exclamation mark symbol
+  0x2728, // sparkles
+};
+
+String? _preferredTextPainterFontFamily(
+  String text, {
+  required String baseFontFamily,
+  required List<String>? fallbackFamilies,
+}) {
+  final normalizedText = ghosttyTerminalNormalizeInputText(text);
+  if (normalizedText.isEmpty) {
+    return null;
+  }
+
+  final availableFamilies = <String>[baseFontFamily, ...?fallbackFamilies];
+  final prefersEmojiFont = normalizedText.runes.any(
+    (rune) =>
+        rune == 0x200D ||
+        rune == 0xFE0F ||
+        (rune >= 0x1F1E6 && rune <= 0x1F1FF) ||
+        (rune >= 0x1F004 && rune <= 0x1FAFF),
+  );
+  if (prefersEmojiFont) {
+    for (final family in const <String>[
+      'Noto Color Emoji',
+      'Apple Color Emoji',
+      'Segoe UI Emoji',
+    ]) {
+      if (availableFamilies.contains(family)) {
+        return family;
+      }
+    }
+  }
+
+  if (_shouldPreferTextPainterGlyph(normalizedText)) {
+    for (final family in const <String>[
+      'Noto Sans Symbols 2',
+      'Segoe UI Symbol',
+    ]) {
+      if (availableFamilies.contains(family)) {
+        return family;
+      }
+    }
+  }
+
+  return null;
+}
+
 Iterable<String> _splitTerminalCells(String text) sync* {
-  if (text.isEmpty) {
+  final normalizedText = ghosttyTerminalNormalizeInputText(text);
+  if (normalizedText.isEmpty) {
     return;
   }
-  yield* text.characters;
+  yield* normalizedText.characters;
+}
+
+bool _shouldPreferTextPainterGlyph(String text) {
+  final normalizedText = ghosttyTerminalNormalizeInputText(text);
+  if (normalizedText.isEmpty) {
+    return false;
+  }
+
+  for (final rune in normalizedText.runes) {
+    if (rune == 0x200D || rune == 0xFE0F) {
+      return true;
+    }
+    if (_emojiSensitiveTextSymbols.contains(rune)) {
+      return true;
+    }
+    if ((rune >= 0x1F1E6 && rune <= 0x1F1FF) ||
+        (rune >= 0x1F004 && rune <= 0x1FAFF)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+bool _shouldPreferSingleRunTextPainter(String text) {
+  final normalizedText = ghosttyTerminalNormalizeInputText(text);
+  if (normalizedText.isEmpty || _containsBoxDrawingCharacters(normalizedText)) {
+    return false;
+  }
+
+  final preferredFamilies = <String>{};
+  var sawPreferredGlyph = false;
+  for (final grapheme in _splitTerminalCells(normalizedText)) {
+    if (_shouldPreferTextPainterGlyph(grapheme)) {
+      sawPreferredGlyph = true;
+      preferredFamilies.add(
+        _preferredTextPainterFontFamily(
+              grapheme,
+              baseFontFamily: '',
+              fallbackFamilies: const <String>[
+                'Noto Sans Symbols 2',
+                'Noto Color Emoji',
+                'Apple Color Emoji',
+                'Segoe UI Emoji',
+                'Segoe UI Symbol',
+              ],
+            ) ??
+            '',
+      );
+      continue;
+    }
+
+    if (grapheme.trim().isNotEmpty) {
+      return false;
+    }
+  }
+
+  return sawPreferredGlyph && preferredFamilies.length <= 1;
 }
 
 /// Returns `true` if [rune] is a Unicode "wide" character that occupies two

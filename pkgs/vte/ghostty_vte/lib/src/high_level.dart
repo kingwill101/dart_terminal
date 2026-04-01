@@ -6,6 +6,16 @@ import 'package:ffi/ffi.dart';
 
 import '../ghostty_vte_bindings_generated.dart' as bindings;
 
+String _normalizeNativeGraphemeText(String text) {
+  if (text.isEmpty) {
+    return text;
+  }
+  return text.replaceAllMapped(
+    RegExp(r'<fe0f>', caseSensitive: false),
+    (_) => '\uFE0F',
+  );
+}
+
 /// High-level helpers and wrappers on top of libghostty-vt FFI bindings.
 ///
 /// Provides factory methods for OSC/SGR parsers, terminals, formatters,
@@ -1303,8 +1313,8 @@ final class VtGridRefSnapshot {
                   ),
                   'grid_ref_graphemes',
                 );
-                return String.fromCharCodes(
-                  buffer.asTypedList(graphemeLen.value),
+                return _normalizeNativeGraphemeText(
+                  String.fromCharCodes(buffer.asTypedList(graphemeLen.value)),
                 );
               } finally {
                 calloc.free(buffer);
@@ -1648,8 +1658,8 @@ final class VtRenderRowCellsCursor {
                   ),
                   'ghostty_render_state_row_cells_get',
                 );
-                return String.fromCharCodes(
-                  buffer.asTypedList(graphemeLen.value),
+                return _normalizeNativeGraphemeText(
+                  String.fromCharCodes(buffer.asTypedList(graphemeLen.value)),
                 );
               } finally {
                 calloc.free(buffer);
@@ -3665,8 +3675,8 @@ final class VtRenderState {
                   ),
                   'ghostty_render_state_row_cells_get',
                 );
-                return String.fromCharCodes(
-                  buffer.asTypedList(graphemeLen.value),
+                return _normalizeNativeGraphemeText(
+                  String.fromCharCodes(buffer.asTypedList(graphemeLen.value)),
                 );
               } finally {
                 calloc.free(buffer);

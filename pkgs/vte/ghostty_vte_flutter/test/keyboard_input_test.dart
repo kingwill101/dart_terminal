@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ghostty_vte_flutter/ghostty_vte_flutter.dart';
+import 'package:ghostty_vte_flutter/src/terminal_text_normalization.dart';
 
 void main() {
   test('printable helper keeps platform character payloads', () {
@@ -121,6 +122,27 @@ void main() {
     );
 
     expect(text, '_');
+  });
+
+  test('printable helper normalizes literal fe0f placeholders', () {
+    final text = ghosttyTerminalPrintableText(
+      const KeyDownEvent(
+        physicalKey: PhysicalKeyboardKey.keyA,
+        logicalKey: LogicalKeyboardKey.keyA,
+        character: '❤<fe0f>',
+        timeStamp: Duration.zero,
+      ),
+      modifiers: const GhosttyTerminalModifierState(),
+    );
+
+    expect(text, '❤️');
+  });
+
+  test('input normalization replaces standalone fe0f placeholders', () {
+    expect(
+      ghosttyTerminalNormalizeInputText('⚠<fe0f> ℹ<Fe0F>'),
+      '⚠️ ℹ️',
+    );
   });
 
   test('printable helper blocks ctrl-modified text dispatch', () {

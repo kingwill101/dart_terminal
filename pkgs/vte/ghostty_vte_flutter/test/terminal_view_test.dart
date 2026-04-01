@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:ui' as ui;
 import 'dart:io';
 
@@ -1121,6 +1122,199 @@ void main() {
     );
 
     testWidgets(
+      'formatter paints supplemental non-emoji symbols without unsupported glyph logs',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        final capturedLogs = <String>[];
+        final previousDebugPrint = debugPrint;
+        debugPrint = (String? message, {int? wrapWidth}) {
+          if (message != null) {
+            capturedLogs.add(message);
+          }
+        };
+        addTearDown(() {
+          debugPrint = previousDebugPrint;
+        });
+
+        controller.appendDebugOutput('¢π√•Δ§×÷€¥');
+
+        await tester.pumpWidget(
+          buildView(renderer: GhosttyTerminalRendererMode.formatter),
+        );
+        await tester.pumpAndSettle();
+
+        expect(
+          capturedLogs.where(
+            (log) =>
+                log.contains('GhosttyTerminalView unsupported glyph fallback'),
+          ),
+          isEmpty,
+        );
+        expect(
+          capturedLogs.where(
+            (log) => log.contains(
+              'GhosttyTerminalView unsupported grapheme fallback',
+            ),
+          ),
+          isEmpty,
+        );
+      },
+    );
+
+    testWidgets(
+      'formatter leaves emoji-sensitive graphemes on the text painter path',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        final capturedLogs = <String>[];
+        final previousDebugPrint = debugPrint;
+        debugPrint = (String? message, {int? wrapWidth}) {
+          if (message != null) {
+            capturedLogs.add(message);
+          }
+        };
+        addTearDown(() {
+          debugPrint = previousDebugPrint;
+        });
+
+        controller.appendDebugOutput('☺️ 😃 ©️ ®️ ™️');
+
+        await tester.pumpWidget(
+          buildView(renderer: GhosttyTerminalRendererMode.formatter),
+        );
+        await tester.pumpAndSettle();
+
+        expect(
+          capturedLogs.where(
+            (log) =>
+                log.contains('GhosttyTerminalView unsupported glyph fallback'),
+          ),
+          isEmpty,
+        );
+        expect(
+          capturedLogs.where(
+            (log) => log.contains(
+              'GhosttyTerminalView unsupported grapheme fallback',
+            ),
+          ),
+          isEmpty,
+        );
+      },
+    );
+
+    testWidgets(
+      'formatter keeps emoji presentation selectors out of standalone cells',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        final capturedLogs = <String>[];
+        final previousDebugPrint = debugPrint;
+        debugPrint = (String? message, {int? wrapWidth}) {
+          if (message != null) {
+            capturedLogs.add(message);
+          }
+        };
+        addTearDown(() {
+          debugPrint = previousDebugPrint;
+        });
+
+        controller.appendDebugOutput('⚠️ ℹ️ ❤️ ⭐️ ✅ ❌ ❗ ❓ ✨');
+
+        await tester.pumpWidget(
+          buildView(renderer: GhosttyTerminalRendererMode.formatter),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.textContaining('<fe0f>'), findsNothing);
+        expect(
+          capturedLogs.where(
+            (log) =>
+                log.contains('GhosttyTerminalView unsupported glyph fallback'),
+          ),
+          isEmpty,
+        );
+      },
+    );
+
+    testWidgets('formatter leaves prompt arrows on the text painter path', (
+      tester,
+    ) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      final capturedLogs = <String>[];
+      final previousDebugPrint = debugPrint;
+      debugPrint = (String? message, {int? wrapWidth}) {
+        if (message != null) {
+          capturedLogs.add(message);
+        }
+      };
+      addTearDown(() {
+        debugPrint = previousDebugPrint;
+      });
+
+      controller.appendDebugOutput('➜ prompt');
+
+      await tester.pumpWidget(
+        buildView(renderer: GhosttyTerminalRendererMode.formatter),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        capturedLogs.where(
+          (log) =>
+              log.contains('GhosttyTerminalView unsupported glyph fallback'),
+        ),
+        isEmpty,
+      );
+      expect(
+        capturedLogs.where(
+          (log) =>
+              log.contains('GhosttyTerminalView unsupported grapheme fallback'),
+        ),
+        isEmpty,
+      );
+    });
+
+    testWidgets(
+      'formatter and renderState paint comparable mixed prompt glyph coverage',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        controller.appendDebugOutput('➜ ~ +1236554-7☺️ 😃');
+
+        final formatterStats = await _captureModePaintStats(
+          tester,
+          buildView: buildView,
+          renderer: GhosttyTerminalRendererMode.formatter,
+        );
+        final renderStateStats = await _captureModePaintStats(
+          tester,
+          buildView: buildView,
+          renderer: GhosttyTerminalRendererMode.renderState,
+        );
+
+        expect(formatterStats.nonBackgroundPixels, greaterThan(0));
+        expect(renderStateStats.nonBackgroundPixels, greaterThan(0));
+
+        final ratio =
+            formatterStats.nonBackgroundPixels /
+            renderStateStats.nonBackgroundPixels;
+        expect(ratio, inInclusiveRange(0.55, 1.8));
+      },
+    );
+
+    testWidgets(
       'renderState preserves explicit blank cells between separated glyphs',
       (tester) async {
         if (!_hasNativeTerminal) {
@@ -2221,6 +2415,49 @@ void main() {
         controller.snapshot.textForSelection(currentSelection!),
         'hello world',
       );
+    });
+
+    testWidgets('double click clears any previous line-selection anchor', (
+      tester,
+    ) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      GhosttyTerminalSelection? currentSelection;
+      controller.appendDebugOutput('alpha line\r\nbeta target\r\ngamma line');
+
+      await tester.pumpWidget(
+        buildView(
+          showHeader: false,
+          autofocus: true,
+          onSelectionChanged: (selection) => currentSelection = selection,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      const topLineTarget = Offset(30, 24);
+      await tester.tapAt(topLineTarget);
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.tapAt(topLineTarget);
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.tapAt(topLineTarget);
+      await tester.pumpAndSettle();
+
+      expect(currentSelection, isNotNull);
+      expect(
+        controller.snapshot.textForSelection(currentSelection!),
+        'alpha line',
+      );
+
+      const secondLineTarget = Offset(52, 44);
+      await tester.tapAt(secondLineTarget);
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.tapAt(secondLineTarget);
+      await tester.pumpAndSettle();
+
+      expect(currentSelection, isNotNull);
+      expect(controller.snapshot.textForSelection(currentSelection!), 'target');
     });
 
     testWidgets('double click drag expands selection by words', (tester) async {
@@ -3459,6 +3696,203 @@ void main() {
       final line = _lastNonEmptyLine(shellController.lines);
       expect(line, contains('% abc'));
     });
+
+    test(
+      'interactive clean zsh echoes FE0F emoji keys without standalone modifier cells',
+      () async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        if (!(Platform.isLinux || Platform.isMacOS)) {
+          return;
+        }
+
+        final shellController = GhosttyTerminalController(defaultShell: 'zsh');
+        addTearDown(shellController.dispose);
+
+        try {
+          await shellController.start(
+            shell: 'zsh',
+            arguments: const <String>['-f', '-i'],
+          );
+        } on ProcessException {
+          return;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+
+        expect(
+          shellController.write(
+            "PROMPT='%# '\n"
+            "RPROMPT=\n"
+            "unsetopt TRANSIENT_RPROMPT\n",
+          ),
+          isTrue,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+
+        const pluginInput = 'ℹ️ ⚠️ ⚙️ ⌨️';
+        expect(shellController.write(pluginInput), isTrue);
+        await Future<void>.delayed(const Duration(milliseconds: 180));
+
+        final renderSnapshot = shellController.renderSnapshot;
+        expect(renderSnapshot, isNotNull);
+
+        final promptRow = renderSnapshot!.rowsData.lastWhere(
+          (row) => row.cells.any((cell) => cell.text.isNotEmpty),
+        );
+        final textCells = promptRow.cells
+            .where((cell) => cell.text.isNotEmpty)
+            .toList(growable: false);
+        final rowText = textCells.map((cell) => cell.text).join();
+
+        expect(rowText, contains(pluginInput));
+        expect(
+          textCells.where(
+            (cell) =>
+                cell.metadata.codepoint >= 0xFE00 &&
+                cell.metadata.codepoint <= 0xFE0F,
+          ),
+          isEmpty,
+        );
+        expect(textCells.where((cell) => cell.text == '\uFE0F'), isEmpty);
+      },
+    );
+
+    test(
+      'interactive clean zsh echoes FE0F emoji keys written one tap at a time',
+      () async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        if (!(Platform.isLinux || Platform.isMacOS)) {
+          return;
+        }
+
+        final shellController = GhosttyTerminalController(defaultShell: 'zsh');
+        addTearDown(shellController.dispose);
+
+        try {
+          await shellController.start(
+            shell: 'zsh',
+            arguments: const <String>['-f', '-i'],
+          );
+        } on ProcessException {
+          return;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+
+        expect(
+          shellController.write(
+            "PROMPT='%# '\n"
+            "RPROMPT=\n"
+            "unsetopt TRANSIENT_RPROMPT\n",
+          ),
+          isTrue,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+
+        const taps = <String>['ℹ️', '⚠️', '⚙️', '⌨️', '♻️', '❤️'];
+        for (final tap in taps) {
+          expect(shellController.write(tap), isTrue);
+          await Future<void>.delayed(const Duration(milliseconds: 120));
+        }
+
+        final renderSnapshot = shellController.renderSnapshot;
+        expect(renderSnapshot, isNotNull);
+
+        final promptRow = renderSnapshot!.rowsData.lastWhere(
+          (row) => row.cells.any((cell) => cell.text.isNotEmpty),
+        );
+        final textCells = promptRow.cells
+            .where((cell) => cell.text.isNotEmpty)
+            .toList(growable: false);
+        final rowText = textCells.map((cell) => cell.text).join();
+
+        expect(rowText, contains(taps.join()));
+        expect(rowText.toLowerCase(), isNot(contains('<fe0f>')));
+        expect(
+          textCells.where(
+            (cell) =>
+                cell.metadata.codepoint >= 0xFE00 &&
+                cell.metadata.codepoint <= 0xFE0F,
+          ),
+          isEmpty,
+        );
+        expect(textCells.where((cell) => cell.text == '\uFE0F'), isEmpty);
+      },
+    );
+
+    test(
+      'interactive clean zsh bracketed paste preserves FE0F emoji keys',
+      () async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        if (!(Platform.isLinux || Platform.isMacOS)) {
+          return;
+        }
+
+        final shellController = GhosttyTerminalController(defaultShell: 'zsh');
+        addTearDown(shellController.dispose);
+
+        try {
+          await shellController.start(
+            shell: 'zsh',
+            arguments: const <String>['-f', '-i'],
+          );
+        } on ProcessException {
+          return;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+
+        expect(
+          shellController.write(
+            "PROMPT='%# '\n"
+            "RPROMPT=\n"
+            "unsetopt TRANSIENT_RPROMPT\n",
+          ),
+          isTrue,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+
+        const taps = <String>['ℹ️', '⚠️', '⚙️', '⌨️', '♻️', '❤️'];
+        for (final tap in taps) {
+          expect(
+            shellController.writeBytes(
+              GhosttyVt.encodePasteBytes(utf8.encode(tap), bracketed: true),
+            ),
+            isTrue,
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 120));
+        }
+
+        final renderSnapshot = shellController.renderSnapshot;
+        expect(renderSnapshot, isNotNull);
+
+        final promptRow = renderSnapshot!.rowsData.lastWhere(
+          (row) => row.cells.any((cell) => cell.text.isNotEmpty),
+        );
+        final textCells = promptRow.cells
+            .where((cell) => cell.text.isNotEmpty)
+            .toList(growable: false);
+        final rowText = textCells.map((cell) => cell.text).join();
+
+        expect(rowText, contains(taps.join()));
+        expect(rowText.toLowerCase(), isNot(contains('<fe0f>')));
+        expect(
+          textCells.where(
+            (cell) =>
+                cell.metadata.codepoint >= 0xFE00 &&
+                cell.metadata.codepoint <= 0xFE0F,
+          ),
+          isEmpty,
+        );
+        expect(textCells.where((cell) => cell.text == '\uFE0F'), isEmpty);
+      },
+    );
   });
 
   group('decodeHexBytes', () {

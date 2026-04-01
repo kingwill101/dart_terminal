@@ -8,6 +8,7 @@ import 'shell_launch.dart';
 import 'terminal_render_model.dart';
 import 'terminal_snapshot.dart';
 import 'terminal_surface_contract.dart';
+import 'terminal_text_normalization.dart';
 
 /// Web-compatible terminal controller.
 ///
@@ -376,6 +377,7 @@ class GhosttyTerminalController extends ChangeNotifier
     if (!_running) {
       return false;
     }
+    text = ghosttyTerminalNormalizeInputText(text);
     if (sanitizePaste && !GhosttyVt.isPasteSafe(text)) {
       return false;
     }
