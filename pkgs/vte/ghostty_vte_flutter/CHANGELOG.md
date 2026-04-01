@@ -1,3 +1,7 @@
+## 0.1.3-wip
+
+- Work in progress.
+
 ## 0.1.2
 
 - Added `showHeader`, `focusOnInteraction`, and `onTapTerminal` on
