@@ -37,7 +37,7 @@ void main() {
       bool showHeader = true,
       bool showVerticalScrollbar = false,
       ScrollController? scrollController,
-      bool autoFollowOnActivity = true,
+      bool autoFollowOnActivity = false,
       FocusNode? focusNode,
       Color? backgroundColor,
       Color? foregroundColor,
@@ -1685,7 +1685,7 @@ void main() {
     });
 
     testWidgets(
-      'new terminal activity snaps the viewport back to the live bottom',
+      'new terminal activity snaps the viewport back to the live bottom when enabled',
       (tester) async {
         if (!_hasNativeTerminal) {
           return;
@@ -1702,6 +1702,7 @@ void main() {
             showHeader: false,
             autofocus: true,
             scrollController: scrollController,
+            autoFollowOnActivity: true,
           ),
         );
         await tester.pumpAndSettle();
@@ -1755,6 +1756,43 @@ void main() {
         expect(scrollController.offset, preservedOffset);
         expect(find.text('Tail'), findsNothing);
         expect(find.text('Line 0'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'keyboard input jumps back to the live bottom even when auto follow is disabled',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        final scrollController = ScrollController();
+        addTearDown(scrollController.dispose);
+        controller.appendDebugOutput(
+          List<String>.generate(120, (index) => 'Line $index').join('\r\n'),
+        );
+
+        await tester.pumpWidget(
+          buildView(
+            showHeader: false,
+            autofocus: true,
+            scrollController: scrollController,
+            autoFollowOnActivity: false,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        scrollController.jumpTo(300);
+        await tester.pumpAndSettle();
+        expect(scrollController.offset, greaterThan(0));
+        expect(find.text('Line 0'), findsOneWidget);
+
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pumpAndSettle();
+
+        expect(scrollController.offset, 0);
+        expect(find.text('Line 119'), findsOneWidget);
+        expect(find.text('Line 0'), findsNothing);
       },
     );
 

@@ -8,8 +8,8 @@
   terminal mouse coordinate encoding when a header is present.
 - Added transcript scrolling APIs on `GhosttyTerminalView`, including external
   `ScrollController`/physics support, a built-in vertical scrollbar, and
-  optional auto-follow-on-activity behavior for snapping back to the live
-  cursor while typing.
+  optional auto-follow-on-activity behavior, plus input-triggered jumps back
+  to the live cursor while typing even when output auto-follow is disabled.
 - Updated formatter-mode cursor painting to prefer the native Ghostty cursor
   position when available, avoiding stale right-edge cursor artifacts while
   keeping formatter text rendering.

@@ -61,7 +61,7 @@ class GhosttyTerminalView extends StatefulWidget {
     this.showVerticalScrollbar = false,
     this.scrollController,
     this.scrollPhysics,
-    this.autoFollowOnActivity = true,
+    this.autoFollowOnActivity = false,
     this.focusOnInteraction = true,
     this.onTapTerminal,
     this.focusNode,
@@ -439,6 +439,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     final controlText = ghosttyTerminalControlText(event, modifiers: modifiers);
 
     if (key != null) {
+      _jumpToLiveBottom();
       if (_selection != null) {
         if (_selectionSession.updateSelection(null)) {
           setState(() {});
@@ -459,6 +460,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     }
 
     if (character.isNotEmpty) {
+      _jumpToLiveBottom();
       if (_selection != null) {
         if (_selectionSession.updateSelection(null)) {
           setState(() {});
@@ -469,6 +471,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     }
 
     if (controlText != null && controlText.isNotEmpty) {
+      _jumpToLiveBottom();
       if (_selection != null) {
         if (_selectionSession.updateSelection(null)) {
           setState(() {});
