@@ -343,8 +343,8 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
         onSelectionContentChanged: widget.onSelectionContentChanged,
       );
     }
-    if (widget.autoFollowOnActivity && _jumpToLiveBottom()) {
-      return;
+    if (widget.autoFollowOnActivity) {
+      _jumpToLiveBottom();
     }
     setState(() {});
   }
@@ -1514,9 +1514,15 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
                   onPanCancel: _stopAutoScroll,
                   child: Stack(
                     children: [
+                      if (widget.showHeader)
+                        SizedBox(
+                          key: const ValueKey('terminalHeader'),
+                          height: _terminalHeaderHeight,
+                        ),
                       _buildScrollLayer(size, metrics, viewport),
                       RepaintBoundary(
                         child: CustomPaint(
+                          key: const ValueKey('terminalPainter'),
                           painter: _GhosttyTerminalPainter(
                             revision: widget.controller.revision,
                             title: widget.controller.title,
@@ -1715,26 +1721,26 @@ GhosttyTerminalSelection? _renderSnapshotWordSelectionAt(
     localRow: localRow,
     viewportStartLine: viewportStartLine,
   );
-  if (segment.text.isEmpty) {
+  if (segment.cells.isEmpty) {
     return null;
   }
 
   final targetSegmentCol =
       (segment.rowCellOffsets[localRow] ?? 0) + position.col;
-  final normalizedCol = targetSegmentCol.clamp(0, segment.text.length - 1);
+  final normalizedCol = targetSegmentCol.clamp(0, segment.cells.length - 1);
   final classification = _classifyRenderStateCharacter(
-    segment.text[normalizedCol],
+    segment.cells[normalizedCol],
     policy: policy,
   );
   var start = normalizedCol;
   var end = normalizedCol;
   while (start > 0 &&
-      _classifyRenderStateCharacter(segment.text[start - 1], policy: policy) ==
+      _classifyRenderStateCharacter(segment.cells[start - 1], policy: policy) ==
           classification) {
     start--;
   }
-  while (end + 1 < segment.text.length &&
-      _classifyRenderStateCharacter(segment.text[end + 1], policy: policy) ==
+  while (end + 1 < segment.cells.length &&
+      _classifyRenderStateCharacter(segment.cells[end + 1], policy: policy) ==
           classification) {
     end++;
   }
@@ -1827,21 +1833,24 @@ _RenderSnapshotLogicalSegment _renderSnapshotLogicalSegment(
   }
 
   final buffer = StringBuffer();
+  final cells = <String>[];
   final rowCellOffsets = <int, int>{};
   final rowCellCounts = <int, int>{};
   var runningOffset = 0;
   for (var row = start; row <= end; row++) {
     rowCellOffsets[row] = runningOffset;
-    final cells = _renderRowWordCells(snapshot.rowsData[row]);
-    rowCellCounts[row] = cells.length;
-    for (final cell in cells) {
+    final rowCells = _renderRowWordCells(snapshot.rowsData[row]);
+    rowCellCounts[row] = rowCells.length;
+    for (final cell in rowCells) {
       buffer.write(cell);
+      cells.add(cell);
     }
-    runningOffset += cells.length;
+    runningOffset += rowCells.length;
   }
 
   return _RenderSnapshotLogicalSegment(
     text: buffer.toString(),
+    cells: cells,
     rowCellOffsets: rowCellOffsets,
     rowCellCounts: rowCellCounts,
   );
@@ -1910,11 +1919,13 @@ final RegExp _renderStateUrlPattern = RegExp(
 final class _RenderSnapshotLogicalSegment {
   const _RenderSnapshotLogicalSegment({
     required this.text,
+    required this.cells,
     required this.rowCellOffsets,
     required this.rowCellCounts,
   });
 
   final String text;
+  final List<String> cells;
   final Map<int, int> rowCellOffsets;
   final Map<int, int> rowCellCounts;
 }
@@ -3489,6 +3500,21 @@ class _GhosttyTerminalPainter extends CustomPainter {
           paint,
         );
         return true;
+      case _TerminalSymbolGlyphKind.heavyRightArrow:
+        // Heavy round-tipped rightwards arrow (➜ U+279C).
+        // Drawn as a solid filled chevron: a left-indented pentagon centred
+        // vertically in the cell — no stem, just the broad arrowhead.
+        final path = Path()
+          ..moveTo(right - (width * 0.18), centerY) // rightmost tip
+          ..lineTo(left + (width * 0.28), top + (height * 0.18)) // top-left
+          ..lineTo(left + (width * 0.48), centerY) // centre indent
+          ..lineTo(
+            left + (width * 0.28),
+            bottom - (height * 0.18),
+          ) // bottom-left
+          ..close();
+        canvas.drawPath(path, paint);
+        return true;
     }
   }
 
@@ -4445,6 +4471,12 @@ _TerminalSymbolGlyphSpec? _terminalSymbolGlyphSpec(int rune) => switch (rune) {
     kind: _TerminalSymbolGlyphKind.emDash,
     strokeScale: 0.1,
   ),
+  // Heavy round-tipped rightwards arrow (U+279C) — common in zsh prompts.
+  0x279C => const _TerminalSymbolGlyphSpec(
+    kind: _TerminalSymbolGlyphKind.heavyRightArrow,
+    filled: true,
+    strokeScale: 0.1,
+  ),
   _ => null,
 };
 
@@ -4461,6 +4493,7 @@ enum _TerminalSymbolGlyphKind {
   enterArrow,
   checkmark,
   emDash,
+  heavyRightArrow,
 }
 
 final class _TerminalSymbolGlyphSpec {
@@ -4522,6 +4555,50 @@ Iterable<String> _splitTerminalCells(String text) sync* {
   yield* text.characters;
 }
 
+/// Returns `true` if [rune] is a Unicode "wide" character that occupies two
+/// terminal columns (East Asian Wide / Fullwidth, wide emoji, etc.).
+bool _isWideRune(int rune) {
+  // Zero-width joiner — always narrow (combines preceding/following characters).
+  if (rune == 0x200D) return false;
+  // Variation selectors (U+FE00–U+FE0F) — narrow combining characters that
+  // select a presentation variant; must not be counted as wide.
+  if (rune >= 0xFE00 && rune <= 0xFE0F) return false;
+  // Regional Indicator Symbols (U+1F1E6–U+1F1FF) — pairs form flag emoji and
+  // each symbol occupies two terminal columns.
+  if (rune >= 0x1F1E6 && rune <= 0x1F1FF) return true;
+  // Hangul Jamo
+  if (rune >= 0x1100 && rune <= 0x115F) return true;
+  // CJK Radicals Supplement … CJK Unified Ideographs Extension A
+  if (rune >= 0x2E80 && rune <= 0x303E) return true;
+  // Hiragana … Yi Radicals (covers Katakana, Bopomofo, CJK Unified Ideographs…)
+  if (rune >= 0x3040 && rune <= 0xA4CF) return true;
+  // Hangul Syllables
+  if (rune >= 0xAC00 && rune <= 0xD7A3) return true;
+  // CJK Compatibility Ideographs
+  if (rune >= 0xF900 && rune <= 0xFAFF) return true;
+  // Vertical forms
+  if (rune >= 0xFE10 && rune <= 0xFE1F) return true;
+  // CJK Compatibility Forms … Small Form Variants
+  if (rune >= 0xFE30 && rune <= 0xFE6F) return true;
+  // Fullwidth Latin / Halfwidth and Fullwidth Forms (fullwidth block)
+  if (rune >= 0xFF01 && rune <= 0xFF60) return true;
+  // Fullwidth cent / pound / yen / won / fullwidth macron
+  if (rune >= 0xFFE0 && rune <= 0xFFE6) return true;
+  // Wide emoji / pictographs (plane 1 wide blocks)
+  if (rune >= 0x1F004 && rune <= 0x1F9FF) return true;
+  // CJK Unified Ideographs Extension B–F and Compatibility Supplement
+  if (rune >= 0x20000 && rune <= 0x2FA1F) return true;
+  return false;
+}
+
+/// Assigns a display-cell width to each grapheme cluster in [text] using
+/// Unicode display-width rules, cross-checked against [totalCells].
+///
+/// Each grapheme cluster is assigned width 2 if its first rune is a "wide"
+/// Unicode character (East Asian Wide / Fullwidth), and width 1 otherwise.
+/// If the resulting sum disagrees with [totalCells] (e.g. because the terminal
+/// uses a different width table), the excess or deficit is distributed across
+/// graphemes as a fallback.
 List<int> _measureTerminalCellWidths(String text, int totalCells) {
   final graphemes = _splitTerminalCells(text).toList(growable: false);
   if (graphemes.isEmpty) {
@@ -4532,34 +4609,29 @@ List<int> _measureTerminalCellWidths(String text, int totalCells) {
     return List<int>.filled(graphemes.length, 1, growable: false);
   }
 
-  final widths = List<int>.filled(graphemes.length, 1, growable: false);
-  var delta = totalCells - widths.fold(0, (sum, value) => sum + value);
+  // Assign widths based on Unicode display-width of the first rune.
+  final widths = <int>[
+    for (final g in graphemes)
+      g.isNotEmpty && _isWideRune(g.runes.first) ? 2 : 1,
+  ];
+
+  // Cross-check against totalCells and adjust if they disagree.
+  var delta = totalCells - widths.fold<int>(0, (sum, v) => sum + v);
   if (delta > 0) {
-    final growOrder = <int>[for (var i = 0; i < widths.length; i++) i];
-    var cursor = 0;
-    while (delta > 0 && growOrder.isNotEmpty) {
-      final index = growOrder[cursor % growOrder.length];
-      widths[index]++;
+    // More cells than we accounted for — distribute extra cells to trailing
+    // graphemes first so that ambiguous-width glyphs (e.g. emoji sequences
+    // that the terminal counts as wide) absorb the surplus before leading
+    // narrow characters do.
+    for (var i = widths.length - 1; delta > 0 && i >= 0; i--) {
+      widths[i]++;
       delta--;
-      cursor++;
     }
   } else if (delta < 0) {
-    final shrinkOrder = <int>[
-      for (var i = widths.length - 1; i >= 0; i--)
-        if (widths[i] > 1) i,
-      for (var i = widths.length - 1; i >= 0; i--)
-        if (widths[i] == 1) i,
-    ];
-    var cursor = 0;
-    while (delta < 0 && shrinkOrder.isNotEmpty) {
-      final index = shrinkOrder[cursor % shrinkOrder.length];
-      if (widths[index] > 1) {
-        widths[index]--;
+    // Fewer cells than we accounted for — shrink wide graphemes first.
+    for (var i = 0; delta < 0 && i < widths.length; i++) {
+      if (widths[i] > 1) {
+        widths[i]--;
         delta++;
-      }
-      cursor++;
-      if (cursor > shrinkOrder.length * 4) {
-        break;
       }
     }
   }

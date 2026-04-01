@@ -14,7 +14,7 @@ typedef _FcntlDart = int Function(int, int, int);
 
 const _fGetfl = 3;
 const _fSetfl = 4;
-final int _oNonblock = Platform.isMacOS ? 0x0004 : 0x0800;
+final int _oNonblock = (Platform.isMacOS || Platform.isIOS) ? 0x0004 : 0x0800;
 
 bool _setNonBlocking(int fd) {
   if (fd < 0) {

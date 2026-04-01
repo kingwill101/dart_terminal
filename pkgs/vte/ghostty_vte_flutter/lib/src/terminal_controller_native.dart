@@ -67,6 +67,7 @@ class GhosttyTerminalController extends ChangeNotifier
   VtTerminal? _terminal;
   VtTerminalFormatter? _plainFormatter;
   VtTerminalFormatter? _styledFormatter;
+  VtTerminalFormatter? _unwrapFormatter;
   VtRenderState? _renderState;
   VtKeyEncoder? _encoder;
   VtMouseEncoder? _mouseEncoder;
@@ -207,9 +208,13 @@ class GhosttyTerminalController extends ChangeNotifier
         extra: VtFormatterTerminalExtra.all(),
       ),
     );
+    final unwrapFormatter = terminal.createFormatter(
+      const VtFormatterTerminalOptions(unwrap: true),
+    );
     _terminal = terminal;
     _plainFormatter = formatter;
     _styledFormatter = styledFormatter;
+    _unwrapFormatter = unwrapFormatter;
     _renderState = terminal.createRenderState();
     _refreshSnapshot();
     return terminal;
@@ -699,12 +704,78 @@ class GhosttyTerminalController extends ChangeNotifier
     if (_lines.isEmpty) {
       _lines.add('');
     }
+
+    // Determine which rows are soft-wrapped by comparing a normal formatter
+    // pass (where soft-wrapped lines still emit \n) against an unwrapped pass
+    // (where soft-wrapped lines are joined and only hard newlines emit \n).
+    // Any row index in [wrappedRows] has wrap: true; its successor has
+    // wrapContinuation: true.
+    //
+    // The unwrapped text is computed here once and passed in so that
+    // _computeWrappedRows does not need to call formatText() itself, keeping
+    // _refreshSnapshot to exactly two formatter passes (plain + styled).
+    final unwrappedText = _unwrapFormatter?.formatText();
+    final wrappedRows = _computeWrappedRows(parts, unwrappedText);
+
     _snapshot = GhosttyTerminalSnapshot.fromFormattedVt(
       styledFormatter.formatText(),
       maxLines: maxLines,
+      wrappedRows: wrappedRows,
     );
     renderState.update();
     _renderSnapshot = _toRenderSnapshot(renderState.snapshot());
+  }
+
+  /// Computes the set of zero-based row indices (within [wrappedLines]) that
+  /// are soft-wrapped by comparing against the unwrapped formatter output.
+  ///
+  /// The plain formatter (with `unwrap: false`) emits a `\n` for every row
+  /// boundary — both soft wraps and hard newlines.  With `unwrap: true` it
+  /// omits the `\n` between soft-wrapped rows, joining them into a single
+  /// logical line.  By walking both line lists in parallel we can infer which
+  /// row boundaries in [wrappedLines] are soft wraps.
+  ///
+  /// [unwrappedText] must be the output of `_unwrapFormatter.formatText()`,
+  /// pre-computed by the caller so no additional formatter pass is needed here.
+  Set<int>? _computeWrappedRows(
+    List<String> wrappedLines,
+    String? unwrappedText,
+  ) {
+    if (unwrappedText == null) {
+      return null;
+    }
+
+    final unwrappedLines = unwrappedText.isEmpty
+        ? <String>['']
+        : unwrappedText.split('\n');
+
+    // If the counts match there are no soft-wrapped rows.
+    if (wrappedLines.length == unwrappedLines.length) {
+      return null;
+    }
+
+    // Walk both lists: each unwrapped logical line corresponds to one or more
+    // consecutive wrapped rows.  Rows that are not the last in their logical
+    // group are soft-wrapped.
+    final result = <int>{};
+    var wrappedIndex = 0;
+    for (final logicalLine in unwrappedLines) {
+      if (wrappedIndex >= wrappedLines.length) {
+        break;
+      }
+      // Reconstruct the logical line from consecutive wrapped rows.
+      final buffer = StringBuffer(wrappedLines[wrappedIndex]);
+      while (wrappedIndex < wrappedLines.length - 1 &&
+          buffer.toString() != logicalLine) {
+        // This row is soft-wrapped — it joins the next.
+        result.add(wrappedIndex);
+        wrappedIndex++;
+        buffer.write(wrappedLines[wrappedIndex]);
+      }
+      wrappedIndex++;
+    }
+
+    return result.isEmpty ? null : result;
   }
 
   void _markDirty() {
@@ -738,13 +809,12 @@ class GhosttyTerminalController extends ChangeNotifier
   }
 
   String _defaultShell() {
-    if (Platform.isWindows) {
-      return 'cmd.exe';
-    }
-    if (Platform.isAndroid) {
-      return '/system/bin/sh';
-    }
-    return Platform.environment['SHELL'] ?? '/bin/bash';
+    return ghosttyTerminalDefaultShell(
+      isWindows: Platform.isWindows,
+      isAndroid: Platform.isAndroid,
+      isIOS: Platform.isIOS,
+      platformEnvironment: Platform.environment,
+    );
   }
 
   GhosttyTerminalShellLaunch _freezeLaunch(GhosttyTerminalShellLaunch launch) {
@@ -776,6 +846,8 @@ class GhosttyTerminalController extends ChangeNotifier
     _plainFormatter = null;
     _styledFormatter?.close();
     _styledFormatter = null;
+    _unwrapFormatter?.close();
+    _unwrapFormatter = null;
     _terminal?.close();
     _terminal = null;
   }

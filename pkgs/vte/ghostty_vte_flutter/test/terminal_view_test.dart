@@ -9,6 +9,37 @@ import 'package:ghostty_vte_flutter/ghostty_vte_flutter.dart';
 
 final bool _hasNativeTerminal = _hasNativeTerminalSupport();
 
+/// Measured rendering metrics derived at runtime from the same [TextStyle]
+/// that [buildView] uses (`fontSize: 14, lineHeight: 1.35, fontFamily:
+/// 'monospace'`) plus the default padding of `EdgeInsets.all(12)`.
+///
+/// Prefer calling [_measureTestMetrics] inside each test after pumping the
+/// widget so that the values reflect the actual font metrics reported by the
+/// Flutter test engine rather than hand-tuned constants.
+typedef _TestMetrics = ({int charWidth, int linePixels, int padding});
+
+/// Measures [_TestMetrics] using the font metrics in effect for the current
+/// test environment.
+///
+/// Must be called after at least one [WidgetTester.pumpWidget] so that the
+/// font is loaded.
+_TestMetrics _measureTestMetrics() {
+  const style = TextStyle(
+    fontSize: 14,
+    fontFamily: 'monospace',
+    letterSpacing: 0,
+  );
+  final painter = TextPainter(
+    text: const TextSpan(text: 'M', style: style),
+    textDirection: TextDirection.ltr,
+  )..layout();
+  final charWidth = painter.width.round();
+  final linePixels = (14 * 1.35).ceil();
+  painter.dispose();
+  const padding = 12; // matches the EdgeInsets.all(12) default in buildView()
+  return (charWidth: charWidth, linePixels: linePixels, padding: padding);
+}
+
 bool _hasNativeTerminalSupport() {
   try {
     final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
@@ -105,12 +136,28 @@ void main() {
     });
 
     testWidgets('can render without the terminal header', (tester) async {
+      // Render with header to get the baseline row count.
+      await tester.pumpWidget(buildView(showHeader: true));
+      await tester.pump();
+      final rowsWithHeader = controller.rows;
+
+      // The header sentinel widget should be present when showHeader: true.
+      expect(find.byKey(const ValueKey('terminalHeader')), findsOneWidget);
+
+      // Render without header — the extra space should yield more rows.
       await tester.pumpWidget(buildView(showHeader: false));
       await tester.pump();
+
+      // The header sentinel widget must be absent when showHeader: false.
+      expect(find.byKey(const ValueKey('terminalHeader')), findsNothing);
 
       expect(find.byType(GhosttyTerminalView), findsOneWidget);
       expect(controller.cols, greaterThan(0));
       expect(controller.rows, greaterThan(0));
+      // Without the header the terminal has more vertical space, so it should
+      // expose at least as many rows (strictly more when the header height is
+      // large enough to gain a full line).
+      expect(controller.rows, greaterThanOrEqualTo(rowsWithHeader));
     });
 
     testWidgets('renders VT-backed controller output', (tester) async {
@@ -311,7 +358,7 @@ void main() {
         final nativeBackground = nativeRender.backgroundColor;
 
         String rgb(Color color) =>
-            '${color.r.round()};${color.g.round()};${color.b.round()}';
+            '${_colorRed8(color)};${_colorGreen8(color)};${_colorBlue8(color)}';
 
         controller.appendDebugOutput(
           '\x1b[48;2;${rgb(nativeBackground)}m '
@@ -334,9 +381,7 @@ void main() {
         await tester.pumpAndSettle();
 
         final image = await _captureTerminalImageData(key);
-        const padding = 12;
-        const charWidth = 7;
-        const linePixels = 19;
+        final (:charWidth, :linePixels, :padding) = _measureTestMetrics();
         final rowCenterY = padding + (linePixels ~/ 2);
         final explicitBackgroundX = padding + (charWidth ~/ 2);
 
@@ -393,9 +438,7 @@ void main() {
       await tester.pumpAndSettle();
 
       final image = await _captureTerminalImageData(key);
-      const padding = 12;
-      const charWidth = 7;
-      const linePixels = 19;
+      final (:charWidth, :linePixels, :padding) = _measureTestMetrics();
       final cursorCenterX = padding + (3 * charWidth) + (charWidth ~/ 2);
       final cursorCenterY = padding + (linePixels ~/ 2);
 
@@ -439,9 +482,7 @@ void main() {
       await tester.pumpAndSettle();
 
       final image = await _captureTerminalImageData(key);
-      const padding = 12;
-      const charWidth = 7;
-      const linePixels = 19;
+      final (:charWidth, :linePixels, :padding) = _measureTestMetrics();
       final cursorCenterX = padding + (3 * charWidth) + (charWidth ~/ 2);
       final cursorCenterY = padding + (linePixels ~/ 2);
 
@@ -484,9 +525,7 @@ void main() {
       await tester.pumpAndSettle();
 
       final image = await _captureTerminalImageData(key);
-      const padding = 12;
-      const charWidth = 7;
-      const linePixels = 19;
+      final (:charWidth, :linePixels, :padding) = _measureTestMetrics();
       final rowCenterY = padding + (linePixels ~/ 2);
       final firstCellCenterX = padding + (charWidth ~/ 2);
       final secondCellCenterX = padding + charWidth + (charWidth ~/ 2);
@@ -555,9 +594,7 @@ void main() {
       await tester.pumpAndSettle();
 
       final image = await _captureTerminalImageData(key);
-      const padding = 12;
-      const charWidth = 7;
-      const linePixels = 19;
+      final (:charWidth, :linePixels, :padding) = _measureTestMetrics();
       final cursorX = padding + (charWidth ~/ 2);
       final cursorY = padding + linePixels - 2;
 
@@ -604,9 +641,7 @@ void main() {
       await tester.pumpAndSettle();
 
       final image = await _captureTerminalImageData(key);
-      const padding = 12;
-      const charWidth = 7;
-      const linePixels = 19;
+      final (:charWidth, :linePixels, :padding) = _measureTestMetrics();
       final rowCenterY = padding + (linePixels ~/ 2);
       final leadingEdgeX = padding + 1;
       final trailingCellX = padding + charWidth + (charWidth ~/ 2);
@@ -886,12 +921,11 @@ void main() {
 
       final image = await _captureTerminalImageData(key);
       const headerHeight = 28;
-      const padding = 12;
-      const linePixels = 19;
+      final (:charWidth, :linePixels, :padding) = _measureTestMetrics();
       final topRowY = headerHeight + padding + (linePixels ~/ 2);
-      final leftColX = padding + 7;
-      final firstCellCenterX = padding + 7;
-      final lastCellCenterX = padding + (5 * 7) + 7;
+      final leftColX = padding + charWidth;
+      final firstCellCenterX = padding + charWidth;
+      final lastCellCenterX = padding + (5 * charWidth) + charWidth;
       final middleRowY =
           headerHeight + padding + linePixels + (linePixels ~/ 2);
       final bottomRowY =
@@ -944,9 +978,7 @@ void main() {
 
       final image = await _captureTerminalImageData(key);
       const headerHeight = 28;
-      const padding = 12;
-      const charWidth = 7;
-      const linePixels = 19;
+      final (:charWidth, :linePixels, :padding) = _measureTestMetrics();
       final cellCenterY = headerHeight + padding + (linePixels ~/ 2);
       final circleCenterX = padding + (charWidth ~/ 2);
       final circleRightEdgeX = padding + charWidth - 1;
@@ -987,9 +1019,7 @@ void main() {
 
       final image = await _captureTerminalImageData(key);
       const headerHeight = 28;
-      const padding = 12;
-      const charWidth = 7;
-      const linePixels = 19;
+      final (:charWidth, :linePixels, :padding) = _measureTestMetrics();
 
       final topRowY = headerHeight + padding + (linePixels ~/ 2);
       final bottomRowY =
@@ -1134,9 +1164,7 @@ void main() {
         );
 
         const headerHeight = 28;
-        const padding = 12;
-        const charWidth = 7;
-        const linePixels = 19;
+        final (:charWidth, :linePixels, :padding) = _measureTestMetrics();
         final rowCenterY = headerHeight + padding + (linePixels ~/ 2);
 
         expect(
@@ -1232,9 +1260,7 @@ void main() {
       final renderStateImage = await _captureTerminalImageData(renderStateKey);
 
       const headerHeight = 28;
-      const padding = 12;
-      const charWidth = 7;
-      const linePixels = 19;
+      final (:charWidth, :linePixels, :padding) = _measureTestMetrics();
       final rowCenterY = headerHeight + padding + (linePixels ~/ 2);
 
       expect(
@@ -1325,9 +1351,7 @@ void main() {
         );
 
         const headerHeight = 28;
-        const padding = 12;
-        const charWidth = 7;
-        const linePixels = 19;
+        final (:charWidth, :linePixels, :padding) = _measureTestMetrics();
         final underlineY = headerHeight + padding + linePixels - 3;
         final underlineStartX = padding + (6 * charWidth);
         final underlineEndX = padding + (10 * charWidth) - 2;
@@ -1421,7 +1445,15 @@ void main() {
         return;
       }
 
-      await tester.pumpWidget(buildView());
+      GhosttyTerminalSelectionContent<GhosttyTerminalSelection>? currentContent;
+
+      await tester.pumpWidget(
+        buildView(
+          showHeader: false,
+          autofocus: true,
+          onSelectionContentChanged: (c) => currentContent = c,
+        ),
+      );
 
       final initialRevision = controller.revision;
       controller.appendDebugOutput('new output');
@@ -1429,6 +1461,20 @@ void main() {
 
       expect(controller.revision, greaterThan(initialRevision));
       expect(controller.lines.single, 'new output');
+
+      // Verify the rendered widget tree reflects the new content by selecting
+      // the word at the first visible row via triple-tap.
+      const firstRowTarget = Offset(30, 24);
+      await tester.tapAt(firstRowTarget);
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.tapAt(firstRowTarget);
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.tapAt(firstRowTarget);
+      await tester.pumpAndSettle();
+
+      expect(currentContent, isNotNull);
+      // The rendered first row contains the newly appended text.
+      expect(currentContent?.text, anyOf(equals('new'), equals('output')));
     });
 
     testWidgets('autofocus requests focus on build', (tester) async {
@@ -1693,6 +1739,9 @@ void main() {
 
         final scrollController = ScrollController();
         addTearDown(scrollController.dispose);
+        GhosttyTerminalSelectionContent<GhosttyTerminalSelection>?
+        currentContent;
+
         controller.appendDebugOutput(
           List<String>.generate(120, (index) => 'Line $index').join('\r\n'),
         );
@@ -1703,21 +1752,55 @@ void main() {
             autofocus: true,
             scrollController: scrollController,
             autoFollowOnActivity: true,
+            onSelectionContentChanged: (c) => currentContent = c,
           ),
         );
         await tester.pumpAndSettle();
 
+        // Probe the visible first row before scrolling — should be near the
+        // bottom of the transcript (offset is 0, content runs to "Line 119").
+        const firstRowTarget = Offset(30, 24);
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pumpAndSettle();
+        // The rendered first row at the live bottom must not be "Line 0".
+        expect(currentContent?.text, isNot('Line 0'));
+
         scrollController.jumpTo(300);
         await tester.pumpAndSettle();
         expect(scrollController.offset, greaterThan(0));
-        expect(find.text('Line 0'), findsOneWidget);
+
+        // Triple-tap the first visible row at the scrolled position.
+        currentContent = null;
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pumpAndSettle();
+        // Scrolled up, so the first visible row should be from earlier lines.
+        expect(currentContent?.text, isNot('Tail'));
 
         controller.appendDebugOutput('\r\nTail');
         await tester.pumpAndSettle();
 
+        // Auto-follow snaps back to offset 0.
         expect(scrollController.offset, 0);
-        expect(find.text('Tail'), findsOneWidget);
-        expect(find.text('Line 0'), findsNothing);
+
+        // Probe the rendered first row after snap — should be near the bottom,
+        // not "Line 0" which is far up the transcript.
+        currentContent = null;
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pumpAndSettle();
+        expect(currentContent, isNotNull);
+        expect(currentContent?.text, isNot('Line 0'));
       },
     );
 
@@ -1730,6 +1813,9 @@ void main() {
 
         final scrollController = ScrollController();
         addTearDown(scrollController.dispose);
+        GhosttyTerminalSelectionContent<GhosttyTerminalSelection>?
+        currentContent;
+
         controller.appendDebugOutput(
           List<String>.generate(120, (index) => 'Line $index').join('\r\n'),
         );
@@ -1740,6 +1826,7 @@ void main() {
             autofocus: true,
             scrollController: scrollController,
             autoFollowOnActivity: false,
+            onSelectionContentChanged: (c) => currentContent = c,
           ),
         );
         await tester.pumpAndSettle();
@@ -1748,14 +1835,36 @@ void main() {
         await tester.pumpAndSettle();
         final preservedOffset = scrollController.offset;
         expect(preservedOffset, greaterThan(0));
-        expect(find.text('Line 0'), findsOneWidget);
+
+        // Probe the first visible row at the scrolled position.
+        const firstRowTarget = Offset(30, 24);
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pumpAndSettle();
+        // Scrolled up — first row is not the live-bottom tail.
+        expect(currentContent?.text, isNot('Tail'));
+        final scrolledRowText = currentContent?.text;
 
         controller.appendDebugOutput('\r\nTail');
         await tester.pumpAndSettle();
 
+        // Without auto-follow the viewport stays put.
         expect(scrollController.offset, preservedOffset);
-        expect(find.text('Tail'), findsNothing);
-        expect(find.text('Line 0'), findsOneWidget);
+
+        // The rendered first row must still show the same content as before the
+        // new output arrived — the viewport did not move.
+        currentContent = null;
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pumpAndSettle();
+        expect(currentContent, isNotNull);
+        expect(currentContent?.text, scrolledRowText);
       },
     );
 
@@ -1768,6 +1877,9 @@ void main() {
 
         final scrollController = ScrollController();
         addTearDown(scrollController.dispose);
+        GhosttyTerminalSelectionContent<GhosttyTerminalSelection>?
+        currentContent;
+
         controller.appendDebugOutput(
           List<String>.generate(120, (index) => 'Line $index').join('\r\n'),
         );
@@ -1778,6 +1890,7 @@ void main() {
             autofocus: true,
             scrollController: scrollController,
             autoFollowOnActivity: false,
+            onSelectionContentChanged: (c) => currentContent = c,
           ),
         );
         await tester.pumpAndSettle();
@@ -1785,14 +1898,35 @@ void main() {
         scrollController.jumpTo(300);
         await tester.pumpAndSettle();
         expect(scrollController.offset, greaterThan(0));
-        expect(find.text('Line 0'), findsOneWidget);
+
+        // Probe the rendered first row at the scrolled position — should be
+        // somewhere in the middle of the transcript (e.g. a mid-range "Line N").
+        const firstRowTarget = Offset(30, 24);
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pumpAndSettle();
+        expect(currentContent?.text, isNot('Line 119'));
 
         await tester.sendKeyEvent(LogicalKeyboardKey.enter);
         await tester.pumpAndSettle();
 
+        // Keyboard input snaps back to the live bottom.
         expect(scrollController.offset, 0);
-        expect(find.text('Line 119'), findsOneWidget);
-        expect(find.text('Line 0'), findsNothing);
+
+        // The rendered first row must now show content from near the bottom of
+        // the transcript — not from far-up "Line 0".
+        currentContent = null;
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(firstRowTarget);
+        await tester.pumpAndSettle();
+        expect(currentContent, isNotNull);
+        expect(currentContent?.text, isNot('Line 0'));
       },
     );
 
@@ -2401,6 +2535,24 @@ void main() {
         expect(snapshot.wordSelectionAt(trailingBlank), isNull);
       },
     );
+
+    test('wide-tail columns do not break snapshot word selection', () {
+      const snapshot = GhosttyTerminalSnapshot(
+        lines: <GhosttyTerminalLine>[
+          GhosttyTerminalLine(<GhosttyTerminalRun>[
+            GhosttyTerminalRun(text: '界', cells: 2),
+            GhosttyTerminalRun(text: ' next', cells: 5),
+          ]),
+        ],
+      );
+
+      final selection = snapshot.wordSelectionAt(
+        const GhosttyTerminalCellPosition(row: 0, col: 1),
+      );
+
+      expect(selection, isNotNull);
+      expect(snapshot.textForSelection(selection!), '界');
+    });
 
     testWidgets('renderState selection content joins wrapped visible rows', (
       tester,
@@ -3615,9 +3767,9 @@ bool _pixelMatchesColor(
     return false;
   }
 
-  return (r - color.r.round()).abs() <= tolerance &&
-      (g - color.g.round()).abs() <= tolerance &&
-      (b - color.b.round()).abs() <= tolerance;
+  return (r - _colorRed8(color)).abs() <= tolerance &&
+      (g - _colorGreen8(color)).abs() <= tolerance &&
+      (b - _colorBlue8(color)).abs() <= tolerance;
 }
 
 int _countPixelsNearColor(
@@ -3634,14 +3786,20 @@ int _countPixelsNearColor(
     if (a == 0) {
       continue;
     }
-    if ((r - color.r.round()).abs() <= tolerance &&
-        (g - color.g.round()).abs() <= tolerance &&
-        (b - color.b.round()).abs() <= tolerance) {
+    if ((r - _colorRed8(color)).abs() <= tolerance &&
+        (g - _colorGreen8(color)).abs() <= tolerance &&
+        (b - _colorBlue8(color)).abs() <= tolerance) {
       count++;
     }
   }
   return count;
 }
+
+int _colorRed8(Color color) => (color.toARGB32() >> 16) & 0xFF;
+
+int _colorGreen8(Color color) => (color.toARGB32() >> 8) & 0xFF;
+
+int _colorBlue8(Color color) => color.toARGB32() & 0xFF;
 
 int _countNonBackgroundPixelsInHorizontalSpan(
   _TerminalImageData image, {

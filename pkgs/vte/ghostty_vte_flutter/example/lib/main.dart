@@ -201,14 +201,23 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
     if (configured.isNotEmpty) {
       return configured;
     }
-    return GoogleFonts.notoSansMono().fontFamily!;
+    return GoogleFonts.notoSansMono().fontFamily ?? 'monospace';
   }
 
-  List<String> get _terminalFontFallback => <String>[
-    if (_terminalFontFamily != 'Noto Sans Symbols 2')
-      GoogleFonts.notoSansSymbols2().fontFamily!,
-    'Noto Color Emoji',
-  ];
+  List<String> get _terminalFontFallback {
+    final symbolsFamily = GoogleFonts.notoSansSymbols2().fontFamily;
+    return <String>[
+      if (symbolsFamily != null && _terminalFontFamily != symbolsFamily)
+        symbolsFamily,
+      'Noto Color Emoji',
+    ];
+  }
+
+  void _refreshDump() {
+    setState(() {
+      // Rebuild to recompute `_renderViewportDump()` from the latest inspector state.
+    });
+  }
 
   @override
   void initState() {
@@ -683,7 +692,10 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
       if (_renderDumpOnlyInterestingRows &&
           visibleText.trim().isEmpty &&
           !row.dirty &&
-          !row.hasHyperlink) {
+          !row.hasHyperlink &&
+          !row.styled &&
+          !row.wrap &&
+          !row.wrapContinuation) {
         continue;
       }
 
@@ -1477,6 +1489,9 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
             },
             onCopySelection: (text) async {
               await Clipboard.setData(ClipboardData(text: text));
+              if (!mounted) {
+                return;
+              }
               setState(() {
                 _lastCopiedText = text.length > 120
                     ? '${text.substring(0, 120)}...'
@@ -1734,7 +1749,7 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
               }),
             ),
             OutlinedButton.icon(
-              onPressed: () => setState(() {}),
+              onPressed: _refreshDump,
               icon: const Icon(Icons.refresh),
               label: const Text('Refresh Dump'),
             ),

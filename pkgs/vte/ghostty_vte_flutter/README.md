@@ -31,7 +31,7 @@ single import.
 | macOS    |      yes     |    yes     |
 | Windows  |      yes     |    yes     |
 | Android  |      yes     |    yes     |
-| iOS      |       --     |    yes     |
+| iOS      |      yes     |    yes     |
 
 ## Installation
 
@@ -409,7 +409,7 @@ GhosttyTerminalView(
   renderer: GhosttyTerminalRendererMode.formatter,
   interactionPolicy: GhosttyTerminalInteractionPolicy.auto,
   onSelectionChanged: (selection) { /* ... */ },
-  onCopySelection: (content) { /* ... */ },
+  onCopySelection: (text) { /* ... */ },
   onPasteRequest: () async => clipboardText,
   onOpenHyperlink: (uri) { /* ... */ },
 )
@@ -445,7 +445,10 @@ GhosttyTerminalView(
 ### Recommended font setup
 
 For more consistent terminal rendering across platforms, use a stable
-monospace font together with a symbol fallback. A good starting point is:
+monospace font together with a symbol fallback. These fonts are supplied by
+the host app, not by `ghostty_vte_flutter`, so add them as assets or load them
+with a package such as `google_fonts` before using the configuration below. A
+good starting point is:
 
 - `Noto Sans Mono` for terminal text
 - `Noto Sans Symbols 2` as a fallback for arrows, checkmarks, and other symbols
@@ -517,8 +520,8 @@ GhosttyTerminalView(
     extraWordCharacters: '._/~:@%#?&=+-',
     treatNonAsciiAsWord: true,
   ),
-  onCopySelection: (content) {
-    Clipboard.setData(ClipboardData(text: content.text));
+  onCopySelection: (text) {
+    Clipboard.setData(ClipboardData(text: text));
   },
   onPasteRequest: () async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
@@ -616,8 +619,8 @@ class _TerminalScreenState extends State<TerminalScreen> {
         fontSize: 14,
         fontFamily: 'Noto Sans Mono',
         fontFamilyFallback: const ['Noto Sans Symbols 2'],
-        onCopySelection: (content) {
-          Clipboard.setData(ClipboardData(text: content.text));
+        onCopySelection: (text) {
+          Clipboard.setData(ClipboardData(text: text));
         },
         onPasteRequest: () async {
           final data = await Clipboard.getData(Clipboard.kTextPlain);
@@ -628,6 +631,10 @@ class _TerminalScreenState extends State<TerminalScreen> {
   }
 }
 ```
+
+The example above assumes your app provides those font families. They are not
+bundled with `ghostty_vte_flutter`, so include them in your app assets or load
+them through a package such as `google_fonts` to avoid platform fallback.
 
 ## Web setup
 
