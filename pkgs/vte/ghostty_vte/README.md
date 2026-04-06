@@ -38,7 +38,7 @@ on the **web** via WebAssembly.
 
 ```yaml
 dependencies:
-  ghostty_vte: ^0.0.3
+  ghostty_vte: ^0.1.2
 ```
 
 The native library is compiled automatically by a
@@ -454,7 +454,7 @@ automatically — **no Zig install required**.
 You can also specify a release tag or target platform:
 
 ```bash
-dart run ghostty_vte:setup --tag v0.0.2 --platform macos-arm64
+dart run ghostty_vte:setup --tag ghostty_vte-v0.1.1 --platform macos-arm64
 ```
 
 **Monorepo users** can download all prebuilt libs at once:

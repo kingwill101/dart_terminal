@@ -1,7 +1,7 @@
 /// Downloads the prebuilt ghostty_vte native library for the host platform.
 ///
 /// Usage:
-///   dart run ghostty_vte:setup [--tag v0.1.0+1] [--platform linux-x64]
+///   dart run ghostty_vte:setup [--tag ghostty_vte-v0.1.1] [--platform linux-x64]
 ///
 /// The library is placed in `.prebuilt/<platform>/` at the project root,
 /// where the build hook will find it automatically.
@@ -9,11 +9,11 @@ library;
 
 import 'dart:io';
 
+import 'package:ghostty_vte/src/hook/asset_hashes.dart';
 import 'package:ghostty_vte/src/hook/build_cache.dart';
 import 'package:ghostty_vte/src/hook/dynamic_library.dart';
 
 const _repo = 'kingwill101/dart_terminal';
-const _defaultTag = 'v0.1.0+1';
 
 const _artifacts = <String, String>{
   'linux-x64': 'vte-linux-x64.tar.gz',
@@ -28,7 +28,7 @@ const _artifacts = <String, String>{
 };
 
 Future<void> main(List<String> args) async {
-  var tag = _defaultTag;
+  var tag = releaseTag;
   String? platform;
 
   for (var i = 0; i < args.length; i++) {
@@ -47,7 +47,7 @@ Future<void> main(List<String> args) async {
           'Downloads the prebuilt ghostty_vte native library for your platform\n'
           'into .prebuilt/<platform>/ at your project root.\n'
           '\n'
-          '  --tag, -t       Release tag (default: $_defaultTag)\n'
+          '  --tag, -t       Release tag (default: $releaseTag)\n'
           '  --platform, -p  e.g. linux-x64, macos-arm64 (default: auto-detect)\n',
         );
         return;

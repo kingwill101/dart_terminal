@@ -1,3 +1,9 @@
+## 0.1.2
+
+- Updated `ghostty_vte:setup` to default to the shared build-hook
+  `releaseTag`, so the manual prebuilt downloader stays aligned with the
+  native-asset hook release being used by downstream apps.
+
 ## 0.1.1
 
 - Graduated the staged `0.1.1-dev` VT/runtime updates as the stable `0.1.1`
@@ -34,7 +40,7 @@
   load errors.
 - `dart run ghostty_vte:setup` now clears stale `hooks_runner` cache entries so
   the next app build picks up the extracted prebuilt library.
-- Updated `ghostty_vte:setup` to default to the `v0.1.0+1` release artifacts.
+- Updated `ghostty_vte:setup` to default to the current `releaseTag` artifacts.
 
 ## 0.1.0
 
