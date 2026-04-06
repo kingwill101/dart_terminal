@@ -1,3 +1,7 @@
+## 0.1.2+1
+
+- Use latest ghostty_vte package version
+
 ## 0.1.2
 
 - Added `showHeader`, `focusOnInteraction`, and `onTapTerminal` on
