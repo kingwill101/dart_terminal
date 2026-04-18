@@ -63,6 +63,7 @@ class GhosttyTerminalView extends StatefulWidget {
     this.scrollPhysics,
     this.autoFollowOnActivity = false,
     this.focusOnInteraction = true,
+    this.mobileDragScrollEnabled = false,
     this.onTapTerminal,
     this.focusNode,
     this.backgroundColor = const Color(0xFF0A0F14),
@@ -119,6 +120,10 @@ class GhosttyTerminalView extends StatefulWidget {
 
   /// Whether terminal gestures should request focus for keyboard input.
   final bool focusOnInteraction;
+
+  /// On touch-first mobile platforms, use finger drag to scroll transcript
+  /// instead of extending text selection. Long-press selection still works.
+  final bool mobileDragScrollEnabled;
 
   /// Optional callback invoked when the terminal receives a tap interaction.
   final VoidCallback? onTapTerminal;
@@ -252,6 +257,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
   GhosttyTerminalSelection? _wordSelectionAnchor;
   _TerminalSelectionGranularity _dragSelectionGranularity =
       _TerminalSelectionGranularity.cell;
+  double _touchPanRemainderLines = 0;
   late final GhosttyTerminalGestureCoordinator<
     GhosttyTerminalCellPosition,
     GhosttyTerminalSelection
@@ -1359,6 +1365,43 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     _syncAutoScroll(localPosition, size, metrics);
   }
 
+  bool get _usesMobileDragScroll {
+    if (!widget.mobileDragScrollEnabled) {
+      return false;
+    }
+    return defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS;
+  }
+
+  void _beginTouchPanScroll() {
+    _touchPanRemainderLines = 0;
+    if (widget.focusOnInteraction) {
+      FocusScope.of(context).requestFocus(_focusNode);
+    }
+  }
+
+  void _updateTouchPanScroll(
+    DragUpdateDetails details,
+    Size size,
+    _TerminalMetrics metrics,
+  ) {
+    if (_terminalMouseReportingEnabled || metrics.linePixels <= 0) {
+      return;
+    }
+
+    _touchPanRemainderLines += details.delta.dy / metrics.linePixels;
+    final step = _touchPanRemainderLines.truncate();
+    if (step == 0) {
+      return;
+    }
+    _touchPanRemainderLines -= step;
+    _setScrollOffsetLines(_scrollOffsetLines + step, size, metrics);
+  }
+
+  void _endTouchPanScroll() {
+    _touchPanRemainderLines = 0;
+  }
+
   GhosttyTerminalSelection? _extendWordSelection(
     GhosttyTerminalCellPosition? position,
   ) {
@@ -1506,12 +1549,20 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
                   onLongPressMoveUpdate: (details) =>
                       _updateSelection(details.localPosition, size, metrics),
                   onLongPressEnd: (_) => _stopAutoScroll(),
-                  onPanDown: (details) =>
+                  onPanDown: _usesMobileDragScroll
+                    ? (_) => _beginTouchPanScroll()
+                    : (details) =>
                       _beginSelection(details.localPosition, size, metrics),
-                  onPanUpdate: (details) =>
+                  onPanUpdate: _usesMobileDragScroll
+                    ? (details) => _updateTouchPanScroll(details, size, metrics)
+                    : (details) =>
                       _updateSelection(details.localPosition, size, metrics),
-                  onPanEnd: (_) => _stopAutoScroll(),
-                  onPanCancel: _stopAutoScroll,
+                  onPanEnd: _usesMobileDragScroll
+                    ? (_) => _endTouchPanScroll()
+                    : (_) => _stopAutoScroll(),
+                  onPanCancel: _usesMobileDragScroll
+                    ? _endTouchPanScroll
+                    : _stopAutoScroll,
                   child: Stack(
                     children: [
                       if (widget.showHeader)
