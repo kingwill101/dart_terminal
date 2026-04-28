@@ -1,3 +1,5 @@
+# Changelog
+
 ## 0.1.3-wip
 
 - Added iOS device and simulator prebuilt target support for `libghostty-vt`

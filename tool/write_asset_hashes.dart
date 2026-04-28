@@ -20,24 +20,10 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 
+import '../pkgs/vte/ghostty_vte/lib/src/hook/artifacts.dart';
 import '../pkgs/vte/ghostty_vte/lib/src/hook/dynamic_library.dart';
 
 const _repo = 'kingwill101/dart_terminal';
-
-const _vteArtifacts = <String, String>{
-  'linux-x64': 'vte-linux-x64.tar.gz',
-  'linux-arm64': 'vte-linux-arm64.tar.gz',
-  'macos-arm64': 'vte-macos-arm64.tar.gz',
-  'macos-x64': 'vte-macos-x64.tar.gz',
-  'windows-x64': 'vte-windows-x64.tar.gz',
-  'windows-arm64': 'vte-windows-arm64.tar.gz',
-  'android-arm64': 'vte-android-arm64.tar.gz',
-  'android-arm': 'vte-android-arm.tar.gz',
-  'android-x64': 'vte-android-x64.tar.gz',
-  'ios-arm64': 'vte-ios-arm64.tar.gz',
-  'ios-sim-arm64': 'vte-ios-sim-arm64.tar.gz',
-  'ios-sim-x64': 'vte-ios-sim-x64.tar.gz',
-};
 
 const _ptyArtifacts = <String, String>{
   'linux-x64': 'pty-linux-x64.tar.gz',
@@ -101,7 +87,7 @@ Future<void> main(List<String> args) async {
       stdout.writeln('Processing VTE artifacts for $tag...');
       final vteHashes = await _downloadAndHash(
         tag,
-        _vteArtifacts,
+        vtePrebuiltArtifacts,
         tmpDir,
         'vte',
       );
@@ -257,7 +243,7 @@ Future<Map<String, String>> _downloadAndHash(
 
 String _generateDart(String tag, Map<String, String> hashes, String libName) {
   final description = libName == 'vte' ? 'ghostty-vt' : 'portable_pty_rs';
-  final artifactMap = libName == 'vte' ? _vteArtifacts : _ptyArtifacts;
+  final artifactMap = libName == 'vte' ? vtePrebuiltArtifacts : _ptyArtifacts;
 
   final buffer = StringBuffer()
     ..writeln('// Hashes of prebuilt $description binaries for each platform.')

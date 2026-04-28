@@ -128,11 +128,6 @@ bool isPubCachePackagePath(String packagePath) {
         segments[i + 1] == 'cache') {
       return true;
     }
-    if (segments[i] == 'hosted' &&
-        i + 1 < segments.length &&
-        segments[i + 1] == 'pub.dev') {
-      return true;
-    }
   }
 
   return false;

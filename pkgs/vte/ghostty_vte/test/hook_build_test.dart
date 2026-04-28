@@ -29,6 +29,15 @@ void main() {
         isFalse,
       );
     });
+
+    test('does not treat hosted pub.dev segments as a cache by itself', () {
+      expect(
+        build_hook.isPubCachePackagePath(
+          '/work/fixtures/hosted/pub.dev/ghostty_vte',
+        ),
+        isFalse,
+      );
+    });
   });
 
   group('platformLabelForBuildHook', () {

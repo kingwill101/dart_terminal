@@ -14,6 +14,10 @@ void main() {
         dynamicLibraryNameForPlatform('ios-sim-arm64', 'ghostty-vt'),
         'libghostty-vt.dylib',
       );
+      expect(
+        dynamicLibraryNameForPlatform('ios-sim-x64', 'ghostty-vt'),
+        'libghostty-vt.dylib',
+      );
     });
   });
 

@@ -9,26 +9,12 @@ library;
 
 import 'dart:io';
 
+import 'package:ghostty_vte/src/hook/artifacts.dart';
 import 'package:ghostty_vte/src/hook/asset_hashes.dart';
 import 'package:ghostty_vte/src/hook/build_cache.dart';
 import 'package:ghostty_vte/src/hook/dynamic_library.dart';
 
 const _repo = 'kingwill101/dart_terminal';
-
-const _artifacts = <String, String>{
-  'linux-x64': 'vte-linux-x64.tar.gz',
-  'linux-arm64': 'vte-linux-arm64.tar.gz',
-  'macos-arm64': 'vte-macos-arm64.tar.gz',
-  'macos-x64': 'vte-macos-x64.tar.gz',
-  'windows-x64': 'vte-windows-x64.tar.gz',
-  'windows-arm64': 'vte-windows-arm64.tar.gz',
-  'android-arm64': 'vte-android-arm64.tar.gz',
-  'android-arm': 'vte-android-arm.tar.gz',
-  'android-x64': 'vte-android-x64.tar.gz',
-  'ios-arm64': 'vte-ios-arm64.tar.gz',
-  'ios-sim-arm64': 'vte-ios-sim-arm64.tar.gz',
-  'ios-sim-x64': 'vte-ios-sim-x64.tar.gz',
-};
 
 Future<void> main(List<String> args) async {
   var tag = releaseTag;
@@ -59,11 +45,11 @@ Future<void> main(List<String> args) async {
 
   platform ??= _hostPlatform();
 
-  final artifact = _artifacts[platform];
+  final artifact = vtePrebuiltArtifacts[platform];
   if (artifact == null) {
     stderr.writeln(
       'No prebuilt ghostty_vte artifact for platform "$platform".\n'
-      'Available: ${_artifacts.keys.join(', ')}',
+      'Available: ${vtePrebuiltArtifacts.keys.join(', ')}',
     );
     exitCode = 1;
     return;
