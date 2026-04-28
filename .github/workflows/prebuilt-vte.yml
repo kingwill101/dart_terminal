@@ -29,45 +29,68 @@ jobs:
   # ════════════════════════════════════════════════════════════════════
   vte-native:
     name: "VTE ${{ matrix.target }}"
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           # Linux
-          - target: x86_64-linux-gnu
+          - runner: ubuntu-latest
+            target: x86_64-linux-gnu
             artifact: libghostty-vt.so
             os_label: linux-x64
-          - target: aarch64-linux-gnu
+          - runner: ubuntu-latest
+            target: aarch64-linux-gnu
             artifact: libghostty-vt.so
             os_label: linux-arm64
 
           # macOS (cross-compiled from Linux via Zig)
-          - target: aarch64-macos
+          - runner: ubuntu-latest
+            target: aarch64-macos
             artifact: libghostty-vt.dylib
             os_label: macos-arm64
-          - target: x86_64-macos
+          - runner: ubuntu-latest
+            target: x86_64-macos
             artifact: libghostty-vt.dylib
             os_label: macos-x64
 
           # Windows
-          - target: x86_64-windows-gnu
+          - runner: ubuntu-latest
+            target: x86_64-windows-gnu
             artifact: ghostty-vt.dll
             os_label: windows-x64
-          - target: aarch64-windows-gnu
+          - runner: ubuntu-latest
+            target: aarch64-windows-gnu
             artifact: ghostty-vt.dll
             os_label: windows-arm64
 
           # Android
-          - target: aarch64-linux-android
+          - runner: ubuntu-latest
+            target: aarch64-linux-android
             artifact: libghostty-vt.so
             os_label: android-arm64
-          - target: arm-linux-androideabi
+          - runner: ubuntu-latest
+            target: arm-linux-androideabi
             artifact: libghostty-vt.so
             os_label: android-arm
-          - target: x86_64-linux-android
+          - runner: ubuntu-latest
+            target: x86_64-linux-android
             artifact: libghostty-vt.so
             os_label: android-x64
+
+          # iOS
+          - runner: macos-latest
+            target: aarch64-ios
+            artifact: libghostty-vt.dylib
+            os_label: ios-arm64
+          - runner: macos-latest
+            target: aarch64-ios-simulator
+            artifact: libghostty-vt.dylib
+            os_label: ios-sim-arm64
+          - runner: macos-latest
+            target: x86_64-ios-simulator
+            artifact: libghostty-vt.dylib
+            os_label: ios-sim-x64
 
     steps:
       - uses: actions/checkout@v4
@@ -126,7 +149,7 @@ jobs:
             find ${{ github.workspace }}/build-prefix -type f
             exit 1
           fi
-          TARGET=$(readlink -f "$LIB" || printf '%s' "$LIB")
+          TARGET=$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$LIB")
           KIND=$(file -b "$TARGET")
           case "${{ matrix.artifact }}" in
             *.so)

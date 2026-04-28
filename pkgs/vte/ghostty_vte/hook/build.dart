@@ -49,9 +49,10 @@ void main(List<String> args) async {
       }
     }
 
-    final platformLabel = _platformLabel(
+    final platformLabel = platformLabelForBuildHook(
       code.targetOS,
       code.targetArchitecture,
+      iOSSdk: code.targetOS == OS.iOS ? code.iOS.targetSdk : null,
     );
     final preferSourceBuild = _shouldPreferSourceBuild(input);
 
@@ -107,9 +108,34 @@ bool _shouldPreferSourceBuild(BuildInput input) {
   }
 
   final packagePath = Directory.fromUri(input.packageRoot).absolute.path;
-  return !packagePath.contains(
-    '${Platform.pathSeparator}.pub-cache${Platform.pathSeparator}',
-  );
+  return !isPubCachePackagePath(packagePath);
+}
+
+bool isPubCachePackagePath(String packagePath) {
+  final segments = packagePath
+      .replaceAll('\\', '/')
+      .toLowerCase()
+      .split('/')
+      .where((segment) => segment.isNotEmpty)
+      .toList();
+
+  for (var i = 0; i < segments.length; i++) {
+    if (segments[i] == '.pub-cache') {
+      return true;
+    }
+    if (segments[i] == 'pub' &&
+        i + 1 < segments.length &&
+        segments[i + 1] == 'cache') {
+      return true;
+    }
+    if (segments[i] == 'hosted' &&
+        i + 1 < segments.length &&
+        segments[i + 1] == 'pub.dev') {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 void _addAsset(BuildOutputBuilder output, String packageName, Uri file) {
@@ -391,7 +417,11 @@ Future<void> _buildFromSource(
     info: _info,
     warn: _warn,
   );
-  final target = _zigTarget(code.targetOS, code.targetArchitecture);
+  final target = zigTargetForBuildHook(
+    code.targetOS,
+    code.targetArchitecture,
+    iOSSdk: code.targetOS == OS.iOS ? code.iOS.targetSdk : null,
+  );
 
   final prefixDir = Directory.fromUri(
     input.outputDirectory.resolve('ghostty/$target/'),
@@ -428,7 +458,7 @@ Future<void> _buildFromSource(
 }
 
 /// Returns a platform label like "linux-x64" or "macos-arm64".
-String _platformLabel(OS os, Architecture arch) {
+String platformLabelForBuildHook(OS os, Architecture arch, {IOSSdk? iOSSdk}) {
   final archLabel = switch (arch) {
     Architecture.x64 => 'x64',
     Architecture.arm64 => 'arm64',
@@ -444,6 +474,13 @@ String _platformLabel(OS os, Architecture arch) {
     OS.iOS => 'ios',
     _ => os.toString(),
   };
+
+  if (os == OS.iOS) {
+    if (iOSSdk == IOSSdk.iPhoneSimulator || arch == Architecture.x64) {
+      return 'ios-sim-$archLabel';
+    }
+  }
+
   return '$osLabel-$archLabel';
 }
 
@@ -545,7 +582,7 @@ void _cloneGhosttySource(Directory targetDir) {
   }
 }
 
-String _zigTarget(OS os, Architecture arch) {
+String zigTargetForBuildHook(OS os, Architecture arch, {IOSSdk? iOSSdk}) {
   if (os == OS.android) {
     switch (arch) {
       case Architecture.arm:
@@ -595,6 +632,19 @@ String _zigTarget(OS os, Architecture arch) {
         return 'x86_64-windows-gnu';
       case Architecture.ia32:
         return 'x86-windows-gnu';
+      default:
+        break;
+    }
+  }
+
+  if (os == OS.iOS) {
+    switch (arch) {
+      case Architecture.arm64:
+        return iOSSdk == IOSSdk.iPhoneSimulator
+            ? 'aarch64-ios-simulator'
+            : 'aarch64-ios';
+      case Architecture.x64:
+        return 'x86_64-ios-simulator';
       default:
         break;
     }

@@ -32,6 +32,7 @@ on the **web** via WebAssembly.
 | macOS | x64, arm64 | Zig (or prebuilt) |
 | Windows | x64, arm64 | Zig (or prebuilt) |
 | Android | arm64, arm, x64 | Zig (or prebuilt) |
+| iOS | arm64 device, arm64/x64 simulator | Zig (or prebuilt) |
 | Web | wasm32 | Zig (or prebuilt) |
 
 ## Installation

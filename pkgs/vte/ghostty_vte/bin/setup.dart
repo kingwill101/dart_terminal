@@ -25,6 +25,9 @@ const _artifacts = <String, String>{
   'android-arm64': 'vte-android-arm64.tar.gz',
   'android-arm': 'vte-android-arm.tar.gz',
   'android-x64': 'vte-android-x64.tar.gz',
+  'ios-arm64': 'vte-ios-arm64.tar.gz',
+  'ios-sim-arm64': 'vte-ios-sim-arm64.tar.gz',
+  'ios-sim-x64': 'vte-ios-sim-x64.tar.gz',
 };
 
 Future<void> main(List<String> args) async {
