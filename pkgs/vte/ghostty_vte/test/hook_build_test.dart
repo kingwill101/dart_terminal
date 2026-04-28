@@ -51,6 +51,10 @@ void main() {
         'ios-arm64',
       );
       expect(
+        build_hook.platformLabelForBuildHook(OS.iOS, Architecture.arm64),
+        'ios-arm64',
+      );
+      expect(
         build_hook.platformLabelForBuildHook(
           OS.iOS,
           Architecture.arm64,
