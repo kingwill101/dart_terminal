@@ -1,3 +1,13 @@
+# Changelog
+
+## 0.1.3-wip
+
+- Added iOS device and simulator prebuilt target support for `libghostty-vt`
+  build and verification workflows.
+- Fixed pub-cache detection in the build hook so Windows installs under
+  `%LOCALAPPDATA%\Pub\Cache` use downloaded prebuilts instead of falling back
+  to a source build.
+
 ## 0.1.2
 
 - Updated `ghostty_vte:setup` to default to the shared build-hook

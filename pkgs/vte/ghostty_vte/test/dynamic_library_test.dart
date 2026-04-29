@@ -4,6 +4,23 @@ import 'package:ghostty_vte/src/hook/dynamic_library.dart';
 import 'package:test/test.dart';
 
 void main() {
+  group('dynamicLibraryNameForPlatform', () {
+    test('uses Mach-O dylib names for iOS artifacts', () {
+      expect(
+        dynamicLibraryNameForPlatform('ios-arm64', 'ghostty-vt'),
+        'libghostty-vt.dylib',
+      );
+      expect(
+        dynamicLibraryNameForPlatform('ios-sim-arm64', 'ghostty-vt'),
+        'libghostty-vt.dylib',
+      );
+      expect(
+        dynamicLibraryNameForPlatform('ios-sim-x64', 'ghostty-vt'),
+        'libghostty-vt.dylib',
+      );
+    });
+  });
+
   group('selectDynamicLibraryEntity', () {
     test(
       'prefers versioned Linux shared objects over static archives',

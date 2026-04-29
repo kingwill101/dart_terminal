@@ -5,7 +5,7 @@ String dynamicLibraryNameForPlatform(String platformLabel, String libraryStem) {
   if (normalized.startsWith('windows-')) {
     return '$libraryStem.dll';
   }
-  if (normalized.startsWith('macos-')) {
+  if (normalized.startsWith('macos-') || normalized.startsWith('ios-')) {
     return 'lib$libraryStem.dylib';
   }
   if (normalized.startsWith('linux-') || normalized.startsWith('android-')) {
