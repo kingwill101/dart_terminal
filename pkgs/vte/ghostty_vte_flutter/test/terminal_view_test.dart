@@ -85,10 +85,14 @@ void main() {
           const GhosttyTerminalWordBoundaryPolicy(),
       GhosttyTerminalInteractionPolicy interactionPolicy =
           GhosttyTerminalInteractionPolicy.auto,
+      bool showSelectionContextMenu = true,
+      GhosttyTerminalSelectionContextMenuButtonItemsBuilder?
+      selectionContextMenuButtonItemsBuilder,
       EdgeInsets? padding,
       ValueChanged<GhosttyTerminalSelection?>? onSelectionChanged,
       ValueChanged<GhosttyTerminalSelectionContent<GhosttyTerminalSelection>?>?
       onSelectionContentChanged,
+      Future<void> Function(String text)? onCopySelection,
       Future<void> Function(String uri)? onOpenHyperlink,
     }) {
       return MaterialApp(
@@ -115,9 +119,13 @@ void main() {
               copyOptions: copyOptions,
               wordBoundaryPolicy: wordBoundaryPolicy,
               interactionPolicy: interactionPolicy,
+              showSelectionContextMenu: showSelectionContextMenu,
+              selectionContextMenuButtonItemsBuilder:
+                  selectionContextMenuButtonItemsBuilder,
               padding: padding ?? const EdgeInsets.all(12),
               onSelectionChanged: onSelectionChanged,
               onSelectionContentChanged: onSelectionContentChanged,
+              onCopySelection: onCopySelection,
               onOpenHyperlink: onOpenHyperlink,
             ),
           ),
@@ -1487,6 +1495,58 @@ void main() {
       expect(focusNode.hasFocus, isTrue);
     });
 
+    testWidgets('pointer down claims focus from a sibling text field', (
+      tester,
+    ) async {
+      final terminalFocusNode = FocusNode();
+      final editorFocusNode = FocusNode();
+      addTearDown(terminalFocusNode.dispose);
+      addTearDown(editorFocusNode.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Column(
+              children: [
+                SizedBox(
+                  width: 320,
+                  height: 56,
+                  child: TextField(focusNode: editorFocusNode),
+                ),
+                SizedBox(
+                  width: 600,
+                  height: 320,
+                  child: GhosttyTerminalView(
+                    controller: controller,
+                    focusNode: terminalFocusNode,
+                    interactionPolicy:
+                        GhosttyTerminalInteractionPolicy.terminalMouseFirst,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      editorFocusNode.requestFocus();
+      await tester.pump();
+      expect(editorFocusNode.hasFocus, isTrue);
+
+      final gesture = await tester.createGesture(
+        kind: ui.PointerDeviceKind.touch,
+      );
+      await gesture.down(tester.getCenter(find.byType(GhosttyTerminalView)));
+      await tester.pump();
+
+      expect(terminalFocusNode.hasFocus, isTrue);
+      expect(editorFocusNode.hasFocus, isFalse);
+
+      await gesture.up();
+      await tester.pump(const Duration(milliseconds: 50));
+    });
+
     testWidgets('switches controllers correctly', (tester) async {
       if (!_hasNativeTerminal) {
         return;
@@ -2010,6 +2070,46 @@ void main() {
     });
 
     testWidgets(
+      'single tap after word selection clears instead of selecting a cell',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        GhosttyTerminalSelection? currentSelection;
+        GhosttyTerminalSelectionContent<GhosttyTerminalSelection>?
+        currentContent;
+        controller.appendDebugOutput('hello world');
+
+        await tester.pumpWidget(
+          buildView(
+            showHeader: false,
+            autofocus: true,
+            onSelectionChanged: (selection) => currentSelection = selection,
+            onSelectionContentChanged: (content) => currentContent = content,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        const wordTarget = Offset(30, 24);
+        await tester.tapAt(wordTarget);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.tapAt(wordTarget);
+        await tester.pumpAndSettle();
+
+        expect(currentSelection, isNotNull);
+        expect(currentContent?.text, 'hello');
+
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.tapAt(const Offset(78, 24));
+        await tester.pumpAndSettle();
+
+        expect(currentSelection, isNull);
+        expect(currentContent, isNull);
+      },
+    );
+
+    testWidgets(
       'renderState double click selects words on wrapped visible rows',
       (tester) async {
         if (!_hasNativeTerminal) {
@@ -2246,7 +2346,7 @@ void main() {
       await tester.tapAt(start);
       await tester.pump(const Duration(milliseconds: 40));
 
-      final gesture = await tester.startGesture(start);
+      final gesture = await _startMouseGesture(tester, start);
       await tester.pump(const Duration(milliseconds: 40));
       await gesture.moveTo(end);
       await tester.pump();
@@ -2286,7 +2386,7 @@ void main() {
         await tester.tapAt(start);
         await tester.pump(const Duration(milliseconds: 40));
 
-        final gesture = await tester.startGesture(start);
+        final gesture = await _startMouseGesture(tester, start);
         await tester.pump(const Duration(milliseconds: 40));
         await gesture.moveTo(middle);
         await tester.pump();
@@ -2328,7 +2428,7 @@ void main() {
       await tester.tapAt(start);
       await tester.pump(const Duration(milliseconds: 40));
 
-      final gesture = await tester.startGesture(start);
+      final gesture = await _startMouseGesture(tester, start);
       await tester.pump(const Duration(milliseconds: 40));
       await gesture.moveTo(end);
       await tester.pump();
@@ -2372,7 +2472,7 @@ void main() {
         await tester.tapAt(start);
         await tester.pump(const Duration(milliseconds: 40));
 
-        final gesture = await tester.startGesture(start);
+        final gesture = await _startMouseGesture(tester, start);
         await tester.pump(const Duration(milliseconds: 40));
         await gesture.moveTo(middle);
         await tester.pump();
@@ -2406,7 +2506,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final gesture = await tester.startGesture(const Offset(30, 24));
+      final gesture = await _startMouseGesture(tester, const Offset(30, 24));
       await tester.pump();
       await gesture.moveTo(const Offset(50, 24));
       await tester.pump();
@@ -2726,6 +2826,402 @@ void main() {
       },
     );
 
+    testWidgets('touch drag scrolls transcript without selecting text', (
+      tester,
+    ) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+      GhosttyTerminalSelection? currentSelection;
+      controller.appendDebugOutput(
+        List<String>.generate(160, (index) => 'Line $index').join('\r\n'),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 600,
+              height: 400,
+              child: GhosttyTerminalView(
+                controller: controller,
+                showHeader: false,
+                scrollController: scrollController,
+                onSelectionChanged: (selection) => currentSelection = selection,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final gesture = await tester.createGesture(
+        kind: ui.PointerDeviceKind.touch,
+      );
+      await gesture.down(const Offset(300, 320));
+      await tester.pump();
+      await gesture.moveTo(const Offset(300, 80));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(scrollController.offset, greaterThan(0));
+      expect(currentSelection, isNull);
+    });
+
+    testWidgets('touch long press starts terminal selection', (tester) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      GhosttyTerminalSelectionContent<GhosttyTerminalSelection>? currentContent;
+      controller.appendDebugOutput('hello world\r\nsecond line');
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 600,
+              height: 400,
+              child: GhosttyTerminalView(
+                controller: controller,
+                showHeader: false,
+                onSelectionContentChanged: (content) =>
+                    currentContent = content,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.longPressAt(const Offset(30, 24));
+      await tester.pumpAndSettle();
+
+      expect(currentContent?.text, startsWith('hello world'));
+    });
+
+    testWidgets('touch selection shows an adaptive context menu', (
+      tester,
+    ) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      String? copiedText;
+      controller.appendDebugOutput('hello world\r\nsecond line');
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 600,
+              height: 400,
+              child: GhosttyTerminalView(
+                controller: controller,
+                showHeader: false,
+                onCopySelection: (text) async {
+                  copiedText = text;
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.longPressAt(const Offset(30, 24));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AdaptiveTextSelectionToolbar), findsOneWidget);
+      expect(find.text('Copy'), findsOneWidget);
+
+      await tester.tap(find.text('Copy'));
+      await tester.pumpAndSettle();
+
+      expect(copiedText, 'hello world');
+      expect(find.byType(AdaptiveTextSelectionToolbar), findsNothing);
+    });
+
+    testWidgets('touch selection context menu supports custom actions', (
+      tester,
+    ) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      String? actionText;
+      GhosttyTerminalSelection? actionSelection;
+      controller.appendDebugOutput('hello world\r\nsecond line');
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 600,
+              height: 400,
+              child: GhosttyTerminalView(
+                controller: controller,
+                showHeader: false,
+                selectionContextMenuButtonItemsBuilder: (details) {
+                  return <ContextMenuButtonItem>[
+                    ...details.defaultButtonItems,
+                    ContextMenuButtonItem(
+                      label: 'Explain',
+                      onPressed: () {
+                        actionText = details.selectedText;
+                        actionSelection = details.selection;
+                        details.hideToolbar();
+                      },
+                    ),
+                  ];
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.longPressAt(const Offset(30, 24));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Copy'), findsOneWidget);
+      expect(find.text('Select all'), findsOneWidget);
+      expect(find.text('Explain'), findsOneWidget);
+
+      await tester.tap(find.text('Explain'));
+      await tester.pumpAndSettle();
+
+      expect(actionText, 'hello world');
+      expect(actionSelection, isNotNull);
+      expect(find.byType(AdaptiveTextSelectionToolbar), findsNothing);
+    });
+
+    testWidgets('touch selection handles can extend the highlight', (
+      tester,
+    ) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      GhosttyTerminalSelectionContent<GhosttyTerminalSelection>? currentContent;
+      controller.appendDebugOutput('alpha beta\r\nsecond line\r\nthird line');
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 600,
+              height: 400,
+              child: GhosttyTerminalView(
+                controller: controller,
+                showHeader: false,
+                onSelectionContentChanged: (content) {
+                  currentContent = content;
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.longPressAt(const Offset(30, 44));
+      await tester.pumpAndSettle();
+
+      expect(currentContent?.text, 'second line');
+      final endHandle = find.byKey(
+        const ValueKey<String>('ghostty-terminal-selection-end-handle'),
+      );
+      expect(endHandle, findsOneWidget);
+
+      final gesture = await tester.createGesture(
+        kind: ui.PointerDeviceKind.touch,
+      );
+      await gesture.down(tester.getCenter(endHandle));
+      await tester.pump();
+      await gesture.moveTo(const Offset(112, 80));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(currentContent?.text, contains('second line'));
+      expect(currentContent?.text, contains('third'));
+      expect(
+        find.byKey(
+          const ValueKey<String>('ghostty-terminal-selection-start-handle'),
+        ),
+        findsOneWidget,
+      );
+      expect(endHandle, findsOneWidget);
+    });
+
+    testWidgets('touch selection handles auto-pan near the viewport edge', (
+      tester,
+    ) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      GhosttyTerminalSelectionContent<GhosttyTerminalSelection>? currentContent;
+      controller.appendDebugOutput(
+        List<String>.generate(180, (index) => 'Line $index').join('\r\n'),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 600,
+              height: 400,
+              child: GhosttyTerminalView(
+                controller: controller,
+                showHeader: false,
+                onSelectionContentChanged: (content) {
+                  currentContent = content;
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.longPressAt(const Offset(30, 382));
+      await tester.pumpAndSettle();
+
+      expect(currentContent?.text, 'Line 179');
+      final startHandle = find.byKey(
+        const ValueKey<String>('ghostty-terminal-selection-start-handle'),
+      );
+      expect(startHandle, findsOneWidget);
+
+      final gesture = await tester.createGesture(
+        kind: ui.PointerDeviceKind.touch,
+      );
+      await gesture.down(tester.getCenter(startHandle));
+      await tester.pump();
+      await gesture.moveTo(const Offset(40, 14));
+      await tester.pump();
+      final textBeforeAutoPan = currentContent?.text;
+
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(currentContent?.text, isNot(textBeforeAutoPan));
+      expect(currentContent?.text, contains('Line 179'));
+      expect(currentContent?.text, contains('Line 15'));
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets(
+      'touch long press at live bottom does not expand to the viewport',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        final scrollController = ScrollController();
+        addTearDown(scrollController.dispose);
+        var selectionChanges = 0;
+        GhosttyTerminalSelectionContent<GhosttyTerminalSelection>?
+        currentContent;
+
+        controller.appendDebugOutput(
+          List<String>.generate(160, (index) => 'Line $index').join('\r\n'),
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 600,
+                height: 400,
+                child: GhosttyTerminalView(
+                  controller: controller,
+                  showHeader: false,
+                  scrollController: scrollController,
+                  onSelectionChanged: (_) {
+                    selectionChanges++;
+                  },
+                  onSelectionContentChanged: (content) {
+                    currentContent = content;
+                  },
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(scrollController.offset, 0);
+
+        final gesture = await tester.createGesture(
+          kind: ui.PointerDeviceKind.touch,
+        );
+        await gesture.down(const Offset(30, 382));
+        await tester.pump(const Duration(milliseconds: 650));
+
+        expect(currentContent?.text, 'Line 159');
+        final changesAfterLongPress = selectionChanges;
+
+        await tester.pump(const Duration(milliseconds: 300));
+
+        expect(scrollController.offset, 0);
+        expect(currentContent?.text, 'Line 159');
+        expect(selectionChanges, changesAfterLongPress);
+
+        await gesture.up();
+        await tester.pumpAndSettle();
+      },
+    );
+
+    testWidgets(
+      'touch input in auto mode does not forward terminal mouse events',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        final controller = _RecordingTerminalController();
+        addTearDown(controller.dispose);
+        controller.terminal.setMode(VtModes.normalMouse, true);
+        controller.terminal.setMode(VtModes.sgrMouse, true);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 600,
+                height: 400,
+                child: GhosttyTerminalView(
+                  controller: controller,
+                  autofocus: true,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final gesture = await tester.createGesture(
+          kind: ui.PointerDeviceKind.touch,
+        );
+        await gesture.down(const Offset(100, 100));
+        await tester.pump();
+        await gesture.moveTo(const Offset(140, 120));
+        await tester.pump();
+        await gesture.up();
+        await tester.pump(const Duration(milliseconds: 300));
+
+        expect(controller.mouseEvents, isEmpty);
+      },
+    );
+
     testWidgets(
       'pointer interaction forwards Ghostty mouse events when reporting is enabled',
       (tester) async {
@@ -2760,7 +3256,10 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        final gesture = await tester.startGesture(const Offset(100, 100));
+        final gesture = await _startMouseGesture(
+          tester,
+          const Offset(100, 100),
+        );
         await tester.pump();
         await gesture.moveTo(const Offset(140, 120));
         await tester.pump();
@@ -2893,7 +3392,10 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        final gesture = await tester.startGesture(const Offset(100, 100));
+        final gesture = await _startMouseGesture(
+          tester,
+          const Offset(100, 100),
+        );
         await tester.pump();
         await gesture.moveTo(const Offset(180, 100));
         await tester.pump();
@@ -2906,7 +3408,7 @@ void main() {
     );
 
     testWidgets(
-      'terminalMouseFirst policy forwards mouse events without native terminal mode detection',
+      'terminalMouseFirst policy forwards touch as terminal mouse events',
       (tester) async {
         final controller = _RecordingTerminalController();
         addTearDown(controller.dispose);
@@ -2942,6 +3444,10 @@ void main() {
         await tester.pump(const Duration(milliseconds: 300));
 
         expect(controller.mouseEvents, isNotEmpty);
+        expect(
+          controller.mouseEvents.first.button,
+          GhosttyMouseButton.GHOSTTY_MOUSE_BUTTON_LEFT,
+        );
         expect(currentSelection, isNull);
       },
     );
@@ -3482,6 +3988,15 @@ void main() {
       expect(decodeHexBytes('  0a   0d  '), [0x0a, 0x0d]);
     });
   });
+}
+
+Future<TestGesture> _startMouseGesture(
+  WidgetTester tester,
+  Offset offset,
+) async {
+  final gesture = await tester.createGesture(kind: ui.PointerDeviceKind.mouse);
+  await gesture.down(offset);
+  return gesture;
 }
 
 class _RecordingTerminalController extends GhosttyTerminalController {
