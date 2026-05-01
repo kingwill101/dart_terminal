@@ -59,11 +59,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(editorFocusNode.hasFocus, isTrue);
 
-    final terminalRect = _terminalRect(tester);
-    final alphaTarget = _terminalCellCenter(terminalRect, column: 2);
-    final gammaTarget = _terminalCellCenter(terminalRect, column: 13);
-
-    await tester.tapAt(gammaTarget);
+    await _tapTerminalCell(tester, column: 13);
     await tester.pumpAndSettle();
 
     expect(terminalFocusNode.hasFocus, isTrue);
@@ -72,16 +68,19 @@ void main() {
     expect(currentContent, isNull);
 
     await tester.pump(const Duration(milliseconds: 500));
-    await tester.tapAt(alphaTarget);
-    await tester.pump(const Duration(milliseconds: 80));
-    await tester.tapAt(alphaTarget);
-    await tester.pumpAndSettle();
+    final alphaTarget = _terminalCellCenter(_terminalRect(tester), column: 2);
+    await _doubleTapAt(tester, alphaTarget);
+    await _waitForSelectionText(
+      tester,
+      selectedText: () => currentContent?.text,
+      expected: 'alpha',
+    );
 
     expect(currentSelection, isNotNull);
     expect(currentContent?.text, 'alpha');
 
     await tester.pump(const Duration(milliseconds: 500));
-    await tester.tapAt(gammaTarget);
+    await _tapTerminalCell(tester, column: 13);
     await tester.pumpAndSettle();
 
     expect(currentSelection, isNull);
@@ -604,6 +603,38 @@ double _measureTerminalCharWidth() {
   final width = painter.width;
   painter.dispose();
   return width;
+}
+
+Future<void> _tapTerminalCell(
+  WidgetTester tester, {
+  required int column,
+  int row = 0,
+}) async {
+  await tester.tapAt(
+    _terminalCellCenter(_terminalRect(tester), column: column, row: row),
+    kind: ui.PointerDeviceKind.touch,
+  );
+}
+
+Future<void> _doubleTapAt(WidgetTester tester, Offset target) async {
+  await tester.tapAt(target, kind: ui.PointerDeviceKind.touch);
+  await tester.pump(const Duration(milliseconds: 120));
+  await tester.tapAt(target, kind: ui.PointerDeviceKind.touch);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _waitForSelectionText(
+  WidgetTester tester, {
+  required String? Function() selectedText,
+  required String expected,
+}) async {
+  for (var attempt = 0; attempt < 20; attempt++) {
+    if (selectedText() == expected) {
+      return;
+    }
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+  expect(selectedText(), expected);
 }
 
 String _lines(String prefix, int count) {
