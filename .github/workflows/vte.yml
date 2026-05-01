@@ -244,6 +244,16 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: "0.15.2"
+
+      - name: Install Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27c
+
       - name: Limit Flutter devices to Android
         run: flutter config --no-enable-linux-desktop --no-enable-web
 
@@ -268,3 +278,5 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: cd pkgs/vte/ghostty_vte_flutter/example && flutter test integration_test/touch_terminal_e2e_test.dart
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
