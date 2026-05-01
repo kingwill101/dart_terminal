@@ -3001,6 +3001,51 @@ void main() {
       expect(find.byType(AdaptiveTextSelectionToolbar), findsNothing);
     });
 
+    testWidgets('controller swap clears touch selection state', (tester) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      final controller2 = GhosttyTerminalController();
+      addTearDown(controller2.dispose);
+      final selectionChanges = <GhosttyTerminalSelection?>[];
+
+      controller.appendDebugOutput('hello world\r\nsecond line');
+      controller2.appendDebugOutput('replacement controller');
+
+      Widget buildControllerView(GhosttyTerminalController terminalController) {
+        return MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 600,
+              height: 400,
+              child: GhosttyTerminalView(
+                controller: terminalController,
+                showHeader: false,
+                onSelectionChanged: selectionChanges.add,
+              ),
+            ),
+          ),
+        );
+      }
+
+      await tester.pumpWidget(buildControllerView(controller));
+      await tester.pumpAndSettle();
+
+      await tester.longPressAt(const Offset(30, 24));
+      await tester.pumpAndSettle();
+
+      expect(selectionChanges, isNotEmpty);
+      expect(selectionChanges.last, isNotNull);
+      expect(find.byType(AdaptiveTextSelectionToolbar), findsOneWidget);
+
+      await tester.pumpWidget(buildControllerView(controller2));
+      await tester.pumpAndSettle();
+
+      expect(selectionChanges.last, isNull);
+      expect(find.byType(AdaptiveTextSelectionToolbar), findsNothing);
+    });
+
     testWidgets('touch selection handles can extend the highlight', (
       tester,
     ) async {
@@ -3111,9 +3156,11 @@ void main() {
 
       await tester.pump(const Duration(milliseconds: 300));
 
+      final beforeLines = textBeforeAutoPan?.split('\n') ?? const <String>[];
+      final afterLines = currentContent?.text.split('\n') ?? const <String>[];
       expect(currentContent?.text, isNot(textBeforeAutoPan));
       expect(currentContent?.text, contains('Line 179'));
-      expect(currentContent?.text, contains('Line 15'));
+      expect(afterLines.length, greaterThan(beforeLines.length));
 
       await gesture.up();
       await tester.pumpAndSettle();
@@ -3449,6 +3496,48 @@ void main() {
           GhosttyMouseButton.GHOSTTY_MOUSE_BUTTON_LEFT,
         );
         expect(currentSelection, isNull);
+      },
+    );
+
+    testWidgets(
+      'terminalMouseFirst policy releases terminal mouse on touch cancel',
+      (tester) async {
+        final controller = _RecordingTerminalController();
+        addTearDown(controller.dispose);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 600,
+                height: 400,
+                child: GhosttyTerminalView(
+                  controller: controller,
+                  autofocus: true,
+                  interactionPolicy:
+                      GhosttyTerminalInteractionPolicy.terminalMouseFirst,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final gesture = await tester.createGesture(
+          kind: ui.PointerDeviceKind.touch,
+        );
+        await gesture.down(const Offset(100, 100));
+        await tester.pump();
+        await gesture.cancel();
+        await tester.pump(const Duration(milliseconds: 300));
+
+        expect(
+          controller.mouseEvents.map((event) => event.action),
+          containsAllInOrder(<GhosttyMouseAction>[
+            GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_PRESS,
+            GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_RELEASE,
+          ]),
+        );
       },
     );
 

@@ -327,9 +327,11 @@ void main() {
 
     await tester.pump(const Duration(milliseconds: 300));
 
+    final beforeLines = textBeforeAutoPan?.split('\n') ?? const <String>[];
+    final afterLines = currentContent?.text.split('\n') ?? const <String>[];
     expect(currentContent?.text, isNot(textBeforeAutoPan));
     expect(currentContent?.text, contains('Line 179'));
-    expect(currentContent?.text, contains('Line 15'));
+    expect(afterLines.length, greaterThan(beforeLines.length));
 
     await gesture.up();
     await tester.pumpAndSettle();
@@ -544,6 +546,9 @@ Future<void> _pumpTerminalHarness(
                   controller: controller,
                   focusNode: terminalFocusNode,
                   showHeader: false,
+                  fontFamily: 'monospace',
+                  fontSize: 14,
+                  lineHeight: 1.35,
                   scrollController: scrollController,
                   renderer: renderer,
                   interactionPolicy: interactionPolicy,

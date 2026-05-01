@@ -378,6 +378,8 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
       _lastReportedCols = -1;
       _lastReportedRows = -1;
       _scrollOffsetLines = 0;
+      _setSelection(null);
+      _removeSelectionContextMenu();
       _touchSelectionHandlesVisible = false;
       _selectionHandleDragEdge = null;
       _lastSelectionHandleDragPosition = null;
@@ -2156,7 +2158,15 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
                   metrics,
                 );
               },
-              onPointerCancel: _endTouchScroll,
+              onPointerCancel: (event) {
+                _endTouchScroll(event);
+                _sendMouseEvent(
+                  GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_RELEASE,
+                  event,
+                  size,
+                  metrics,
+                );
+              },
               onPointerSignal: (event) =>
                   _handlePointerSignal(event, size, metrics),
               child: RawGestureDetector(
