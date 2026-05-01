@@ -26,11 +26,6 @@ const Map<String, String> portablePtyPrebuiltArtifacts = {
 /// build-hook link-mode preference.
 LinkMode portablePtyLinkModeForBuild(CodeConfig code) {
   if (code.targetOS == OS.iOS) {
-    if (code.linkModePreference == LinkModePreference.dynamic) {
-      throw UnsupportedError(
-        'portable_pty supports iOS through static linking only.',
-      );
-    }
     return StaticLinking();
   }
 

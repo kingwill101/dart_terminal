@@ -85,6 +85,26 @@ void main() {
       );
     });
 
+    test('coerces explicit iOS dynamic preferences to static', () async {
+      for (final targetSdk in [IOSSdk.iPhoneOS, IOSSdk.iPhoneSimulator]) {
+        await testCodeBuildHook(
+          mainMethod: _noopBuildHook,
+          targetOS: OS.iOS,
+          targetArchitecture: Architecture.arm64,
+          targetIOSSdk: targetSdk,
+          linkModePreference: LinkModePreference.dynamic,
+          check: (input, output) {
+            final code = input.config.code;
+            expect(portablePtyLinkModeForBuild(code), isA<StaticLinking>());
+            expect(
+              portablePtyLibraryNameForBuild(code),
+              'libportable_pty_rs.a',
+            );
+          },
+        );
+      }
+    });
+
     test('respects static preferences on non-iOS platforms', () async {
       await testCodeBuildHook(
         mainMethod: _noopBuildHook,

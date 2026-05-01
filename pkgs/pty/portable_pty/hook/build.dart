@@ -136,6 +136,7 @@ Future<File> _downloadPrebuilt(
       return cachedFile;
     }
     _warn('Cached file hash mismatch, re-downloading.');
+    cachedFile.deleteSync();
   }
 
   // Download the tarball.
