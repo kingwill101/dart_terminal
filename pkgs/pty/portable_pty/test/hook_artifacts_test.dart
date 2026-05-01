@@ -105,6 +105,23 @@ void main() {
       }
     });
 
+    test('uses dynamic libraries for non-iOS preferDynamic', () async {
+      await testCodeBuildHook(
+        mainMethod: _noopBuildHook,
+        targetOS: OS.linux,
+        targetArchitecture: Architecture.x64,
+        linkModePreference: LinkModePreference.preferDynamic,
+        check: (input, output) {
+          final code = input.config.code;
+          expect(
+            portablePtyLinkModeForBuild(code),
+            isA<DynamicLoadingBundled>(),
+          );
+          expect(portablePtyLibraryNameForBuild(code), 'libportable_pty_rs.so');
+        },
+      );
+    });
+
     test('respects static preferences on non-iOS platforms', () async {
       await testCodeBuildHook(
         mainMethod: _noopBuildHook,
