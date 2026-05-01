@@ -408,6 +408,11 @@ GhosttyTerminalView(
   hyperlinkColor: const Color(0xFF61AFEF),
   renderer: GhosttyTerminalRendererMode.formatter,
   interactionPolicy: GhosttyTerminalInteractionPolicy.auto,
+  touchDragBehavior: GhosttyTerminalTouchDragBehavior.scroll,
+  showSelectionContextMenu: true,
+  selectionContextMenuButtonItemsBuilder: (details) {
+    return details.defaultButtonItems;
+  },
   onSelectionChanged: (selection) { /* ... */ },
   onCopySelection: (text) { /* ... */ },
   onPasteRequest: () async => clipboardText,
@@ -437,6 +442,9 @@ GhosttyTerminalView(
 | `hyperlinkColor` | `Color` | `#61AFEF` | Detected hyperlink text color |
 | `renderer` | `GhosttyTerminalRendererMode` | `formatter` | Choose formatter or native render-state painting |
 | `interactionPolicy` | `GhosttyTerminalInteractionPolicy` | `auto` | Resolve conflicts between text selection and terminal mouse reporting |
+| `touchDragBehavior` | `GhosttyTerminalTouchDragBehavior` | `scroll` | Choose whether finger drags scroll transcript content or select text |
+| `showSelectionContextMenu` | `bool` | `true` | Show Flutter's adaptive copy/select-all toolbar for touch selections |
+| `selectionContextMenuButtonItemsBuilder` | callback | `null` | Customize the adaptive toolbar buttons for touch selections |
 | `onSelectionChanged` | callback | `null` | Called when text selection changes |
 | `onCopySelection` | callback | `null` | Called with selection content for clipboard copy |
 | `onPasteRequest` | callback | `null` | Called to retrieve clipboard text for paste |
@@ -502,6 +510,49 @@ GhosttyTerminalView(
 GhosttyTerminalView(
   controller: ctrl,
   interactionPolicy: GhosttyTerminalInteractionPolicy.terminalMouseFirst,
+)
+```
+
+### Touch input
+
+On touch screens, finger drags scroll the transcript by default. Long-press
+starts text selection, shows draggable selection handles, and opens Flutter's
+adaptive copy/select-all toolbar. Drag either handle to adjust the highlighted
+range; holding a handle near the top or bottom edge pans the terminal selection
+through the transcript. If an app wants old desktop-style drag selection on
+touch, opt in explicitly:
+
+```dart
+GhosttyTerminalView(
+  controller: ctrl,
+  touchDragBehavior: GhosttyTerminalTouchDragBehavior.selection,
+)
+```
+
+Touch is not mapped into terminal mouse reporting in `auto` mode, even when the
+running program enables mouse reporting. Use `terminalMouseFirst` when a TUI
+should receive touch taps and drags as terminal mouse events.
+
+Customize the touch selection toolbar by returning Flutter
+`ContextMenuButtonItem`s. The details object includes the selected terminal text,
+the active cell selection, the default Copy/Select All buttons, and helpers for
+copying, selecting all, and hiding the toolbar:
+
+```dart
+GhosttyTerminalView(
+  controller: ctrl,
+  selectionContextMenuButtonItemsBuilder: (details) {
+    return [
+      ...details.defaultButtonItems,
+      ContextMenuButtonItem(
+        label: 'Explain',
+        onPressed: () {
+          details.hideToolbar();
+          explainTerminalText(details.selectedText);
+        },
+      ),
+    ];
+  },
 )
 ```
 

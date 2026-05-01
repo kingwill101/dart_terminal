@@ -45,7 +45,73 @@ enum GhosttyTerminalInteractionPolicy {
   terminalMouseFirst,
 }
 
+/// Controls how finger drags behave on touch screens.
+enum GhosttyTerminalTouchDragBehavior {
+  /// Finger drags scroll the terminal transcript; long-press selects text.
+  scroll,
+
+  /// Finger drags select text, matching mouse drag behavior.
+  selection,
+}
+
+/// Builds context-menu buttons for an active terminal text selection.
+typedef GhosttyTerminalSelectionContextMenuButtonItemsBuilder =
+    List<ContextMenuButtonItem> Function(
+      GhosttyTerminalSelectionContextMenuDetails details,
+    );
+
+/// Context passed to [GhosttyTerminalSelectionContextMenuButtonItemsBuilder].
+final class GhosttyTerminalSelectionContextMenuDetails {
+  const GhosttyTerminalSelectionContextMenuDetails({
+    required this.selection,
+    required this.selectedText,
+    required this.defaultButtonItems,
+    required this.copySelection,
+    required this.selectAll,
+    required this.hideToolbar,
+  });
+
+  /// Active terminal cell selection.
+  final GhosttyTerminalSelection selection;
+
+  /// Plain text resolved from [selection] using the view's copy options.
+  final String selectedText;
+
+  /// Default Copy and Select All buttons used by [GhosttyTerminalView].
+  final List<ContextMenuButtonItem> defaultButtonItems;
+
+  /// Copies [selectedText] using the view's configured copy behavior.
+  final VoidCallback copySelection;
+
+  /// Replaces the current selection with the full terminal transcript.
+  final VoidCallback selectAll;
+
+  /// Hides the currently visible selection toolbar.
+  final VoidCallback hideToolbar;
+}
+
 const double _terminalHeaderHeight = 28.0;
+const Set<PointerDeviceKind> _mouseLikePointerDevices = <PointerDeviceKind>{
+  PointerDeviceKind.mouse,
+  PointerDeviceKind.stylus,
+  PointerDeviceKind.invertedStylus,
+  PointerDeviceKind.trackpad,
+  PointerDeviceKind.unknown,
+};
+const Set<PointerDeviceKind> _touchPointerDevices = <PointerDeviceKind>{
+  PointerDeviceKind.touch,
+};
+const double _selectionHandleTouchExtent = 44.0;
+const double _selectionHandleVisualRadius = 5.5;
+const double _selectionHandleStemHeight = 10.0;
+const Key _selectionStartHandleKey = ValueKey<String>(
+  'ghostty-terminal-selection-start-handle',
+);
+const Key _selectionEndHandleKey = ValueKey<String>(
+  'ghostty-terminal-selection-end-handle',
+);
+
+enum _TerminalSelectionHandleEdge { start, end }
 
 /// Painter-based terminal widget that renders lines from [GhosttyTerminalController].
 ///
@@ -84,11 +150,14 @@ class GhosttyTerminalView extends StatefulWidget {
     this.copyOptions = const GhosttyTerminalCopyOptions(),
     this.wordBoundaryPolicy = const GhosttyTerminalWordBoundaryPolicy(),
     this.selectionAutoScrollEdgeInset = 28,
+    this.showSelectionContextMenu = true,
+    this.selectionContextMenuButtonItemsBuilder,
     this.scrollbarThickness = 10,
     this.scrollbarMinThumbExtent = 24,
     this.scrollbarThumbColor = const Color(0x66FFFFFF),
     this.scrollbarTrackColor = const Color(0x22000000),
     this.interactionPolicy = GhosttyTerminalInteractionPolicy.auto,
+    this.touchDragBehavior = GhosttyTerminalTouchDragBehavior.scroll,
     this.onSelectionChanged,
     this.onSelectionContentChanged,
     this.onCopySelection,
@@ -191,6 +260,13 @@ class GhosttyTerminalView extends StatefulWidget {
   /// Distance from the viewport edge that triggers auto-scroll during drag selection.
   final double selectionAutoScrollEdgeInset;
 
+  /// Whether touch text selections should show Flutter's adaptive context menu.
+  final bool showSelectionContextMenu;
+
+  /// Builds the buttons shown in the touch selection context menu.
+  final GhosttyTerminalSelectionContextMenuButtonItemsBuilder?
+  selectionContextMenuButtonItemsBuilder;
+
   /// Visual thickness of the optional vertical scrollbar.
   final double scrollbarThickness;
 
@@ -206,6 +282,9 @@ class GhosttyTerminalView extends StatefulWidget {
   /// Controls whether Flutter-side selection or terminal mouse reporting wins
   /// when both could handle the same pointer input.
   final GhosttyTerminalInteractionPolicy interactionPolicy;
+
+  /// Controls whether touch drags scroll the transcript or select text.
+  final GhosttyTerminalTouchDragBehavior touchDragBehavior;
 
   /// Called whenever the active terminal selection changes.
   final ValueChanged<GhosttyTerminalSelection?>? onSelectionChanged;
@@ -248,7 +327,16 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
       _TerminalTextPainterCache(maxEntries: 512);
   final _TerminalTextIntrinsicWidthCache _nativeRunIntrinsicWidthCache =
       _TerminalTextIntrinsicWidthCache(maxEntries: 1024);
+  ContextMenuController? _selectionContextMenuController;
   int _pendingSerialTapCount = 0;
+  PointerDeviceKind _lastPointerKind = PointerDeviceKind.mouse;
+  int? _touchScrollPointer;
+  Offset? _lastTouchScrollPosition;
+  double _touchScrollRemainder = 0;
+  bool _touchSelectionActive = false;
+  bool _touchSelectionHandlesVisible = false;
+  _TerminalSelectionHandleEdge? _selectionHandleDragEdge;
+  Offset? _lastSelectionHandleDragPosition;
   GhosttyTerminalSelection? _wordSelectionAnchor;
   _TerminalSelectionGranularity _dragSelectionGranularity =
       _TerminalSelectionGranularity.cell;
@@ -290,6 +378,11 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
       _lastReportedCols = -1;
       _lastReportedRows = -1;
       _scrollOffsetLines = 0;
+      _setSelection(null);
+      _removeSelectionContextMenu();
+      _touchSelectionHandlesVisible = false;
+      _selectionHandleDragEdge = null;
+      _lastSelectionHandleDragPosition = null;
       _selectionSession.reset();
       _autoScrollSession.reset();
     }
@@ -316,10 +409,15 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
         onSelectionContentChanged: widget.onSelectionContentChanged,
       );
     }
+    if (oldWidget.showSelectionContextMenu &&
+        !widget.showSelectionContextMenu) {
+      _removeSelectionContextMenu();
+    }
   }
 
   @override
   void dispose() {
+    _removeSelectionContextMenu();
     _stopAutoScroll();
     widget.controller.removeListener(_onControllerChanged);
     _scrollController.removeListener(_onScrollControllerChanged);
@@ -420,7 +518,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     )) {
       final selection = widget.controller.snapshot.selectAllSelection();
       if (selection != null) {
-        _setSelection(selection);
+        _setSelection(selection, touchSelectionHandlesVisible: false);
         return KeyEventResult.handled;
       }
     }
@@ -441,9 +539,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     if (key != null) {
       _jumpToLiveBottom();
       if (_selection != null) {
-        if (_selectionSession.updateSelection(null)) {
-          setState(() {});
-        }
+        _setSelection(null);
       }
       // Special keys are encoded from the key enum/modifier state alone.
       // Forwarding printable text metadata here breaks keys like backspace.
@@ -462,9 +558,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     if (character.isNotEmpty) {
       _jumpToLiveBottom();
       if (_selection != null) {
-        if (_selectionSession.updateSelection(null)) {
-          setState(() {});
-        }
+        _setSelection(null);
       }
       final sent = widget.controller.write(character);
       return sent ? KeyEventResult.handled : KeyEventResult.ignored;
@@ -473,9 +567,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     if (controlText != null && controlText.isNotEmpty) {
       _jumpToLiveBottom();
       if (_selection != null) {
-        if (_selectionSession.updateSelection(null)) {
-          setState(() {});
-        }
+        _setSelection(null);
       }
       final sent = widget.controller.write(controlText);
       return sent ? KeyEventResult.handled : KeyEventResult.ignored;
@@ -589,10 +681,21 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     );
   }
 
-  void _setSelection(GhosttyTerminalSelection? selection) {
+  void _setSelection(
+    GhosttyTerminalSelection? selection, {
+    bool? touchSelectionHandlesVisible,
+  }) {
     final previousSelection = _selection;
     if (!_selectionSession.updateSelection(selection)) {
       return;
+    }
+    if (selection == null) {
+      _removeSelectionContextMenu();
+      _touchSelectionHandlesVisible = false;
+      _selectionHandleDragEdge = null;
+      _lastSelectionHandleDragPosition = null;
+    } else if (touchSelectionHandlesVisible != null) {
+      _touchSelectionHandlesVisible = touchSelectionHandlesVisible;
     }
     setState(() {});
     ghosttyTerminalNotifySelectionChange<GhosttyTerminalSelection>(
@@ -602,6 +705,382 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
       onSelectionChanged: widget.onSelectionChanged,
       onSelectionContentChanged: widget.onSelectionContentChanged,
     );
+  }
+
+  void _removeSelectionContextMenu() {
+    _selectionContextMenuController?.remove();
+    _selectionContextMenuController = null;
+  }
+
+  void _showSelectionContextMenu({
+    required Size size,
+    required _TerminalMetrics metrics,
+    Offset? fallbackLocalPosition,
+  }) {
+    if (!widget.showSelectionContextMenu || !mounted) {
+      return;
+    }
+    final selection = _selection;
+    if (selection == null || _resolveSelectionText(selection).isEmpty) {
+      _removeSelectionContextMenu();
+      return;
+    }
+
+    final controller = ContextMenuController();
+    _selectionContextMenuController = controller;
+    controller.show(
+      context: context,
+      contextMenuBuilder: (context) => AdaptiveTextSelectionToolbar.buttonItems(
+        anchors: _selectionContextMenuAnchors(
+          size,
+          metrics,
+          fallbackLocalPosition: fallbackLocalPosition,
+        ),
+        buttonItems: _selectionContextMenuButtonItems(),
+      ),
+    );
+  }
+
+  void _scheduleSelectionContextMenu({
+    required Size size,
+    required _TerminalMetrics metrics,
+    Offset? fallbackLocalPosition,
+  }) {
+    if (!widget.showSelectionContextMenu) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _selection == null) {
+        return;
+      }
+      _showSelectionContextMenu(
+        size: size,
+        metrics: metrics,
+        fallbackLocalPosition: fallbackLocalPosition,
+      );
+    });
+  }
+
+  List<ContextMenuButtonItem> _selectionContextMenuButtonItems() {
+    final selection = _selection;
+    if (selection == null) {
+      return const <ContextMenuButtonItem>[];
+    }
+    final selectedText = _resolveSelectionText(selection);
+    final defaultButtonItems = List<ContextMenuButtonItem>.unmodifiable(
+      _defaultSelectionContextMenuButtonItems(),
+    );
+    final builder = widget.selectionContextMenuButtonItemsBuilder;
+    if (builder == null) {
+      return defaultButtonItems;
+    }
+    return builder(
+      GhosttyTerminalSelectionContextMenuDetails(
+        selection: selection,
+        selectedText: selectedText,
+        defaultButtonItems: defaultButtonItems,
+        copySelection: _copySelectionFromContextMenu,
+        selectAll: _selectAllFromContextMenu,
+        hideToolbar: _removeSelectionContextMenu,
+      ),
+    );
+  }
+
+  List<ContextMenuButtonItem> _defaultSelectionContextMenuButtonItems() {
+    return <ContextMenuButtonItem>[
+      ContextMenuButtonItem(
+        type: ContextMenuButtonType.copy,
+        onPressed: _copySelectionFromContextMenu,
+      ),
+      ContextMenuButtonItem(
+        type: ContextMenuButtonType.selectAll,
+        onPressed: _selectAllFromContextMenu,
+      ),
+    ];
+  }
+
+  void _copySelectionFromContextMenu() {
+    final text = _selectionText();
+    _removeSelectionContextMenu();
+    if (text.isNotEmpty) {
+      unawaited(_copySelection(text));
+    }
+  }
+
+  void _selectAllFromContextMenu() {
+    _removeSelectionContextMenu();
+    final selection = widget.controller.snapshot.selectAllSelection();
+    if (selection != null) {
+      _setSelection(selection);
+    }
+  }
+
+  TextSelectionToolbarAnchors _selectionContextMenuAnchors(
+    Size size,
+    _TerminalMetrics metrics, {
+    Offset? fallbackLocalPosition,
+  }) {
+    final renderObject = context.findRenderObject();
+    final renderBox = renderObject is RenderBox ? renderObject : null;
+    final fallback = fallbackLocalPosition ?? Offset(size.width / 2, 0);
+    if (renderBox == null || !renderBox.hasSize) {
+      return TextSelectionToolbarAnchors(primaryAnchor: fallback);
+    }
+
+    final selectionRect =
+        _selectionRectForContextMenu(size, metrics) ??
+        Rect.fromCenter(
+          center: fallback,
+          width: metrics.charWidth,
+          height: metrics.linePixels,
+        );
+    return TextSelectionToolbarAnchors(
+      primaryAnchor: renderBox.localToGlobal(selectionRect.topCenter),
+      secondaryAnchor: renderBox.localToGlobal(selectionRect.bottomCenter),
+    );
+  }
+
+  Rect? _selectionRectForContextMenu(Size size, _TerminalMetrics metrics) {
+    final selection = _selection;
+    if (selection == null) {
+      return null;
+    }
+    final viewport = _viewportFor(size, metrics);
+    final visibleStart = viewport.startLine;
+    final visibleEnd = viewport.startLine + viewport.maxVisible - 1;
+    final normalized = selection.normalized;
+    final startRow = normalized.start.row.clamp(visibleStart, visibleEnd);
+    final endRow = normalized.end.row.clamp(visibleStart, visibleEnd);
+    if (endRow < visibleStart || startRow > visibleEnd || startRow > endRow) {
+      return null;
+    }
+
+    final isMultiLine = normalized.start.row != normalized.end.row;
+    final contentLeft = widget.padding.left;
+    final contentRight = size.width - widget.padding.right;
+    final left = isMultiLine
+        ? contentLeft
+        : contentLeft + normalized.start.col * metrics.charWidth;
+    final right = isMultiLine
+        ? contentRight
+        : contentLeft + (normalized.end.col + 1) * metrics.charWidth;
+    final top =
+        viewport.contentTop +
+        (startRow - viewport.startLine) * metrics.linePixels;
+    final bottom =
+        viewport.contentTop +
+        (endRow - viewport.startLine + 1) * metrics.linePixels;
+
+    return Rect.fromLTRB(
+      left.clamp(contentLeft, contentRight),
+      top.clamp(
+        viewport.contentTop,
+        viewport.contentTop + viewport.contentHeight,
+      ),
+      right.clamp(contentLeft, contentRight),
+      bottom.clamp(
+        viewport.contentTop,
+        viewport.contentTop + viewport.contentHeight,
+      ),
+    );
+  }
+
+  Widget _buildSelectionHandleOverlay(
+    Size size,
+    _TerminalMetrics metrics,
+    _TerminalViewport viewport,
+  ) {
+    if (!_touchSelectionHandlesVisible || _selection == null) {
+      return const SizedBox.shrink();
+    }
+
+    final start = _selectionEndpointOffset(
+      _TerminalSelectionHandleEdge.start,
+      metrics,
+      viewport,
+    );
+    final end = _selectionEndpointOffset(
+      _TerminalSelectionHandleEdge.end,
+      metrics,
+      viewport,
+    );
+    if (start == null && end == null) {
+      return const SizedBox.shrink();
+    }
+
+    return Positioned.fill(
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          if (start != null)
+            _buildSelectionHandle(
+              edge: _TerminalSelectionHandleEdge.start,
+              center: start,
+              size: size,
+              metrics: metrics,
+            ),
+          if (end != null)
+            _buildSelectionHandle(
+              edge: _TerminalSelectionHandleEdge.end,
+              center: end,
+              size: size,
+              metrics: metrics,
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSelectionHandle({
+    required _TerminalSelectionHandleEdge edge,
+    required Offset center,
+    required Size size,
+    required _TerminalMetrics metrics,
+  }) {
+    return Positioned(
+      left: center.dx - _selectionHandleTouchExtent / 2,
+      top: center.dy - _selectionHandleVisualRadius,
+      width: _selectionHandleTouchExtent,
+      height: _selectionHandleTouchExtent,
+      child: GestureDetector(
+        key: edge == _TerminalSelectionHandleEdge.start
+            ? _selectionStartHandleKey
+            : _selectionEndHandleKey,
+        supportedDevices: _touchPointerDevices,
+        behavior: HitTestBehavior.translucent,
+        onPanStart: (details) {
+          final localPosition = _terminalLocalFromGlobal(
+            details.globalPosition,
+          );
+          if (localPosition != null) {
+            _beginSelectionHandleDrag(edge, localPosition, size, metrics);
+          }
+        },
+        onPanUpdate: (details) {
+          final localPosition = _terminalLocalFromGlobal(
+            details.globalPosition,
+          );
+          if (localPosition != null) {
+            _updateSelectionHandleDrag(localPosition, size, metrics);
+          }
+        },
+        onPanEnd: (_) => _endSelectionHandleDrag(size, metrics),
+        onPanCancel: () => _endSelectionHandleDrag(size, metrics),
+        child: CustomPaint(
+          painter: _TerminalSelectionHandlePainter(color: widget.cursorColor),
+        ),
+      ),
+    );
+  }
+
+  Offset? _terminalLocalFromGlobal(Offset globalPosition) {
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) {
+      return null;
+    }
+    return renderObject.globalToLocal(globalPosition);
+  }
+
+  Offset? _selectionEndpointOffset(
+    _TerminalSelectionHandleEdge edge,
+    _TerminalMetrics metrics,
+    _TerminalViewport viewport,
+  ) {
+    final selection = _selection?.normalized;
+    if (selection == null) {
+      return null;
+    }
+    final position = edge == _TerminalSelectionHandleEdge.start
+        ? selection.start
+        : selection.end;
+    if (position.row < viewport.startLine ||
+        position.row >= viewport.startLine + viewport.maxVisible) {
+      return null;
+    }
+
+    final rawX = edge == _TerminalSelectionHandleEdge.start
+        ? widget.padding.left + position.col * metrics.charWidth
+        : widget.padding.left + (position.col + 1) * metrics.charWidth;
+    final minX = widget.padding.left;
+    final maxX = math.max(minX, _lastReportedCols * metrics.charWidth + minX);
+    final y =
+        viewport.contentTop +
+        (position.row - viewport.startLine + 1) * metrics.linePixels;
+    return Offset(rawX.clamp(minX, maxX), y);
+  }
+
+  void _beginSelectionHandleDrag(
+    _TerminalSelectionHandleEdge edge,
+    Offset localPosition,
+    Size size,
+    _TerminalMetrics metrics,
+  ) {
+    if (_selection == null || _currentPointerUsesTerminalMouse) {
+      return;
+    }
+    _removeSelectionContextMenu();
+    _selectionHandleDragEdge = edge;
+    _lastSelectionHandleDragPosition = localPosition;
+    _touchSelectionActive = true;
+    _touchSelectionHandlesVisible = true;
+    _dragSelectionGranularity = _TerminalSelectionGranularity.cell;
+    _updateSelectionHandleDrag(localPosition, size, metrics);
+  }
+
+  void _updateSelectionHandleDrag(
+    Offset localPosition,
+    Size size,
+    _TerminalMetrics metrics,
+  ) {
+    final position = _positionForOffset(
+      localPosition,
+      size,
+      metrics,
+      clampToViewport: true,
+    );
+    final selection = _selectionForHandleDragPosition(position);
+    if (selection == null) {
+      return;
+    }
+    _lastSelectionHandleDragPosition = localPosition;
+    _setSelection(selection, touchSelectionHandlesVisible: true);
+    _syncAutoScroll(localPosition, size, metrics);
+  }
+
+  GhosttyTerminalSelection? _selectionForHandleDragPosition(
+    GhosttyTerminalCellPosition? position,
+  ) {
+    final edge = _selectionHandleDragEdge;
+    final current = _selection?.normalized;
+    if (edge == null || current == null || position == null) {
+      return null;
+    }
+    return switch (edge) {
+      _TerminalSelectionHandleEdge.start => GhosttyTerminalSelection(
+        base: position,
+        extent: current.end,
+      ),
+      _TerminalSelectionHandleEdge.end => GhosttyTerminalSelection(
+        base: current.start,
+        extent: position,
+      ),
+    };
+  }
+
+  void _endSelectionHandleDrag(Size size, _TerminalMetrics metrics) {
+    final localPosition = _lastSelectionHandleDragPosition;
+    _selectionHandleDragEdge = null;
+    _lastSelectionHandleDragPosition = null;
+    _touchSelectionActive = false;
+    _stopAutoScroll();
+    if (_selection != null) {
+      _touchSelectionHandlesVisible = true;
+      _scheduleSelectionContextMenu(
+        size: size,
+        metrics: metrics,
+        fallbackLocalPosition: localPosition,
+      );
+    }
   }
 
   _TerminalMetrics _measureMetrics() {
@@ -745,6 +1224,30 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     return null;
   }
 
+  GhosttyMouseButton? _mouseButtonForEvent(
+    GhosttyMouseAction action,
+    PointerEvent event,
+    GhosttyMouseButton? explicitButton,
+  ) {
+    if (explicitButton != null) {
+      return explicitButton;
+    }
+    final button = _mouseButtonFromButtons(event.buttons);
+    if (button != null) {
+      return button;
+    }
+    if (event.kind == PointerDeviceKind.touch &&
+        action != GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_MOTION) {
+      return GhosttyMouseButton.GHOSTTY_MOUSE_BUTTON_LEFT;
+    }
+    return null;
+  }
+
+  bool _eventHasPressedButton(GhosttyMouseAction action, PointerEvent event) {
+    return event.buttons != 0 ||
+        action == GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_PRESS;
+  }
+
   bool get _terminalMouseReportingEnabled => switch (widget.interactionPolicy) {
     GhosttyTerminalInteractionPolicy.selectionFirst => false,
     GhosttyTerminalInteractionPolicy.terminalMouseFirst => true,
@@ -798,6 +1301,29 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     return GhosttyMouseFormat.GHOSTTY_MOUSE_FORMAT_X10;
   }
 
+  bool _terminalMouseReportingCapturesPointerKind(PointerDeviceKind kind) {
+    if (!_terminalMouseReportingEnabled) {
+      return false;
+    }
+    return kind != PointerDeviceKind.touch ||
+        widget.interactionPolicy ==
+            GhosttyTerminalInteractionPolicy.terminalMouseFirst;
+  }
+
+  bool get _currentPointerUsesTerminalMouse =>
+      _terminalMouseReportingCapturesPointerKind(_lastPointerKind);
+
+  Set<PointerDeviceKind> get _selectionDragDevices {
+    if (widget.touchDragBehavior ==
+        GhosttyTerminalTouchDragBehavior.selection) {
+      return const <PointerDeviceKind>{
+        ..._mouseLikePointerDevices,
+        ..._touchPointerDevices,
+      };
+    }
+    return _mouseLikePointerDevices;
+  }
+
   void _sendMouseEvent(
     GhosttyMouseAction action,
     PointerEvent event,
@@ -805,7 +1331,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     _TerminalMetrics metrics, {
     GhosttyMouseButton? button,
   }) {
-    if (!_terminalMouseReportingEnabled) {
+    if (!_terminalMouseReportingCapturesPointerKind(event.kind)) {
       return;
     }
 
@@ -815,13 +1341,13 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     );
     widget.controller.sendMouse(
       action: action,
-      button: button ?? _mouseButtonFromButtons(event.buttons),
+      button: _mouseButtonForEvent(action, event, button),
       mods: GhosttyTerminalModifierState.fromHardwareKeyboard().ghosttyMask,
       position: VtMousePosition(x: event.localPosition.dx, y: terminalLocalY),
       size: _mouseEncoderSize(size, metrics),
       trackingMode: _terminalMouseTrackingMode,
       format: _terminalMouseFormat,
-      anyButtonPressed: event.buttons != 0,
+      anyButtonPressed: _eventHasPressedButton(action, event),
       trackLastCell: true,
     );
   }
@@ -1041,6 +1567,8 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     if (resetSelectionGestureState) {
       _dragSelectionGranularity = _TerminalSelectionGranularity.cell;
       _wordSelectionAnchor = null;
+      _selectionHandleDragEdge = null;
+      _lastSelectionHandleDragPosition = null;
       _pendingSerialTapCount = 0;
     }
   }
@@ -1104,10 +1632,17 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
       0,
       _maxScrollOffset(size, metrics),
     );
+    if (nextOffset == _scrollOffsetLines) {
+      _stopAutoScroll(
+        clearLineSelectionAnchor: false,
+        resetSelectionGestureState: false,
+      );
+      return;
+    }
     final position = _positionForOffset(
       Offset(
         localPosition.dx,
-        direction < 0
+        direction > 0
             ? viewport.contentTop + 1
             : viewport.contentTop + viewport.contentHeight - 1,
       ),
@@ -1127,23 +1662,33 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     }
 
     final lineSelectionAnchorRow = _lineSelectionAnchorRow;
-    final nextSelection = switch (_dragSelectionGranularity) {
-      _TerminalSelectionGranularity.word => _extendWordSelection(position),
-      _TerminalSelectionGranularity.line =>
-        lineSelectionAnchorRow == null
-            ? GhosttyTerminalSelection(base: current.base, extent: position)
-            : _resolveLineSelectionBetweenRows(
-                lineSelectionAnchorRow,
-                position.row,
-              ),
-      _TerminalSelectionGranularity.cell =>
-        lineSelectionAnchorRow == null
-            ? GhosttyTerminalSelection(base: current.base, extent: position)
-            : _resolveLineSelectionBetweenRows(
-                lineSelectionAnchorRow,
-                position.row,
-              ),
-    };
+    final nextSelection = _selectionHandleDragEdge == null
+        ? switch (_dragSelectionGranularity) {
+            _TerminalSelectionGranularity.word => _extendWordSelection(
+              position,
+            ),
+            _TerminalSelectionGranularity.line =>
+              lineSelectionAnchorRow == null
+                  ? GhosttyTerminalSelection(
+                      base: current.base,
+                      extent: position,
+                    )
+                  : _resolveLineSelectionBetweenRows(
+                      lineSelectionAnchorRow,
+                      position.row,
+                    ),
+            _TerminalSelectionGranularity.cell =>
+              lineSelectionAnchorRow == null
+                  ? GhosttyTerminalSelection(
+                      base: current.base,
+                      extent: position,
+                    )
+                  : _resolveLineSelectionBetweenRows(
+                      lineSelectionAnchorRow,
+                      position.row,
+                    ),
+          }
+        : _selectionForHandleDragPosition(position);
     if (nextSelection == null) {
       _stopAutoScroll();
       return;
@@ -1188,6 +1733,63 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     );
   }
 
+  void _requestTerminalFocus() {
+    if (widget.focusOnInteraction && !_focusNode.hasFocus) {
+      FocusScope.of(context).requestFocus(_focusNode);
+    }
+  }
+
+  bool _touchPointerShouldScroll(PointerEvent event) {
+    return event.kind == PointerDeviceKind.touch &&
+        widget.touchDragBehavior == GhosttyTerminalTouchDragBehavior.scroll &&
+        !_terminalMouseReportingCapturesPointerKind(event.kind);
+  }
+
+  void _startTouchScroll(PointerDownEvent event) {
+    if (!_touchPointerShouldScroll(event)) {
+      return;
+    }
+    _touchScrollPointer = event.pointer;
+    _lastTouchScrollPosition = event.localPosition;
+    _touchScrollRemainder = 0;
+    _touchSelectionActive = false;
+  }
+
+  void _updateTouchScroll(
+    PointerMoveEvent event,
+    Size size,
+    _TerminalMetrics metrics,
+  ) {
+    if (event.pointer != _touchScrollPointer || _touchSelectionActive) {
+      return;
+    }
+
+    final previous = _lastTouchScrollPosition;
+    _lastTouchScrollPosition = event.localPosition;
+    if (previous == null) {
+      return;
+    }
+
+    final delta = event.localPosition.dy - previous.dy + _touchScrollRemainder;
+    final deltaLines = (delta / metrics.linePixels).truncate();
+    _touchScrollRemainder = delta - deltaLines * metrics.linePixels;
+    if (deltaLines == 0) {
+      return;
+    }
+
+    _setScrollOffsetLines(_scrollOffsetLines - deltaLines, size, metrics);
+  }
+
+  void _endTouchScroll(PointerEvent event) {
+    if (event.pointer != _touchScrollPointer) {
+      return;
+    }
+    _touchScrollPointer = null;
+    _lastTouchScrollPosition = null;
+    _touchScrollRemainder = 0;
+    _touchSelectionActive = false;
+  }
+
   void _handleSerialTapUp(
     SerialTapUpDetails details,
     Size size,
@@ -1207,10 +1809,8 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
 
   void _handleTapUp(Offset localPosition, Size size, _TerminalMetrics metrics) {
     widget.onTapTerminal?.call();
-    if (widget.focusOnInteraction) {
-      FocusScope.of(context).requestFocus(_focusNode);
-    }
-    if (_terminalMouseReportingEnabled) {
+    _requestTerminalFocus();
+    if (_currentPointerUsesTerminalMouse) {
       return;
     }
     final position = _positionForOffset(localPosition, size, metrics);
@@ -1262,7 +1862,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     Size size,
     _TerminalMetrics metrics,
   ) {
-    if (_terminalMouseReportingEnabled) {
+    if (_currentPointerUsesTerminalMouse) {
       return;
     }
     if (_pendingSerialTapCount >= 3) {
@@ -1272,6 +1872,9 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     if (_pendingSerialTapCount == 2) {
       _beginWordSelectionDrag(localPosition, size, metrics);
       return;
+    }
+    if (_selection != null) {
+      _selectionSession.resetIgnoreNextTapClear();
     }
     final position = _positionForOffset(localPosition, size, metrics);
     final selection = _gestureCoordinator.beginSelection(
@@ -1285,10 +1888,8 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     _stopAutoScroll();
     _wordSelectionAnchor = null;
     _dragSelectionGranularity = _TerminalSelectionGranularity.cell;
-    if (widget.focusOnInteraction) {
-      FocusScope.of(context).requestFocus(_focusNode);
-    }
-    _setSelection(selection);
+    _requestTerminalFocus();
+    _setSelection(selection, touchSelectionHandlesVisible: false);
   }
 
   void _beginWordSelectionDrag(
@@ -1307,10 +1908,18 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     _stopAutoScroll();
     _wordSelectionAnchor = selection.normalized;
     _dragSelectionGranularity = _TerminalSelectionGranularity.word;
-    if (widget.focusOnInteraction) {
-      FocusScope.of(context).requestFocus(_focusNode);
+    _requestTerminalFocus();
+    _setSelection(
+      selection,
+      touchSelectionHandlesVisible: _lastPointerKind == PointerDeviceKind.touch,
+    );
+    if (_lastPointerKind == PointerDeviceKind.touch) {
+      _scheduleSelectionContextMenu(
+        size: size,
+        metrics: metrics,
+        fallbackLocalPosition: localPosition,
+      );
     }
-    _setSelection(selection);
   }
 
   void _updateSelection(
@@ -1318,7 +1927,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     Size size,
     _TerminalMetrics metrics,
   ) {
-    if (_terminalMouseReportingEnabled) {
+    if (_currentPointerUsesTerminalMouse) {
       return;
     }
     final position = _positionForOffset(
@@ -1382,11 +1991,11 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
   }
 
   void _selectWord(Offset localPosition, Size size, _TerminalMetrics metrics) {
-    if (_terminalMouseReportingEnabled) {
+    if (_currentPointerUsesTerminalMouse) {
       return;
     }
     final position = _positionForOffset(localPosition, size, metrics);
-    final selection = _gestureCoordinator.selectWord(
+    final selection = _gestureCoordinator.completeWordSelection(
       position: position,
       resolveWordSelection: _resolveWordSelectionAt,
     );
@@ -1396,10 +2005,11 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     _stopAutoScroll();
     _wordSelectionAnchor = selection.normalized;
     _dragSelectionGranularity = _TerminalSelectionGranularity.word;
-    if (widget.focusOnInteraction) {
-      FocusScope.of(context).requestFocus(_focusNode);
-    }
-    _setSelection(selection);
+    _requestTerminalFocus();
+    _setSelection(
+      selection,
+      touchSelectionHandlesVisible: _lastPointerKind == PointerDeviceKind.touch,
+    );
   }
 
   void _beginLineSelection(
@@ -1407,7 +2017,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     Size size,
     _TerminalMetrics metrics,
   ) {
-    if (_terminalMouseReportingEnabled) {
+    if (_currentPointerUsesTerminalMouse) {
       return;
     }
     final position = _positionForOffset(localPosition, size, metrics);
@@ -1423,8 +2033,60 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     _stopAutoScroll();
     _wordSelectionAnchor = null;
     _dragSelectionGranularity = _TerminalSelectionGranularity.line;
-    _setSelection(selection);
+    if (_lastPointerKind == PointerDeviceKind.touch) {
+      _touchSelectionActive = true;
+    }
+    _requestTerminalFocus();
+    _setSelection(
+      selection,
+      touchSelectionHandlesVisible: _lastPointerKind == PointerDeviceKind.touch,
+    );
+    if (_lastPointerKind == PointerDeviceKind.touch) {
+      _scheduleSelectionContextMenu(
+        size: size,
+        metrics: metrics,
+        fallbackLocalPosition: localPosition,
+      );
+    }
     _syncAutoScroll(localPosition, size, metrics);
+  }
+
+  Widget _buildPointerGestureLayer({
+    required Size size,
+    required _TerminalMetrics metrics,
+    required Widget child,
+  }) {
+    Widget result = child;
+
+    if (widget.touchDragBehavior == GhosttyTerminalTouchDragBehavior.scroll) {
+      result = GestureDetector(
+        supportedDevices: _touchPointerDevices,
+        behavior: HitTestBehavior.opaque,
+        onLongPressStart: (details) =>
+            _beginLineSelection(details.localPosition, size, metrics),
+        onLongPressMoveUpdate: (details) =>
+            _updateSelection(details.localPosition, size, metrics),
+        onLongPressEnd: (_) => _stopAutoScroll(),
+        child: result,
+      );
+    }
+
+    return GestureDetector(
+      supportedDevices: _selectionDragDevices,
+      behavior: HitTestBehavior.opaque,
+      onLongPressStart: (details) =>
+          _beginLineSelection(details.localPosition, size, metrics),
+      onLongPressMoveUpdate: (details) =>
+          _updateSelection(details.localPosition, size, metrics),
+      onLongPressEnd: (_) => _stopAutoScroll(),
+      onPanDown: (details) =>
+          _beginSelection(details.localPosition, size, metrics),
+      onPanUpdate: (details) =>
+          _updateSelection(details.localPosition, size, metrics),
+      onPanEnd: (_) => _stopAutoScroll(),
+      onPanCancel: _stopAutoScroll,
+      child: result,
+    );
   }
 
   @override
@@ -1467,24 +2129,44 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
               );
             },
             child: Listener(
-              onPointerDown: (event) => _sendMouseEvent(
-                GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_PRESS,
-                event,
-                size,
-                metrics,
-              ),
-              onPointerMove: (event) => _sendMouseEvent(
-                GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_MOTION,
-                event,
-                size,
-                metrics,
-              ),
-              onPointerUp: (event) => _sendMouseEvent(
-                GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_RELEASE,
-                event,
-                size,
-                metrics,
-              ),
+              onPointerDown: (event) {
+                _lastPointerKind = event.kind;
+                _startTouchScroll(event);
+                _requestTerminalFocus();
+                _sendMouseEvent(
+                  GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_PRESS,
+                  event,
+                  size,
+                  metrics,
+                );
+              },
+              onPointerMove: (event) {
+                _updateTouchScroll(event, size, metrics);
+                _sendMouseEvent(
+                  GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_MOTION,
+                  event,
+                  size,
+                  metrics,
+                );
+              },
+              onPointerUp: (event) {
+                _endTouchScroll(event);
+                _sendMouseEvent(
+                  GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_RELEASE,
+                  event,
+                  size,
+                  metrics,
+                );
+              },
+              onPointerCancel: (event) {
+                _endTouchScroll(event);
+                _sendMouseEvent(
+                  GhosttyMouseAction.GHOSTTY_MOUSE_ACTION_RELEASE,
+                  event,
+                  size,
+                  metrics,
+                );
+              },
               onPointerSignal: (event) =>
                   _handlePointerSignal(event, size, metrics),
               child: RawGestureDetector(
@@ -1499,19 +2181,9 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
                             _handleSerialTapUp(details, size, metrics);
                       }),
                 },
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onLongPressStart: (details) =>
-                      _beginLineSelection(details.localPosition, size, metrics),
-                  onLongPressMoveUpdate: (details) =>
-                      _updateSelection(details.localPosition, size, metrics),
-                  onLongPressEnd: (_) => _stopAutoScroll(),
-                  onPanDown: (details) =>
-                      _beginSelection(details.localPosition, size, metrics),
-                  onPanUpdate: (details) =>
-                      _updateSelection(details.localPosition, size, metrics),
-                  onPanEnd: (_) => _stopAutoScroll(),
-                  onPanCancel: _stopAutoScroll,
+                child: _buildPointerGestureLayer(
+                  size: size,
+                  metrics: metrics,
                   child: Stack(
                     children: [
                       if (widget.showHeader)
@@ -1562,6 +2234,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
                           child: const SizedBox.expand(),
                         ),
                       ),
+                      _buildSelectionHandleOverlay(size, metrics, viewport),
                       _buildScrollbarOverlay(size, metrics, viewport),
                     ],
                   ),
@@ -1928,6 +2601,41 @@ final class _RenderSnapshotLogicalSegment {
   final List<String> cells;
   final Map<int, int> rowCellOffsets;
   final Map<int, int> rowCellCounts;
+}
+
+class _TerminalSelectionHandlePainter extends CustomPainter {
+  const _TerminalSelectionHandlePainter({required this.color});
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final centerX = size.width / 2;
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+    final strokePaint = Paint()
+      ..color = color
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = 2;
+    final stemTop = _selectionHandleVisualRadius;
+    final stemBottom = stemTop + _selectionHandleStemHeight;
+    canvas.drawLine(
+      Offset(centerX, stemTop),
+      Offset(centerX, stemBottom),
+      strokePaint,
+    );
+    canvas.drawCircle(
+      Offset(centerX, stemBottom + _selectionHandleVisualRadius),
+      _selectionHandleVisualRadius,
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _TerminalSelectionHandlePainter oldDelegate) {
+    return oldDelegate.color != color;
+  }
 }
 
 class _GhosttyTerminalPainter extends CustomPainter {
