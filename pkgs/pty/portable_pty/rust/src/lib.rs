@@ -1,7 +1,8 @@
 //! libportable-pty — Cross-platform PTY + process-spawn library.
 //!
 //! Exposes a C API wrapping the `portable-pty` crate from wezterm.
-//! Supports Linux, macOS, and Windows (ConPTY).
+//! Supports Linux, macOS, Windows (ConPTY), Android, and iOS targets where the
+//! platform sandbox permits local process spawning.
 //!
 //! ## SIGCHLD handling
 //!

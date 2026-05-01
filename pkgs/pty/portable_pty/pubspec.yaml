@@ -1,9 +1,9 @@
 name: portable_pty
 description: >-
   Cross-platform pseudo-terminal (PTY) for Dart.
-  Spawns shell subprocesses on Linux, macOS, and Windows via a Rust
-  native library. On web, connects through WebSocket or WebTransport
-  to a remote PTY server.
+  Spawns shell subprocesses on Linux, macOS, Windows, and Android, links native
+  assets into supported iOS builds, and connects through WebSocket or
+  WebTransport to a remote PTY server on web.
 version: 0.0.4
 
 repository: https://github.com/kingwill101/dart_terminal/tree/master/pkgs/pty/portable_pty

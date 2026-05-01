@@ -6,6 +6,7 @@ import 'package:hooks/hooks.dart';
 import 'package:native_toolchain_rust/native_toolchain_rust.dart';
 import 'package:path/path.dart' as p;
 
+import 'package:portable_pty/src/hook/artifacts.dart';
 import 'package:portable_pty/src/hook/asset_hashes.dart';
 
 const _repo = 'kingwill101/dart_terminal';
@@ -21,8 +22,9 @@ void main(List<String> args) async {
     }
 
     final code = input.config.code;
-    final dylibName = code.targetOS.dylibFileName('portable_pty_rs');
-    final bundledLibUri = input.outputDirectory.resolve(dylibName);
+    final linkMode = portablePtyLinkModeForBuild(code);
+    final libraryName = portablePtyLibraryNameForBuild(code);
+    final bundledLibUri = input.outputDirectory.resolve(libraryName);
 
     // ── 1. Try env var ──
     final envPath = Platform.environment['PORTABLE_PTY_PREBUILT'];
@@ -31,27 +33,26 @@ void main(List<String> args) async {
       if (f.existsSync()) {
         _info('Using prebuilt PTY library from env: ${f.path}');
         await f.copy(File.fromUri(bundledLibUri).path);
-        _addAsset(output, input.packageName, bundledLibUri);
+        _addAsset(output, input.packageName, bundledLibUri, linkMode);
         return;
       }
     }
 
-    final platformLabel = _platformLabel(
-      code.targetOS,
-      code.targetArchitecture,
-    );
+    final platformLabel = portablePtyPlatformLabelForBuild(code);
 
     // ── 2. Try .prebuilt/ directory (manual or setup script) ──
-    final prebuilt = _findLocalPrebuilt(input, platformLabel, dylibName);
+    final prebuilt = _findLocalPrebuilt(input, platformLabel, libraryName);
     if (prebuilt != null) {
       _info('Using prebuilt PTY library: ${prebuilt.path}');
       await prebuilt.copy(File.fromUri(bundledLibUri).path);
-      _addAsset(output, input.packageName, bundledLibUri);
+      _addAsset(output, input.packageName, bundledLibUri, linkMode);
       return;
     }
 
     // ── 3. Auto-download from GitHub releases ──
-    final assetInfo = assetHashes[platformLabel];
+    final assetInfo = _canDownloadPrebuilt(code.targetOS, linkMode)
+        ? assetHashes[platformLabel]
+        : null;
     if (assetInfo != null) {
       _info(
         'Downloading prebuilt PTY library for $platformLabel '
@@ -61,12 +62,12 @@ void main(List<String> args) async {
         final downloaded = await _downloadPrebuilt(
           input,
           platformLabel,
-          dylibName,
+          libraryName,
           assetInfo,
         );
         _info('Using downloaded PTY library: ${downloaded.path}');
         await downloaded.copy(File.fromUri(bundledLibUri).path);
-        _addAsset(output, input.packageName, bundledLibUri);
+        _addAsset(output, input.packageName, bundledLibUri, linkMode);
         return;
       } on Exception catch (e) {
         _warn('Download failed: $e');
@@ -82,12 +83,24 @@ void main(List<String> args) async {
   });
 }
 
-void _addAsset(BuildOutputBuilder output, String packageName, Uri file) {
+bool _canDownloadPrebuilt(OS targetOS, LinkMode linkMode) {
+  if (targetOS == OS.iOS) {
+    return linkMode is StaticLinking;
+  }
+  return linkMode is DynamicLoadingBundled;
+}
+
+void _addAsset(
+  BuildOutputBuilder output,
+  String packageName,
+  Uri file,
+  LinkMode linkMode,
+) {
   output.assets.code.add(
     CodeAsset(
       package: packageName,
       name: 'portable_pty_bindings_generated.dart',
-      linkMode: DynamicLoadingBundled(),
+      linkMode: linkMode,
       file: file,
     ),
   );
@@ -102,7 +115,7 @@ void _addAsset(BuildOutputBuilder output, String packageName, Uri file) {
 Future<File> _downloadPrebuilt(
   BuildInput input,
   String platformLabel,
-  String dylibName,
+  String libraryName,
   AssetHash assetInfo,
 ) async {
   // Use a stable cache directory keyed by platform + release tag.
@@ -114,7 +127,7 @@ Future<File> _downloadPrebuilt(
     cacheDir.createSync(recursive: true);
   }
 
-  final cachedFile = File(p.join(cacheDir.path, dylibName));
+  final cachedFile = File(p.join(cacheDir.path, libraryName));
 
   // Check cache: if file exists and hash matches, reuse it.
   if (cachedFile.existsSync()) {
@@ -154,7 +167,7 @@ Future<File> _downloadPrebuilt(
             redirectResponse,
             cacheDir,
             cachedFile,
-            dylibName,
+            libraryName,
             assetInfo.hash,
           );
           return cachedFile;
@@ -169,7 +182,7 @@ Future<File> _downloadPrebuilt(
       response,
       cacheDir,
       cachedFile,
-      dylibName,
+      libraryName,
       assetInfo.hash,
     );
   } finally {
@@ -185,7 +198,7 @@ Future<void> _extractAndVerify(
   HttpClientResponse response,
   Directory cacheDir,
   File targetFile,
-  String dylibName,
+  String libraryName,
   String expectedHash,
 ) async {
   // Save the tarball to a temp file.
@@ -230,7 +243,7 @@ Future<void> _extractAndVerify(
   if (actualHash.toString() != expectedHash) {
     targetFile.deleteSync();
     throw StateError(
-      'SHA256 mismatch for $dylibName:\n'
+      'SHA256 mismatch for $libraryName:\n'
       '  expected: $expectedHash\n'
       '  actual:   $actualHash',
     );
@@ -242,12 +255,12 @@ Future<void> _extractAndVerify(
 File? _findLocalPrebuilt(
   BuildInput input,
   String platformLabel,
-  String dylibName,
+  String libraryName,
 ) {
   final repoRoot = _findRepoRoot(input.packageRoot);
   if (repoRoot != null) {
     final cached = File.fromUri(
-      repoRoot.resolve('.prebuilt/$platformLabel/$dylibName'),
+      repoRoot.resolve('.prebuilt/$platformLabel/$libraryName'),
     );
     if (cached.existsSync()) return cached;
   }
@@ -255,7 +268,7 @@ File? _findLocalPrebuilt(
   return _findPrebuiltInProjectRoots(
     input.outputDirectory,
     platformLabel,
-    dylibName,
+    libraryName,
   );
 }
 
@@ -275,7 +288,7 @@ Uri? _findRepoRoot(Uri packageRoot) {
 File? _findPrebuiltInProjectRoots(
   Uri outputDirectory,
   String platformLabel,
-  String dylibName,
+  String libraryName,
 ) {
   var dir = Directory.fromUri(outputDirectory).absolute;
   while (true) {
@@ -284,32 +297,11 @@ File? _findPrebuiltInProjectRoots(
     final hasPkgs = Directory('${dir.path}/pkgs').existsSync();
 
     if (hasPubspec && (hasDartTool || hasPkgs)) {
-      final cached = File('${dir.path}/.prebuilt/$platformLabel/$dylibName');
+      final cached = File('${dir.path}/.prebuilt/$platformLabel/$libraryName');
       if (cached.existsSync()) return cached;
     }
     final parent = dir.parent;
     if (parent.path == dir.path) return null;
     dir = parent;
   }
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────
-
-String _platformLabel(OS os, Architecture arch) {
-  final archLabel = switch (arch) {
-    Architecture.x64 => 'x64',
-    Architecture.arm64 => 'arm64',
-    Architecture.arm => 'arm',
-    Architecture.ia32 => 'x86',
-    _ => arch.toString(),
-  };
-  final osLabel = switch (os) {
-    OS.linux => 'linux',
-    OS.macOS => 'macos',
-    OS.windows => 'windows',
-    OS.android => 'android',
-    OS.iOS => 'ios',
-    _ => os.toString(),
-  };
-  return '$osLabel-$archLabel';
 }

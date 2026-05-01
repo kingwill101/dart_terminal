@@ -7,12 +7,19 @@ on:
       - "pkgs/pty/**"
       - "pubspec.yaml"
       - ".github/workflows/pty.yml"
+      - ".github/workflows/prebuilt-pty.yml"
+      - "tool/write_asset_hashes.dart"
   pull_request:
     branches: [master, main]
     paths:
       - "pkgs/pty/**"
       - "pubspec.yaml"
       - ".github/workflows/pty.yml"
+      - ".github/workflows/prebuilt-pty.yml"
+      - "tool/write_asset_hashes.dart"
+
+env:
+  RUST_VERSION: "1.92.0"
 
 jobs:
   # ── Build native library + run Dart tests ──────────────────────────
@@ -31,7 +38,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.90.0"
+          toolchain: ${{ env.RUST_VERSION }}
 
       - name: Verify Rust
         run: |
@@ -40,6 +47,10 @@ jobs:
 
       - name: Install dependencies
         run: flutter pub get
+
+      - name: Run portable_pty tests
+        working-directory: pkgs/pty/portable_pty
+        run: dart test
 
       - name: Run portable_pty example (pty)
         working-directory: pkgs/pty/portable_pty
@@ -61,10 +72,97 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.90.0"
+          toolchain: ${{ env.RUST_VERSION }}
 
       - name: Install dependencies
         run: flutter pub get
 
       - name: Run portable_pty_flutter example test
         run: flutter test pkgs/pty/portable_pty_flutter/example/test
+
+  # ── Cross-platform native build coverage ──────────────────────────
+  build-native-targets:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            rust_target: x86_64-unknown-linux-gnu
+            os_label: linux-x64
+            cross: false
+          - runner: ubuntu-latest
+            rust_target: aarch64-unknown-linux-gnu
+            os_label: linux-arm64
+            cross: true
+          - runner: macos-latest
+            rust_target: aarch64-apple-darwin
+            os_label: macos-arm64
+            cross: false
+          - runner: macos-latest
+            rust_target: x86_64-apple-darwin
+            os_label: macos-x64
+            cross: false
+          - runner: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+            os_label: windows-x64
+            cross: false
+          - runner: windows-latest
+            rust_target: aarch64-pc-windows-msvc
+            os_label: windows-arm64
+            cross: false
+          - runner: ubuntu-latest
+            rust_target: aarch64-linux-android
+            os_label: android-arm64
+            cross: true
+          - runner: ubuntu-latest
+            rust_target: armv7-linux-androideabi
+            os_label: android-arm
+            cross: true
+          - runner: ubuntu-latest
+            rust_target: x86_64-linux-android
+            os_label: android-x64
+            cross: true
+          - runner: macos-latest
+            rust_target: aarch64-apple-ios
+            os_label: ios-arm64
+            cross: false
+          - runner: macos-latest
+            rust_target: aarch64-apple-ios-sim
+            os_label: ios-sim-arm64
+            cross: false
+          - runner: macos-latest
+            rust_target: x86_64-apple-ios
+            os_label: ios-sim-x64
+            cross: false
+    name: "build-pty-${{ matrix.os_label }}"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: ${{ matrix.rust_target }}
+
+      - name: Install cross
+        if: ${{ matrix.cross }}
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Install Android NDK
+        if: startsWith(matrix.os_label, 'android-')
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27c
+
+      - name: Build PTY native library
+        working-directory: pkgs/pty/portable_pty/rust
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.rust_target }}
+          else
+            cargo build --release --target ${{ matrix.rust_target }}
+          fi
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        shell: bash
