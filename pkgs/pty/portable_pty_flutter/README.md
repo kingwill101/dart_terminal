@@ -31,7 +31,7 @@ integrates seamlessly with Flutter's widget tree.
 
 ```yaml
 dependencies:
-  portable_pty_flutter: ^0.0.1
+  portable_pty_flutter: ^0.0.5
 ```
 
 No separate `portable_pty` dependency is needed — it's re-exported

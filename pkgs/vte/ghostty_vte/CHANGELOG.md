@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.3-wip
+## 0.1.3
 
 - Added iOS device and simulator prebuilt target support for `libghostty-vt`
   build and verification workflows.

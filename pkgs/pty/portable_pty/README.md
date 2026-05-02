@@ -39,7 +39,7 @@ use a remote PTY transport for App Store-style iOS applications.
 
 ```yaml
 dependencies:
-  portable_pty: ^0.0.4
+  portable_pty: ^0.0.5
 ```
 
 The Rust native library is compiled automatically by a
@@ -165,13 +165,13 @@ automatically — **no Rust install required**.
 You can also specify a release tag or target platform:
 
 ```bash
-dart run portable_pty:setup --tag portable_pty-v0.0.4 --platform macos-arm64
+dart run portable_pty:setup --tag portable_pty-v0.0.5 --platform macos-arm64
 ```
 
 **Monorepo users** can download all prebuilt libs at once:
 
 ```bash
-dart run tool/prebuilt.dart --tag portable_pty-v0.0.4 --lib pty
+dart run tool/prebuilt.dart --tag portable_pty-v0.0.5 --lib pty
 ```
 
 You can also set the `PORTABLE_PTY_PREBUILT` environment variable to point
