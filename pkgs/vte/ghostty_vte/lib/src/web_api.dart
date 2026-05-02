@@ -1433,6 +1433,7 @@ final class VtGridRefSnapshot {
     required this.row,
     required this.style,
     required this.graphemes,
+    this.hyperlinkUri,
   });
 
   final int x;
@@ -1441,6 +1442,169 @@ final class VtGridRefSnapshot {
   final VtRowSnapshot row;
   final VtStyle style;
   final String graphemes;
+
+  /// The OSC 8 hyperlink URI attached to this cell, if any.
+  ///
+  /// Non-null only when the cell has an explicit hyperlink set by the
+  /// application (i.e. [VtCellSnapshot.hasHyperlink] is true).
+  final String? hyperlinkUri;
+}
+
+/// Decoded RGBA image returned by a [GhosttyVt.installPngDecoder] callback.
+///
+/// On the web target, PNG decoder installation is not supported.
+/// This class exists solely for API parity with the native target.
+final class VtDecodedImage {
+  const VtDecodedImage({
+    required this.width,
+    required this.height,
+    required this.pixels,
+  });
+
+  /// Image width in pixels.
+  final int width;
+
+  /// Image height in pixels.
+  final int height;
+
+  /// Raw RGBA pixel data (width * height * 4 bytes).
+  final Uint8List pixels;
+}
+
+/// Combined render geometry for a single Kitty Graphics placement.
+///
+/// On the web target, Kitty Graphics rendering is not supported.
+/// This class exists solely for API parity with the native target.
+final class VtKittyPlacementRenderInfo {
+  const VtKittyPlacementRenderInfo({
+    required this.pixelWidth,
+    required this.pixelHeight,
+    required this.gridCols,
+    required this.gridRows,
+    required this.viewportCol,
+    required this.viewportRow,
+    required this.viewportVisible,
+    required this.sourceX,
+    required this.sourceY,
+    required this.sourceWidth,
+    required this.sourceHeight,
+  });
+
+  final int pixelWidth;
+  final int pixelHeight;
+  final int gridCols;
+  final int gridRows;
+  final int viewportCol;
+  final int viewportRow;
+  final bool viewportVisible;
+  final int sourceX;
+  final int sourceY;
+  final int sourceWidth;
+  final int sourceHeight;
+}
+
+/// Viewport-relative position for a Kitty Graphics placement.
+///
+/// On the web target, Kitty Graphics rendering is not supported.
+/// This class exists solely for API parity with the native target.
+final class VtKittyPlacementViewportPosition {
+  const VtKittyPlacementViewportPosition({
+    required this.col,
+    required this.row,
+  });
+
+  final int col;
+  final int row;
+}
+
+/// Stub wrapper for a Kitty graphics image on the web target.
+///
+/// Kitty graphics image access is not supported on web.
+/// This class exists solely for API parity with the native target.
+final class VtKittyGraphicsImage {
+  const VtKittyGraphicsImage._();
+
+  bool get isValid => false;
+  int get id => _unsupported();
+  int get number => _unsupported();
+  int get width => _unsupported();
+  int get height => _unsupported();
+  GhosttyKittyImageFormat get format => _unsupported();
+  GhosttyKittyImageCompression get compression => _unsupported();
+  Uint8List get rawPixelData => _unsupported();
+
+  Never _unsupported() =>
+      throw UnsupportedError('Kitty graphics are not supported on web.');
+}
+
+/// Backwards-compatible short name for [VtKittyGraphicsImage].
+typedef VtKittyImage = VtKittyGraphicsImage;
+
+/// Stub placement view for Kitty Graphics on the web target.
+///
+/// Kitty graphics placement access is not supported on web.
+/// This class exists solely for API parity with the native target.
+final class VtKittyGraphicsPlacement {
+  const VtKittyGraphicsPlacement._();
+
+  int get imageId => _unsupported();
+  int get placementId => _unsupported();
+  bool get isVirtual => _unsupported();
+  int get columns => _unsupported();
+  int get rows => _unsupported();
+  int get z => _unsupported();
+  VtKittyGraphicsImage? get image => null;
+  VtKittyPlacementViewportPosition? viewportPos() => null;
+  VtKittyPlacementRenderInfo? renderInfo() => null;
+
+  Never _unsupported() =>
+      throw UnsupportedError('Kitty graphics are not supported on web.');
+}
+
+/// Stub iterator for Kitty graphics placements on the web target.
+///
+/// Kitty graphics placement iteration is not supported on web.
+/// This class exists solely for API parity with the native target.
+final class VtKittyGraphicsPlacementIterator {
+  const VtKittyGraphicsPlacementIterator._();
+
+  bool moveNext() => false;
+  VtKittyGraphicsPlacement get current => const VtKittyGraphicsPlacement._();
+  int get imageId => _unsupported();
+  int get placementId => _unsupported();
+  bool get isVirtual => _unsupported();
+  int get columns => _unsupported();
+  int get rows => _unsupported();
+  int get z => _unsupported();
+  VtKittyGraphicsImage? get image => null;
+  VtKittyPlacementViewportPosition? viewportPos() => null;
+  VtKittyPlacementRenderInfo? renderInfo() => null;
+  void close() {}
+
+  Never _unsupported() =>
+      throw UnsupportedError('Kitty graphics are not supported on web.');
+}
+
+/// Backwards-compatible short name for [VtKittyGraphicsPlacementIterator].
+typedef VtKittyPlacementIterator = VtKittyGraphicsPlacementIterator;
+
+/// Stub wrapper for the Kitty graphics storage on the web target.
+///
+/// Kitty graphics storage access is not supported on web.
+/// This class exists solely for API parity with the native target.
+final class VtKittyGraphics {
+  const VtKittyGraphics._();
+
+  bool get isValid => false;
+
+  VtKittyGraphicsImage? imageById(int imageId) => null;
+
+  VtKittyGraphicsPlacementIterator iteratePlacements({
+    GhosttyKittyPlacementLayer layer =
+        GhosttyKittyPlacementLayer.GHOSTTY_KITTY_PLACEMENT_LAYER_ALL,
+  }) {
+    throw UnsupportedError('Kitty graphics are not supported on web.');
+  }
 }
 
 final class VtRenderColors {
@@ -3716,6 +3880,44 @@ final class VtTerminal {
     _unsupportedTerminalApi('VtTerminal.gridRef');
   }
 
+  /// Always returns null on web — Kitty graphics are not available.
+  VtKittyGraphics? get kittyGraphics => null;
+
+  /// Always returns null on web — Kitty graphics settings are not available.
+  int? get kittyImageStorageLimit => null;
+
+  /// No-op on web.
+  set kittyImageStorageLimit(int? value) {}
+
+  /// Always returns null on web.
+  bool? get kittyImageMediumFile => null;
+
+  /// No-op on web.
+  set kittyImageMediumFile(bool value) {}
+
+  /// Always returns null on web.
+  bool? get kittyImageMediumTempFile => null;
+
+  /// No-op on web.
+  set kittyImageMediumTempFile(bool value) {}
+
+  /// Always returns null on web.
+  bool? get kittyImageMediumSharedMem => null;
+
+  /// No-op on web.
+  set kittyImageMediumSharedMem(bool value) {}
+
+  /// No-op on web.
+  set apcMaxBytes(int? value) {}
+
+  /// No-op on web.
+  set apcMaxBytesKitty(int? value) {}
+
+  /// Not supported on web — throws [UnsupportedError].
+  int getMulti(Map<Object, Object> queries) {
+    throw UnsupportedError('getMulti is not supported on web.');
+  }
+
   VtRenderState createRenderState() {
     _ensureOpen();
     return VtRenderState._(this);
@@ -4211,5 +4413,25 @@ final class GhosttyVt {
   static void sysSet(GhosttySysOption option, Object? value) {
     // Wasm callback installation is not yet supported.
     // ignore: no-op on web
+  }
+
+  /// Not supported on the web target — throws [UnsupportedError].
+  ///
+  /// PNG decoder installation requires native FFI NativeCallable support
+  /// which is not available in the web/wasm runtime.
+  static Never installPngDecoder(
+    VtDecodedImage? Function(Uint8List pngData) decoder,
+  ) {
+    throw UnsupportedError(
+      'PNG decoder installation is not supported on web. '
+      'Install a PNG decoder at the JavaScript/wasm layer instead.',
+    );
+  }
+
+  /// Not supported on the web target — throws [UnsupportedError].
+  static Never enableStderrLogging() {
+    throw UnsupportedError(
+      'Stderr logging callback installation is not supported on web.',
+    );
   }
 }

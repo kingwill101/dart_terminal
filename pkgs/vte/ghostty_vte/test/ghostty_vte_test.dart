@@ -1,9 +1,19 @@
+import 'dart:ffi' as ffi;
 import 'dart:typed_data';
 
+import 'package:ffi/ffi.dart';
 import 'package:ghostty_vte/ghostty_vte.dart';
 import 'package:test/test.dart';
 
 void main() {
+  void skipIfNoKittyGraphics() {
+    if (!GhosttyVt.buildInfo.kittyGraphics) {
+      markTestSkipped(
+        'Kitty graphics are disabled in this libghostty-vt build.',
+      );
+    }
+  }
+
   test('safe paste for plain text', () {
     expect(GhosttyVt.isPasteSafe('echo hello'), isTrue);
   });
@@ -1093,5 +1103,129 @@ void main() {
 
     expect(terminal.widthPx, 80 * 10);
     expect(terminal.heightPx, 24 * 20);
+  });
+
+  test('terminal getMulti batches scalar fields', () {
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+    addTearDown(terminal.close);
+
+    final cols = calloc<ffi.Uint16>();
+    final rows = calloc<ffi.Uint16>();
+    try {
+      final written = terminal.getMulti({
+        GhosttyTerminalData.GHOSTTY_TERMINAL_DATA_COLS: cols.cast(),
+        GhosttyTerminalData.GHOSTTY_TERMINAL_DATA_ROWS: rows.cast(),
+      });
+
+      expect(written, 2);
+      expect(cols.value, 80);
+      expect(rows.value, 24);
+    } finally {
+      calloc.free(cols);
+      calloc.free(rows);
+    }
+  });
+
+  test('kitty graphics options round-trip when supported', () {
+    skipIfNoKittyGraphics();
+
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+    addTearDown(terminal.close);
+
+    terminal.kittyImageStorageLimit = 1024 * 1024;
+    expect(terminal.kittyImageStorageLimit, 1024 * 1024);
+
+    terminal.kittyImageMediumFile = true;
+    expect(terminal.kittyImageMediumFile, isTrue);
+
+    terminal.kittyImageMediumTempFile = true;
+    expect(terminal.kittyImageMediumTempFile, isTrue);
+
+    terminal.kittyImageMediumSharedMem = false;
+    expect(terminal.kittyImageMediumSharedMem, isFalse);
+
+    terminal.kittyImageStorageLimit = 0;
+    expect(terminal.kittyImageStorageLimit, 0);
+  });
+
+  test('kitty graphics wrapper exposes image placement render data', () {
+    skipIfNoKittyGraphics();
+
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+    addTearDown(terminal.close);
+    terminal.resize(cols: 80, rows: 24, cellWidthPx: 10, cellHeightPx: 20);
+    terminal.kittyImageStorageLimit = 1024 * 1024;
+
+    terminal.write(
+      '\x1b_Ga=T,t=d,f=24,i=1,p=1,s=1,v=2,c=10,r=1;////////\x1b\\',
+    );
+
+    final graphics = terminal.kittyGraphics;
+    expect(graphics, isNotNull);
+
+    final image = graphics!.imageById(1);
+    expect(image, isNotNull);
+    expect(image!.id, 1);
+    expect(image.width, 1);
+    expect(image.height, 2);
+    expect(
+      image.format,
+      GhosttyKittyImageFormat.GHOSTTY_KITTY_IMAGE_FORMAT_RGB,
+    );
+    expect(
+      image.compression,
+      GhosttyKittyImageCompression.GHOSTTY_KITTY_IMAGE_COMPRESSION_NONE,
+    );
+    expect(image.rawPixelData, hasLength(6));
+
+    final iterator = graphics.iteratePlacements();
+    try {
+      expect(iterator.moveNext(), isTrue);
+
+      final placement = iterator.current;
+      expect(placement.imageId, 1);
+      expect(placement.placementId, 1);
+      expect(placement.isVirtual, isFalse);
+      expect(placement.columns, 10);
+      expect(placement.rows, 1);
+      expect(placement.z, 0);
+      expect(placement.image!.id, 1);
+
+      final pos = placement.viewportPos();
+      expect(pos, isNotNull);
+      expect(pos!.col, 0);
+      expect(pos.row, 0);
+
+      final renderInfo = placement.renderInfo();
+      expect(renderInfo, isNotNull);
+      expect(renderInfo!.viewportVisible, isTrue);
+      expect(renderInfo.pixelWidth, 100);
+      expect(renderInfo.pixelHeight, 20);
+      expect(renderInfo.gridCols, 10);
+      expect(renderInfo.gridRows, 1);
+      expect(renderInfo.viewportCol, 0);
+      expect(renderInfo.viewportRow, 0);
+      expect(renderInfo.sourceX, 0);
+      expect(renderInfo.sourceY, 0);
+      expect(renderInfo.sourceWidth, 1);
+      expect(renderInfo.sourceHeight, 2);
+
+      expect(iterator.moveNext(), isFalse);
+    } finally {
+      iterator.close();
+    }
+  });
+
+  test('installPngDecoder installs a native callback', () {
+    final callable = GhosttyVt.installPngDecoder((pngData) => null);
+    addTearDown(() {
+      GhosttyVt.sysSet(
+        GhosttySysOption.GHOSTTY_SYS_OPT_DECODE_PNG,
+        ffi.nullptr,
+      );
+      callable.close();
+    });
+
+    expect(callable.nativeFunction.address, isNot(0));
   });
 }

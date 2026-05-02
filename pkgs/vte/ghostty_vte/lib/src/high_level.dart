@@ -312,6 +312,123 @@ final class GhosttyVt {
   ) {
     _checkResult(bindings.ghostty_sys_set(option, value), 'ghostty_sys_set');
   }
+
+  /// Installs a Dart function as the PNG decoder for the Kitty Graphics Protocol.
+  ///
+  /// Without a decoder installed, all PNG-format Kitty images are rejected by
+  /// the terminal.  Since base64-encoded PNG is the most common Kitty image
+  /// format, this is effectively required for any KGP support.
+  ///
+  /// The [decoder] receives the raw PNG bytes and must return a [VtDecodedImage]
+  /// with RGBA pixel data on success, or null on failure.  It is called
+  /// **synchronously** on the Dart isolate that processes the terminal output.
+  ///
+  /// The returned [ffi.NativeCallable] must remain alive as long as the decoder
+  /// is needed.  To uninstall:
+  /// ```dart
+  /// callable.close();
+  /// GhosttyVt.sysSet(
+  ///   bindings.GhosttySysOption.GHOSTTY_SYS_OPT_DECODE_PNG,
+  ///   ffi.nullptr,
+  /// );
+  /// ```
+  static ffi.NativeCallable<bindings.GhosttySysDecodePngFnFunction>
+  installPngDecoder(VtDecodedImage? Function(Uint8List pngData) decoder) {
+    final callable =
+        ffi.NativeCallable<bindings.GhosttySysDecodePngFnFunction>.isolateLocal(
+          (
+            ffi.Pointer<ffi.Void> userdata,
+            ffi.Pointer<bindings.GhosttyAllocator> allocator,
+            ffi.Pointer<ffi.Uint8> data,
+            int dataLen,
+            ffi.Pointer<bindings.GhosttySysImage> out,
+          ) {
+            try {
+              final pngBytes = Uint8List.fromList(data.asTypedList(dataLen));
+              final result = decoder(pngBytes);
+              if (result == null) return false;
+              if (result.width <= 0 || result.height <= 0) return false;
+
+              final expectedLen = result.width * result.height * 4;
+              if (result.pixels.length != expectedLen) return false;
+
+              final pixelPtr = bindings.ghostty_alloc(
+                allocator,
+                result.pixels.length,
+              );
+              if (pixelPtr == ffi.nullptr) return false;
+              pixelPtr
+                  .asTypedList(result.pixels.length)
+                  .setAll(0, result.pixels);
+
+              out.ref.width = result.width;
+              out.ref.height = result.height;
+              out.ref.data = pixelPtr;
+              out.ref.data_len = result.pixels.length;
+              return true;
+            } catch (_) {
+              return false;
+            }
+          },
+          exceptionalReturn: false,
+        );
+
+    _checkResult(
+      bindings.ghostty_sys_set(
+        bindings.GhosttySysOption.GHOSTTY_SYS_OPT_DECODE_PNG,
+        callable.nativeFunction.cast(),
+      ),
+      'ghostty_sys_set(DECODE_PNG)',
+    );
+
+    return callable;
+  }
+
+  /// Installs the built-in stderr log callback.
+  ///
+  /// After calling this, all Ghostty library log messages are written to
+  /// stderr in the format `[level](scope): message\n`.
+  ///
+  /// The returned [ffi.NativeCallable] must remain alive as long as logging is
+  /// needed.  To uninstall:
+  /// ```dart
+  /// callable.close();
+  /// GhosttyVt.sysSet(
+  ///   bindings.GhosttySysOption.GHOSTTY_SYS_OPT_LOG,
+  ///   ffi.nullptr,
+  /// );
+  /// ```
+  static ffi.NativeCallable<bindings.GhosttySysLogFnFunction>
+  enableStderrLogging() {
+    final callable =
+        ffi.NativeCallable<bindings.GhosttySysLogFnFunction>.isolateLocal((
+          ffi.Pointer<ffi.Void> userdata,
+          int level,
+          ffi.Pointer<ffi.Uint8> scope,
+          int scopeLen,
+          ffi.Pointer<ffi.Uint8> message,
+          int messageLen,
+        ) {
+          bindings.ghostty_sys_log_stderr(
+            userdata,
+            bindings.GhosttySysLogLevel.fromValue(level),
+            scope,
+            scopeLen,
+            message,
+            messageLen,
+          );
+        });
+
+    _checkResult(
+      bindings.ghostty_sys_set(
+        bindings.GhosttySysOption.GHOSTTY_SYS_OPT_LOG,
+        callable.nativeFunction.cast(),
+      ),
+      'ghostty_sys_set(LOG)',
+    );
+
+    return callable;
+  }
 }
 
 /// Exception thrown for libghostty-vt operation failures.
@@ -1312,6 +1429,7 @@ final class VtGridRefSnapshot {
     required this.row,
     required this.style,
     required this.graphemes,
+    this.hyperlinkUri,
   });
 
   final int x;
@@ -1320,6 +1438,12 @@ final class VtGridRefSnapshot {
   final VtRowSnapshot row;
   final VtStyle style;
   final String graphemes;
+
+  /// The OSC 8 hyperlink URI attached to this cell, if any.
+  ///
+  /// Non-null only when the cell has an explicit hyperlink set by the
+  /// application (i.e. [VtCellSnapshot.hasHyperlink] is true).
+  final String? hyperlinkUri;
 
   static VtGridRefSnapshot fromNative(
     ffi.Pointer<bindings.GhosttyGridRef> ref,
@@ -1372,6 +1496,44 @@ final class VtGridRefSnapshot {
               }
             })();
 
+      // Extract hyperlink URI if this cell has a hyperlink attached.
+      String? hyperlinkUri;
+      final cellSnapshot = VtCellSnapshot.fromRaw(cellPtr.value);
+      if (cellSnapshot.hasHyperlink) {
+        final uriLen = calloc<ffi.Size>();
+        try {
+          final firstUri = bindings.ghostty_grid_ref_hyperlink_uri(
+            ref,
+            ffi.nullptr,
+            0,
+            uriLen,
+          );
+          if (firstUri == bindings.GhosttyResult.GHOSTTY_OUT_OF_SPACE ||
+              firstUri == bindings.GhosttyResult.GHOSTTY_SUCCESS) {
+            final len = uriLen.value;
+            if (len > 0) {
+              final uriBuf = calloc<ffi.Uint8>(len);
+              try {
+                bindings.ghostty_grid_ref_hyperlink_uri(
+                  ref,
+                  uriBuf,
+                  len,
+                  uriLen,
+                );
+                hyperlinkUri = utf8.decode(
+                  uriBuf.asTypedList(uriLen.value),
+                  allowMalformed: true,
+                );
+              } finally {
+                calloc.free(uriBuf);
+              }
+            }
+          }
+        } finally {
+          calloc.free(uriLen);
+        }
+      }
+
       return VtGridRefSnapshot(
         x: ref.ref.x,
         y: ref.ref.y,
@@ -1379,12 +1541,607 @@ final class VtGridRefSnapshot {
         row: VtRowSnapshot.fromRaw(rowPtr.value),
         style: VtStyle.fromNative(stylePtr.ref),
         graphemes: graphemes,
+        hyperlinkUri: hyperlinkUri,
       );
     } finally {
       calloc.free(graphemeLen);
       calloc.free(stylePtr);
       calloc.free(rowPtr);
       calloc.free(cellPtr);
+    }
+  }
+}
+
+/// Decoded RGBA image returned by a [GhosttyVt.installPngDecoder] callback.
+///
+/// [pixels] must contain exactly `width * height * 4` RGBA bytes.
+/// The library takes ownership of the pixel buffer and frees it via the
+/// provided allocator when it is no longer needed.
+final class VtDecodedImage {
+  const VtDecodedImage({
+    required this.width,
+    required this.height,
+    required this.pixels,
+  });
+
+  /// Image width in pixels.
+  final int width;
+
+  /// Image height in pixels.
+  final int height;
+
+  /// Raw RGBA pixel data (width * height * 4 bytes).
+  final Uint8List pixels;
+}
+
+/// Combined render geometry for a single Kitty Graphics placement.
+///
+/// Returned by [VtKittyGraphicsPlacement.renderInfo].  Covers everything
+/// needed for a single render loop pass: pixel dimensions, grid occupancy,
+/// viewport position, and source-crop rectangle.
+final class VtKittyPlacementRenderInfo {
+  const VtKittyPlacementRenderInfo({
+    required this.pixelWidth,
+    required this.pixelHeight,
+    required this.gridCols,
+    required this.gridRows,
+    required this.viewportCol,
+    required this.viewportRow,
+    required this.viewportVisible,
+    required this.sourceX,
+    required this.sourceY,
+    required this.sourceWidth,
+    required this.sourceHeight,
+  });
+
+  /// Rendered width in pixels.
+  final int pixelWidth;
+
+  /// Rendered height in pixels.
+  final int pixelHeight;
+
+  /// Number of terminal grid columns the placement occupies.
+  final int gridCols;
+
+  /// Number of terminal grid rows the placement occupies.
+  final int gridRows;
+
+  /// Viewport-relative column; may be negative for partially-visible placements.
+  final int viewportCol;
+
+  /// Viewport-relative row; may be negative for partially-visible placements.
+  final int viewportRow;
+
+  /// Whether the placement is at least partially visible in the viewport.
+  ///
+  /// False when the placement is fully off-screen or virtual.
+  final bool viewportVisible;
+
+  /// Source-crop x origin in pixels (after clamping to image bounds).
+  final int sourceX;
+
+  /// Source-crop y origin in pixels.
+  final int sourceY;
+
+  /// Source-crop width in pixels.
+  final int sourceWidth;
+
+  /// Source-crop height in pixels.
+  final int sourceHeight;
+}
+
+/// Viewport-relative position for a Kitty Graphics placement.
+///
+/// Returned by [VtKittyGraphicsPlacement.viewportPos] when a non-virtual
+/// placement is at least partially visible in the viewport.
+final class VtKittyPlacementViewportPosition {
+  const VtKittyPlacementViewportPosition({
+    required this.col,
+    required this.row,
+  });
+
+  /// Viewport-relative column.
+  final int col;
+
+  /// Viewport-relative row; may be negative for partially-visible placements.
+  final int row;
+}
+
+/// High-level wrapper over a borrowed Kitty graphics image handle.
+///
+/// Obtained from [VtKittyGraphics.imageById].  The handle is borrowed from
+/// the terminal image storage and remains valid only until the next mutating
+/// terminal call.
+final class VtKittyGraphicsImage {
+  VtKittyGraphicsImage._(this._handle);
+
+  final bindings.GhosttyKittyGraphicsImage _handle;
+
+  /// Whether this handle refers to a valid (non-null) image.
+  bool get isValid => _handle != ffi.nullptr;
+
+  /// Image ID as assigned by the Kitty Graphics Protocol.
+  int get id => _imageUint32(
+    bindings.GhosttyKittyGraphicsImageData.GHOSTTY_KITTY_IMAGE_DATA_ID,
+  );
+
+  /// Image number (display identifier).
+  int get number => _imageUint32(
+    bindings.GhosttyKittyGraphicsImageData.GHOSTTY_KITTY_IMAGE_DATA_NUMBER,
+  );
+
+  /// Image width in pixels.
+  int get width => _imageUint32(
+    bindings.GhosttyKittyGraphicsImageData.GHOSTTY_KITTY_IMAGE_DATA_WIDTH,
+  );
+
+  /// Image height in pixels.
+  int get height => _imageUint32(
+    bindings.GhosttyKittyGraphicsImageData.GHOSTTY_KITTY_IMAGE_DATA_HEIGHT,
+  );
+
+  /// Pixel format of the stored image data.
+  bindings.GhosttyKittyImageFormat get format {
+    final out = calloc<ffi.Uint32>();
+    try {
+      _checkResult(
+        bindings.ghostty_kitty_graphics_image_get(
+          _handle,
+          bindings
+              .GhosttyKittyGraphicsImageData
+              .GHOSTTY_KITTY_IMAGE_DATA_FORMAT,
+          out.cast(),
+        ),
+        'ghostty_kitty_graphics_image_get(format)',
+      );
+      return bindings.GhosttyKittyImageFormat.fromValue(out.value);
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  /// Compression applied to the stored image data.
+  bindings.GhosttyKittyImageCompression get compression {
+    final out = calloc<ffi.Uint32>();
+    try {
+      _checkResult(
+        bindings.ghostty_kitty_graphics_image_get(
+          _handle,
+          bindings
+              .GhosttyKittyGraphicsImageData
+              .GHOSTTY_KITTY_IMAGE_DATA_COMPRESSION,
+          out.cast(),
+        ),
+        'ghostty_kitty_graphics_image_get(compression)',
+      );
+      return bindings.GhosttyKittyImageCompression.fromValue(out.value);
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  /// Borrowed view of the raw pixel data.
+  ///
+  /// Valid only until the next mutating terminal call.  Copy the bytes
+  /// immediately if longer lifetime is needed.
+  Uint8List get rawPixelData {
+    final ptrOut = calloc<ffi.Pointer<ffi.Uint8>>();
+    final lenOut = calloc<ffi.Size>();
+    try {
+      _checkResult(
+        bindings.ghostty_kitty_graphics_image_get(
+          _handle,
+          bindings
+              .GhosttyKittyGraphicsImageData
+              .GHOSTTY_KITTY_IMAGE_DATA_DATA_PTR,
+          ptrOut.cast(),
+        ),
+        'ghostty_kitty_graphics_image_get(data_ptr)',
+      );
+      _checkResult(
+        bindings.ghostty_kitty_graphics_image_get(
+          _handle,
+          bindings
+              .GhosttyKittyGraphicsImageData
+              .GHOSTTY_KITTY_IMAGE_DATA_DATA_LEN,
+          lenOut.cast(),
+        ),
+        'ghostty_kitty_graphics_image_get(data_len)',
+      );
+      final ptr = ptrOut.value;
+      final len = lenOut.value;
+      if (ptr == ffi.nullptr || len == 0) {
+        return Uint8List(0);
+      }
+      return ptr.asTypedList(len);
+    } finally {
+      calloc.free(ptrOut);
+      calloc.free(lenOut);
+    }
+  }
+
+  int _imageUint32(bindings.GhosttyKittyGraphicsImageData data) {
+    final out = calloc<ffi.Uint32>();
+    try {
+      _checkResult(
+        bindings.ghostty_kitty_graphics_image_get(_handle, data, out.cast()),
+        'ghostty_kitty_graphics_image_get',
+      );
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+}
+
+/// Backwards-compatible short name for [VtKittyGraphicsImage].
+typedef VtKittyImage = VtKittyGraphicsImage;
+
+/// High-level view of the current Kitty Graphics placement in an iterator.
+///
+/// Instances are cursor views, not independent snapshots. They are valid until
+/// the owning [VtKittyGraphicsPlacementIterator] advances or closes.
+final class VtKittyGraphicsPlacement {
+  VtKittyGraphicsPlacement._(this._iterator);
+
+  final VtKittyGraphicsPlacementIterator _iterator;
+
+  /// The image ID of the current placement.
+  int get imageId => _iterator.imageId;
+
+  /// The placement ID of the current placement.
+  int get placementId => _iterator.placementId;
+
+  /// Whether this is a virtual (unicode placeholder) placement.
+  bool get isVirtual => _iterator.isVirtual;
+
+  /// Number of terminal columns occupied by this placement.
+  int get columns => _iterator.columns;
+
+  /// Number of terminal rows occupied by this placement.
+  int get rows => _iterator.rows;
+
+  /// Z-index of the current placement.
+  int get z => _iterator.z;
+
+  /// The image for the current placement, if it still exists in storage.
+  VtKittyGraphicsImage? get image => _iterator.image;
+
+  /// Viewport-relative top-left position, or null if off-screen or virtual.
+  VtKittyPlacementViewportPosition? viewportPos() => _iterator.viewportPos();
+
+  /// Combined render geometry for the current placement in a single FFI call.
+  VtKittyPlacementRenderInfo? renderInfo() => _iterator.renderInfo();
+}
+
+/// Cursor-style iterator over Kitty Graphics placements.
+///
+/// Obtained from [VtKittyGraphics.iteratePlacements].
+///
+/// Call [moveNext] before accessing any placement properties — the iterator
+/// starts before the first placement.  When [moveNext] returns false the
+/// iterator is exhausted.  Always call [close] when done to free the native
+/// iterator resource.
+///
+/// ```dart
+/// final kgp = terminal.kittyGraphics;
+/// if (kgp != null) {
+///   final it = kgp.iteratePlacements();
+///   try {
+///     while (it.moveNext()) {
+///       final info = it.renderInfo();
+///       if (info != null && info.viewportVisible) {
+///         // render the placement using info.*
+///       }
+///     }
+///   } finally {
+///     it.close();
+///   }
+/// }
+/// ```
+final class VtKittyGraphicsPlacementIterator {
+  VtKittyGraphicsPlacementIterator._(
+    this._handle,
+    this._graphics,
+    this._terminal,
+  );
+
+  final bindings.GhosttyKittyGraphicsPlacementIterator _handle;
+  final bindings.GhosttyKittyGraphics _graphics;
+  final bindings.GhosttyTerminal _terminal;
+  bool _closed = false;
+
+  /// Advances to the next placement.
+  ///
+  /// Returns false when there are no more placements.
+  bool moveNext() {
+    if (_closed) return false;
+    return bindings.ghostty_kitty_graphics_placement_next(_handle);
+  }
+
+  /// Cursor view for the current placement.
+  VtKittyGraphicsPlacement get current => VtKittyGraphicsPlacement._(this);
+
+  /// The image ID of the current placement.
+  int get imageId => _placementUint32(
+    bindings
+        .GhosttyKittyGraphicsPlacementData
+        .GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID,
+  );
+
+  /// The placement ID of the current placement.
+  int get placementId => _placementUint32(
+    bindings
+        .GhosttyKittyGraphicsPlacementData
+        .GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_PLACEMENT_ID,
+  );
+
+  /// Number of terminal columns occupied by the current placement.
+  int get columns => _placementUint32(
+    bindings
+        .GhosttyKittyGraphicsPlacementData
+        .GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_COLUMNS,
+  );
+
+  /// Number of terminal rows occupied by the current placement.
+  int get rows => _placementUint32(
+    bindings
+        .GhosttyKittyGraphicsPlacementData
+        .GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_ROWS,
+  );
+
+  /// Whether this is a virtual (unicode placeholder) placement.
+  bool get isVirtual {
+    final out = calloc<ffi.Bool>();
+    try {
+      _checkResult(
+        bindings.ghostty_kitty_graphics_placement_get(
+          _handle,
+          bindings
+              .GhosttyKittyGraphicsPlacementData
+              .GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IS_VIRTUAL,
+          out.cast(),
+        ),
+        'ghostty_kitty_graphics_placement_get(is_virtual)',
+      );
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  /// Z-index of the current placement.
+  ///
+  /// Negative values render below the terminal background, positive values
+  /// above terminal text.
+  int get z {
+    final out = calloc<ffi.Int32>();
+    try {
+      _checkResult(
+        bindings.ghostty_kitty_graphics_placement_get(
+          _handle,
+          bindings
+              .GhosttyKittyGraphicsPlacementData
+              .GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Z,
+          out.cast(),
+        ),
+        'ghostty_kitty_graphics_placement_get(z)',
+      );
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  /// The image for the current placement.
+  ///
+  /// Returns null if the image ID is zero or no longer in the storage.
+  VtKittyGraphicsImage? get image {
+    final id = imageId;
+    if (id == 0) return null;
+    final handle = bindings.ghostty_kitty_graphics_image(_graphics, id);
+    if (handle == ffi.nullptr) return null;
+    return VtKittyGraphicsImage._(handle);
+  }
+
+  /// Viewport-relative top-left position for the current placement.
+  ///
+  /// Returns null when the placement is virtual, fully off-screen, or the
+  /// referenced image no longer exists.
+  VtKittyPlacementViewportPosition? viewportPos() {
+    final img = image;
+    if (img == null || !img.isValid) return null;
+
+    final colOut = calloc<ffi.Int32>();
+    final rowOut = calloc<ffi.Int32>();
+    try {
+      final result = bindings.ghostty_kitty_graphics_placement_viewport_pos(
+        _handle,
+        img._handle,
+        _terminal,
+        colOut,
+        rowOut,
+      );
+      if (result == bindings.GhosttyResult.GHOSTTY_NO_VALUE) return null;
+      _checkResult(result, 'ghostty_kitty_graphics_placement_viewport_pos');
+      return VtKittyPlacementViewportPosition(
+        col: colOut.value,
+        row: rowOut.value,
+      );
+    } finally {
+      calloc.free(colOut);
+      calloc.free(rowOut);
+    }
+  }
+
+  /// Combined render geometry for the current placement in a single call.
+  ///
+  /// Returns null only if the referenced image no longer exists. Off-screen
+  /// and virtual placements return a value whose `viewportVisible` is false.
+  ///
+  /// This is the primary method to call in a render loop: it combines pixel
+  /// size, grid occupancy, viewport position, and source-crop into one FFI
+  /// call instead of four.
+  VtKittyPlacementRenderInfo? renderInfo() {
+    final img = image;
+    if (img == null || !img.isValid) return null;
+
+    final out = calloc<bindings.GhosttyKittyGraphicsPlacementRenderInfo>();
+    try {
+      out.ref.size = ffi
+          .sizeOf<bindings.GhosttyKittyGraphicsPlacementRenderInfo>();
+      final result = bindings.ghostty_kitty_graphics_placement_render_info(
+        _handle,
+        img._handle,
+        _terminal,
+        out,
+      );
+      if (result == bindings.GhosttyResult.GHOSTTY_NO_VALUE) return null;
+      _checkResult(result, 'ghostty_kitty_graphics_placement_render_info');
+      return VtKittyPlacementRenderInfo(
+        pixelWidth: out.ref.pixel_width,
+        pixelHeight: out.ref.pixel_height,
+        gridCols: out.ref.grid_cols,
+        gridRows: out.ref.grid_rows,
+        viewportCol: out.ref.viewport_col,
+        viewportRow: out.ref.viewport_row,
+        viewportVisible: out.ref.viewport_visible,
+        sourceX: out.ref.source_x,
+        sourceY: out.ref.source_y,
+        sourceWidth: out.ref.source_width,
+        sourceHeight: out.ref.source_height,
+      );
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  /// Frees the native iterator handle.
+  ///
+  /// Must be called when the iterator is no longer needed.
+  void close() {
+    if (_closed) return;
+    _closed = true;
+    bindings.ghostty_kitty_graphics_placement_iterator_free(_handle);
+  }
+
+  int _placementUint32(bindings.GhosttyKittyGraphicsPlacementData data) {
+    final out = calloc<ffi.Uint32>();
+    try {
+      _checkResult(
+        bindings.ghostty_kitty_graphics_placement_get(
+          _handle,
+          data,
+          out.cast(),
+        ),
+        'ghostty_kitty_graphics_placement_get',
+      );
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+}
+
+/// Backwards-compatible short name for [VtKittyGraphicsPlacementIterator].
+typedef VtKittyPlacementIterator = VtKittyGraphicsPlacementIterator;
+
+/// High-level wrapper over a borrowed Kitty graphics image storage.
+///
+/// Obtained from [VtTerminal.kittyGraphics].  The handle is borrowed from
+/// the terminal and valid only until the next mutating terminal call
+/// (e.g. [VtTerminal.writeBytes] or [VtTerminal.reset]).
+final class VtKittyGraphics {
+  VtKittyGraphics._(this._handle, this._terminal);
+
+  final bindings.GhosttyKittyGraphics _handle;
+  final bindings.GhosttyTerminal _terminal;
+
+  /// Whether this handle refers to a valid (non-null) storage.
+  bool get isValid => _handle != ffi.nullptr;
+
+  /// Looks up a loaded image by its protocol-assigned [imageId].
+  ///
+  /// Returns null if no image with that ID exists in the current storage.
+  VtKittyGraphicsImage? imageById(int imageId) {
+    if (!isValid) return null;
+    final handle = bindings.ghostty_kitty_graphics_image(_handle, imageId);
+    if (handle == ffi.nullptr) return null;
+    return VtKittyGraphicsImage._(handle);
+  }
+
+  /// Creates a placement iterator for all placements on the active screen.
+  ///
+  /// Pass [layer] to restrict iteration to a specific z-layer:
+  /// - [GhosttyKittyPlacementLayer.GHOSTTY_KITTY_PLACEMENT_LAYER_ALL] (default) — all layers
+  /// - [GhosttyKittyPlacementLayer.GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG] — behind the background
+  /// - [GhosttyKittyPlacementLayer.GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT] — between bg and text
+  /// - [GhosttyKittyPlacementLayer.GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT] — in front of text
+  ///
+  /// The returned [VtKittyGraphicsPlacementIterator] must be
+  /// [VtKittyGraphicsPlacementIterator.close]d
+  /// when done.
+  VtKittyGraphicsPlacementIterator iteratePlacements({
+    bindings.GhosttyKittyPlacementLayer layer =
+        bindings.GhosttyKittyPlacementLayer.GHOSTTY_KITTY_PLACEMENT_LAYER_ALL,
+  }) {
+    // Allocate the heap-owned iterator.
+    final iterOut = calloc<bindings.GhosttyKittyGraphicsPlacementIterator>();
+    bindings.GhosttyKittyGraphicsPlacementIterator iter = ffi.nullptr;
+    try {
+      _checkResult(
+        bindings.ghostty_kitty_graphics_placement_iterator_new(
+          ffi.nullptr,
+          iterOut,
+        ),
+        'ghostty_kitty_graphics_placement_iterator_new',
+      );
+      iter = iterOut.value;
+
+      // Optionally set the layer filter.
+      if (layer !=
+          bindings
+              .GhosttyKittyPlacementLayer
+              .GHOSTTY_KITTY_PLACEMENT_LAYER_ALL) {
+        final layerVal = calloc<ffi.Uint32>();
+        try {
+          layerVal.value = layer.value;
+          _checkResult(
+            bindings.ghostty_kitty_graphics_placement_iterator_set(
+              iter,
+              bindings
+                  .GhosttyKittyGraphicsPlacementIteratorOption
+                  .GHOSTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER,
+              layerVal.cast(),
+            ),
+            'ghostty_kitty_graphics_placement_iterator_set(layer)',
+          );
+        } finally {
+          calloc.free(layerVal);
+        }
+      }
+
+      // Populate the iterator with placements from this storage. The C API
+      // expects a pointer to the iterator handle, not the iterator itself.
+      _checkResult(
+        bindings.ghostty_kitty_graphics_get(
+          _handle,
+          bindings
+              .GhosttyKittyGraphicsData
+              .GHOSTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR,
+          iterOut.cast(),
+        ),
+        'ghostty_kitty_graphics_get(placement_iterator)',
+      );
+
+      return VtKittyGraphicsPlacementIterator._(iter, _handle, _terminal);
+    } catch (_) {
+      if (iter != ffi.nullptr) {
+        bindings.ghostty_kitty_graphics_placement_iterator_free(iter);
+      }
+      rethrow;
+    } finally {
+      calloc.free(iterOut);
     }
   }
 }
@@ -3095,6 +3852,29 @@ final class VtTerminal {
     }
   }
 
+  bool? _terminalBoolOpt(bindings.GhosttyTerminalData data) {
+    final out = calloc<ffi.Bool>();
+    try {
+      final result = bindings.ghostty_terminal_get(_handle, data, out.cast());
+      if (result == bindings.GhosttyResult.GHOSTTY_NO_VALUE) return null;
+      _checkResult(result, 'ghostty_terminal_get');
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  void _terminalSetBool(bindings.GhosttyTerminalOption option, bool value) {
+    _ensureOpen();
+    final out = calloc<ffi.Bool>();
+    try {
+      out.value = value;
+      bindings.ghostty_terminal_set(_handle, option, out.cast());
+    } finally {
+      calloc.free(out);
+    }
+  }
+
   /// Reads a borrowed [GhosttyString] from the terminal and copies it into a
   /// Dart [String].
   ///
@@ -3248,6 +4028,229 @@ final class VtTerminal {
   VtRenderState createRenderState() {
     _ensureOpen();
     return VtRenderState._(this);
+  }
+
+  /// The borrowed Kitty graphics image storage for the active screen.
+  ///
+  /// Returns null when Kitty graphics support is disabled at compile time.
+  ///
+  /// The returned object holds a borrowed pointer valid only until the next
+  /// mutating terminal call (write, reset, or resize).
+  VtKittyGraphics? get kittyGraphics {
+    _ensureOpen();
+    final out = calloc<bindings.GhosttyKittyGraphics>();
+    try {
+      final result = bindings.ghostty_terminal_get(
+        _handle,
+        bindings.GhosttyTerminalData.GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS,
+        out.cast(),
+      );
+      if (result == bindings.GhosttyResult.GHOSTTY_NO_VALUE) return null;
+      _checkResult(result, 'ghostty_terminal_get(kitty_graphics)');
+      final handle = out.value;
+      if (handle == ffi.nullptr) return null;
+      return VtKittyGraphics._(handle, _handle);
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  /// Kitty image storage limit in bytes for the active screen.
+  ///
+  /// A value of zero means the Kitty Graphics Protocol is disabled.
+  /// Returns null when Kitty graphics support is disabled at compile time.
+  int? get kittyImageStorageLimit {
+    _ensureOpen();
+    final out = calloc<ffi.Uint64>();
+    try {
+      final result = bindings.ghostty_terminal_get(
+        _handle,
+        bindings
+            .GhosttyTerminalData
+            .GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_STORAGE_LIMIT,
+        out.cast(),
+      );
+      if (result == bindings.GhosttyResult.GHOSTTY_NO_VALUE) return null;
+      _checkResult(result, 'ghostty_terminal_get(kitty_image_storage_limit)');
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  /// Sets the Kitty image storage limit in bytes.
+  ///
+  /// Pass null or 0 to disable the Kitty Graphics Protocol entirely.
+  set kittyImageStorageLimit(int? value) {
+    _ensureOpen();
+    if (value == null) {
+      bindings.ghostty_terminal_set(
+        _handle,
+        bindings
+            .GhosttyTerminalOption
+            .GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT,
+        ffi.nullptr,
+      );
+      return;
+    }
+    final out = calloc<ffi.Uint64>();
+    try {
+      out.value = value;
+      bindings.ghostty_terminal_set(
+        _handle,
+        bindings
+            .GhosttyTerminalOption
+            .GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT,
+        out.cast(),
+      );
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  /// Whether the file loading medium is enabled for Kitty images.
+  ///
+  /// Returns null when Kitty graphics support is disabled at compile time.
+  bool? get kittyImageMediumFile => _terminalBoolOpt(
+    bindings.GhosttyTerminalData.GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_FILE,
+  );
+
+  /// Enables or disables the file loading medium for Kitty images.
+  set kittyImageMediumFile(bool value) => _terminalSetBool(
+    bindings.GhosttyTerminalOption.GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_FILE,
+    value,
+  );
+
+  /// Whether the temporary-file loading medium is enabled for Kitty images.
+  ///
+  /// Returns null when Kitty graphics support is disabled at compile time.
+  bool? get kittyImageMediumTempFile => _terminalBoolOpt(
+    bindings
+        .GhosttyTerminalData
+        .GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_TEMP_FILE,
+  );
+
+  /// Enables or disables the temporary-file loading medium for Kitty images.
+  set kittyImageMediumTempFile(bool value) => _terminalSetBool(
+    bindings
+        .GhosttyTerminalOption
+        .GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE,
+    value,
+  );
+
+  /// Whether the shared-memory loading medium is enabled for Kitty images.
+  ///
+  /// Returns null when Kitty graphics support is disabled at compile time.
+  bool? get kittyImageMediumSharedMem => _terminalBoolOpt(
+    bindings
+        .GhosttyTerminalData
+        .GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_SHARED_MEM,
+  );
+
+  /// Enables or disables the shared-memory loading medium for Kitty images.
+  set kittyImageMediumSharedMem(bool value) => _terminalSetBool(
+    bindings
+        .GhosttyTerminalOption
+        .GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_SHARED_MEM,
+    value,
+  );
+
+  /// Sets the maximum bytes the APC handler buffers across all protocols.
+  ///
+  /// Pass null to revert to the built-in default.
+  set apcMaxBytes(int? value) {
+    _ensureOpen();
+    if (value == null) {
+      bindings.ghostty_terminal_set(
+        _handle,
+        bindings.GhosttyTerminalOption.GHOSTTY_TERMINAL_OPT_APC_MAX_BYTES,
+        ffi.nullptr,
+      );
+      return;
+    }
+    final out = calloc<ffi.Size>();
+    try {
+      out.value = value;
+      bindings.ghostty_terminal_set(
+        _handle,
+        bindings.GhosttyTerminalOption.GHOSTTY_TERMINAL_OPT_APC_MAX_BYTES,
+        out.cast(),
+      );
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  /// Sets the maximum bytes the APC handler buffers for Kitty graphics data.
+  ///
+  /// Pass null to revert to the built-in default.
+  set apcMaxBytesKitty(int? value) {
+    _ensureOpen();
+    if (value == null) {
+      bindings.ghostty_terminal_set(
+        _handle,
+        bindings.GhosttyTerminalOption.GHOSTTY_TERMINAL_OPT_APC_MAX_BYTES_KITTY,
+        ffi.nullptr,
+      );
+      return;
+    }
+    final out = calloc<ffi.Size>();
+    try {
+      out.value = value;
+      bindings.ghostty_terminal_set(
+        _handle,
+        bindings.GhosttyTerminalOption.GHOSTTY_TERMINAL_OPT_APC_MAX_BYTES_KITTY,
+        out.cast(),
+      );
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  /// Fetches multiple terminal data fields in a single FFI call.
+  ///
+  /// More efficient than calling individual getters repeatedly when several
+  /// fields are needed at once.  Particularly useful in high-frequency render
+  /// loops where per-call FFI overhead matters.
+  ///
+  /// [queries] maps each [GhosttyTerminalData] key to a pre-allocated
+  /// [ffi.Pointer<ffi.Void>] output buffer.  The caller is responsible for
+  /// allocating and freeing each buffer with the correct type for the
+  /// requested data key.
+  ///
+  /// Returns the number of fields successfully read.  The multi-get aborts at
+  /// the first failure, so the returned count may be less than
+  /// [queries].length.
+  int getMulti(
+    Map<bindings.GhosttyTerminalData, ffi.Pointer<ffi.Void>> queries,
+  ) {
+    _ensureOpen();
+    if (queries.isEmpty) return 0;
+
+    final count = queries.length;
+    final keys = calloc<ffi.UnsignedInt>(count);
+    final values = calloc<ffi.Pointer<ffi.Void>>(count);
+    final outWritten = calloc<ffi.Size>();
+    try {
+      var i = 0;
+      for (final entry in queries.entries) {
+        (keys + i).value = entry.key.value;
+        (values + i).value = entry.value;
+        i++;
+      }
+      bindings.ghostty_terminal_get_multi(
+        _handle,
+        count,
+        keys,
+        values,
+        outWritten,
+      );
+      return outWritten.value;
+    } finally {
+      calloc.free(keys);
+      calloc.free(values);
+      calloc.free(outWritten);
+    }
   }
 
   /// Releases terminal resources.
