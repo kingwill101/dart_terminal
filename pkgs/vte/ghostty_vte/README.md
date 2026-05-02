@@ -39,7 +39,7 @@ on the **web** via WebAssembly.
 
 ```yaml
 dependencies:
-  ghostty_vte: ^0.1.2
+  ghostty_vte: ^0.1.3
 ```
 
 The native library is compiled automatically by a

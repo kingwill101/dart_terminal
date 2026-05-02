@@ -1,4 +1,6 @@
-## 0.1.3-wip
+# Changelog
+
+## 0.1.3
 
 - Improved mobile terminal text selection with touch handles, drag-to-extend
   selection, adaptive selection toolbar support, and custom toolbar actions.
@@ -6,6 +8,7 @@
   the selection instead of replacing it with a single-character highlight.
 - Added Android integration coverage for focus, word selection, selection
   clearing, scrolling, resize stability, and toolbar interactions.
+- Bumped `ghostty_vte` to `^0.1.3` and `portable_pty` to `^0.0.5`.
 
 ## 0.1.2+1
 

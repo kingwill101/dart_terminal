@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.0.5-wip
+## 0.0.5
 
 - Added shared hook metadata for portable_pty platform labels, library names,
   and prebuilt artifact names.

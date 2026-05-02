@@ -1,3 +1,9 @@
+# Changelog
+
+## 0.0.5
+
+- Bumped `portable_pty` dependency to `^0.0.5`.
+
 ## 0.0.4
 
 - Bumped `portable_pty` dependency to `^0.0.4`.

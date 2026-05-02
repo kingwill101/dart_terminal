@@ -37,7 +37,7 @@ single import.
 
 ```yaml
 dependencies:
-  ghostty_vte_flutter: ^0.1.2+1
+  ghostty_vte_flutter: ^0.1.3
 ```
 
 No separate `ghostty_vte` dependency is needed — it's re-exported
