@@ -59,7 +59,7 @@ void main() {
     await _settleInteraction(tester);
     expect(editorFocusNode.hasFocus, isTrue);
 
-    await _tapTerminalCell(tester, column: 13);
+    await _tapTerminalCell(tester, controller: controller, column: 13);
     await _settleInteraction(tester);
 
     expect(terminalFocusNode.hasFocus, isTrue);
@@ -68,19 +68,28 @@ void main() {
     expect(currentContent, isNull);
 
     await tester.pump(const Duration(milliseconds: 500));
-    final alphaTarget = _terminalCellCenter(_terminalRect(tester), column: 2);
+    final alphaTarget = _terminalCellCenter(
+      tester,
+      controller: controller,
+      column: 2,
+    );
     await _doubleTapAt(tester, alphaTarget);
     await _waitForSelectionText(
       tester,
       selectedText: () => currentContent?.text,
       expected: 'alpha',
+      diagnostics: () => _terminalDiagnostics(
+        tester,
+        controller: controller,
+        target: alphaTarget,
+      ),
     );
 
     expect(currentSelection, isNotNull);
     expect(currentContent?.text, 'alpha');
 
     await tester.pump(const Duration(milliseconds: 500));
-    await _tapTerminalCell(tester, column: 13);
+    await _tapTerminalCell(tester, controller: controller, column: 13);
     await _settleInteraction(tester);
 
     expect(currentSelection, isNull);
@@ -507,6 +516,9 @@ void main() {
 
 const _editorFieldKey = ValueKey<String>('editor-field');
 const _terminalViewKey = ValueKey<String>('terminal-view');
+const _terminalPadding = EdgeInsets.all(12);
+const _terminalFontSize = 14.0;
+const _terminalLineHeight = 1.35;
 
 Future<void> _pumpTerminalHarness(
   WidgetTester tester, {
@@ -546,8 +558,9 @@ Future<void> _pumpTerminalHarness(
                   focusNode: terminalFocusNode,
                   showHeader: false,
                   fontFamily: 'monospace',
-                  fontSize: 14,
-                  lineHeight: 1.35,
+                  fontSize: _terminalFontSize,
+                  lineHeight: _terminalLineHeight,
+                  padding: _terminalPadding,
                   scrollController: scrollController,
                   renderer: renderer,
                   interactionPolicy: interactionPolicy,
@@ -573,45 +586,54 @@ Rect _terminalRect(WidgetTester tester) {
 }
 
 Offset _terminalCellCenter(
-  Rect terminalRect, {
+  WidgetTester tester, {
+  required GhosttyTerminalController controller,
   required int column,
   int row = 0,
 }) {
-  const padding = 12.0;
-  const fontSize = 14.0;
-  const lineHeight = 1.35;
-  final charWidth = _measureTerminalCharWidth();
-  return Offset(
-    terminalRect.left + padding + (column + 0.5) * charWidth,
-    terminalRect.top + padding + (row + 0.5) * fontSize * lineHeight,
-  );
-}
+  if (controller.cols <= 0 || controller.rows <= 0) {
+    fail(
+      'Terminal grid has not been reported yet: '
+      '${controller.cols}x${controller.rows}.',
+    );
+  }
+  if (column < 0 || column >= controller.cols) {
+    fail(
+      'Requested terminal column $column outside reported '
+      '${controller.cols} column grid.',
+    );
+  }
+  if (row < 0 || row >= controller.rows) {
+    fail(
+      'Requested terminal row $row outside reported '
+      '${controller.rows} row grid.',
+    );
+  }
 
-double _measureTerminalCharWidth() {
-  final painter = TextPainter(
-    text: const TextSpan(
-      text: 'W',
-      style: TextStyle(
-        fontFamily: 'monospace',
-        fontSize: 14,
-        height: 1.35,
-        letterSpacing: 0,
-      ),
-    ),
-    textDirection: TextDirection.ltr,
-  )..layout();
-  final width = painter.width;
-  painter.dispose();
-  return width;
+  final terminalRect = _terminalRect(tester);
+  final contentWidth = terminalRect.width - _terminalPadding.horizontal;
+  final charWidth = contentWidth / controller.cols;
+  return Offset(
+    terminalRect.left + _terminalPadding.left + (column + 0.5) * charWidth,
+    terminalRect.top +
+        _terminalPadding.top +
+        (row + 0.5) * _terminalFontSize * _terminalLineHeight,
+  );
 }
 
 Future<void> _tapTerminalCell(
   WidgetTester tester, {
+  required GhosttyTerminalController controller,
   required int column,
   int row = 0,
 }) async {
   await tester.tapAt(
-    _terminalCellCenter(_terminalRect(tester), column: column, row: row),
+    _terminalCellCenter(
+      tester,
+      controller: controller,
+      column: column,
+      row: row,
+    ),
     kind: ui.PointerDeviceKind.touch,
   );
 }
@@ -639,6 +661,7 @@ Future<void> _waitForSelectionText(
   WidgetTester tester, {
   required String? Function() selectedText,
   required String expected,
+  String Function()? diagnostics,
 }) async {
   for (var attempt = 0; attempt < 20; attempt++) {
     if (selectedText() == expected) {
@@ -646,7 +669,22 @@ Future<void> _waitForSelectionText(
     }
     await tester.pump(const Duration(milliseconds: 50));
   }
-  expect(selectedText(), expected);
+  final actual = selectedText();
+  final details = diagnostics == null ? '' : '\n${diagnostics()}';
+  fail('Expected selected text "$expected", found "$actual".$details');
+}
+
+String _terminalDiagnostics(
+  WidgetTester tester, {
+  required GhosttyTerminalController controller,
+  Offset? target,
+}) {
+  final rect = _terminalRect(tester);
+  final view = tester.view;
+  return 'terminalRect=$rect target=$target '
+      'grid=${controller.cols}x${controller.rows} '
+      'view=${view.physicalSize} dpr=${view.devicePixelRatio} '
+      'plainText="${controller.plainText}"';
 }
 
 String _lines(String prefix, int count) {

@@ -277,6 +277,12 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: cd pkgs/vte/ghostty_vte_flutter/example && flutter test integration_test/touch_terminal_e2e_test.dart
+          script: |
+            flutter devices
+            adb devices -l
+            adb shell wm size || true
+            adb shell wm density || true
+            cd pkgs/vte/ghostty_vte_flutter/example
+            flutter test integration_test/touch_terminal_e2e_test.dart
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
