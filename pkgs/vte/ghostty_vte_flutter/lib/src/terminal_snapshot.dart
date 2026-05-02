@@ -1277,6 +1277,8 @@ final class _GhosttyTerminalSnapshotParser {
           break;
         case GhosttySgrAttributeTag.GHOSTTY_SGR_ATTR_UNKNOWN:
           break;
+        case GhosttySgrAttributeTag.GHOSTTY_SGR_ATTR_MAX_VALUE:
+          break;
       }
     }
   }

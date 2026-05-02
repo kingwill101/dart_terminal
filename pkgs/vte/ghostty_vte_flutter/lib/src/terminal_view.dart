@@ -626,6 +626,30 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
         _scrollOffsetLines == 0 &&
         renderSnapshot != null &&
         renderSnapshot.hasViewportData) {
+      // First try to resolve the explicit OSC 8 hyperlink URI from the
+      // native terminal grid reference.  This is more accurate than regex
+      // URL detection because it surfaces application-set hyperlinks that
+      // may not look like plain URLs (e.g. short labels, anchors, etc.).
+      final localRow = position.row - _lastVisibleStartLine;
+      if (localRow >= 0 && localRow < renderSnapshot.rowsData.length) {
+        final row = renderSnapshot.rowsData[localRow];
+        if (row.hasHyperlink) {
+          try {
+            final ref = widget.controller.terminal.gridRef(
+              VtPoint.viewport(position.col, localRow),
+            );
+            final uri = ref.hyperlinkUri;
+            if (uri != null && uri.isNotEmpty) {
+              return uri;
+            }
+          } catch (_) {
+            // gridRef may throw if the terminal state changes between
+            // snapshot and resolution; fall through to regex detection.
+          }
+        }
+      }
+      // Fall back to regex-based URL detection for cells whose URL-like
+      // content was not marked with an explicit OSC 8 hyperlink.
       final uri = _renderSnapshotHyperlinkAt(
         renderSnapshot,
         position,
@@ -3368,6 +3392,9 @@ class _GhosttyTerminalPainter extends CustomPainter {
           canvas.drawRect(shapeRect, fillPaint);
         }
         canvas.drawRect(shapeRect, strokePaint);
+      case GhosttyRenderStateCursorVisualStyle
+          .GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_MAX_VALUE:
+        break;
     }
   }
 
