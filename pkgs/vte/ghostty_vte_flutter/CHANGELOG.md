@@ -1,3 +1,5 @@
+# Changelog
+
 ## 0.1.3
 
 - Improved mobile terminal text selection with touch handles, drag-to-extend
