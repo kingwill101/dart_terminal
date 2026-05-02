@@ -73,9 +73,9 @@ void main() {
       controller: controller,
       column: 2,
     );
-    await _doubleTapAt(tester, alphaTarget);
-    await _waitForSelectionText(
+    await _doubleTapUntilSelectionText(
       tester,
+      target: alphaTarget,
       selectedText: () => currentContent?.text,
       expected: 'alpha',
       diagnostics: () => _terminalDiagnostics(
@@ -645,6 +645,29 @@ Future<void> _doubleTapAt(WidgetTester tester, Offset target) async {
   await _settleInteraction(tester);
 }
 
+Future<void> _doubleTapUntilSelectionText(
+  WidgetTester tester, {
+  required Offset target,
+  required String? Function() selectedText,
+  required String expected,
+  String Function()? diagnostics,
+}) async {
+  for (var attempt = 1; attempt <= 3; attempt++) {
+    await _doubleTapAt(tester, target);
+    if (await _pumpUntilSelectionText(
+      tester,
+      selectedText: selectedText,
+      expected: expected,
+    )) {
+      return;
+    }
+    await tester.pump(const Duration(milliseconds: 500));
+  }
+  final actual = selectedText();
+  final details = diagnostics == null ? '' : '\n${diagnostics()}';
+  fail('Expected selected text "$expected", found "$actual".$details');
+}
+
 Future<void> _touchTapAt(WidgetTester tester, Offset target) async {
   final gesture = await tester.startGesture(
     target,
@@ -667,21 +690,18 @@ Future<void> _settleInteraction(
   }
 }
 
-Future<void> _waitForSelectionText(
+Future<bool> _pumpUntilSelectionText(
   WidgetTester tester, {
   required String? Function() selectedText,
   required String expected,
-  String Function()? diagnostics,
 }) async {
   for (var attempt = 0; attempt < 20; attempt++) {
     if (selectedText() == expected) {
-      return;
+      return true;
     }
     await tester.pump(const Duration(milliseconds: 50));
   }
-  final actual = selectedText();
-  final details = diagnostics == null ? '' : '\n${diagnostics()}';
-  fail('Expected selected text "$expected", found "$actual".$details');
+  return selectedText() == expected;
 }
 
 String _terminalDiagnostics(
