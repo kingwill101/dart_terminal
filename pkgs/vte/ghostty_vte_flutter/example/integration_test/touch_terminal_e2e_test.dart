@@ -56,15 +56,11 @@ void main() {
     );
 
     await tester.tap(find.byKey(_editorFieldKey));
-    await tester.pumpAndSettle();
+    await _settleInteraction(tester);
     expect(editorFocusNode.hasFocus, isTrue);
 
-    final terminalRect = _terminalRect(tester);
-    final alphaTarget = _terminalCellCenter(terminalRect, column: 2);
-    final gammaTarget = _terminalCellCenter(terminalRect, column: 13);
-
-    await tester.tapAt(gammaTarget);
-    await tester.pumpAndSettle();
+    await _tapTerminalCell(tester, column: 13);
+    await _settleInteraction(tester);
 
     expect(terminalFocusNode.hasFocus, isTrue);
     expect(editorFocusNode.hasFocus, isFalse);
@@ -72,17 +68,20 @@ void main() {
     expect(currentContent, isNull);
 
     await tester.pump(const Duration(milliseconds: 500));
-    await tester.tapAt(alphaTarget);
-    await tester.pump(const Duration(milliseconds: 80));
-    await tester.tapAt(alphaTarget);
-    await tester.pumpAndSettle();
+    final alphaTarget = _terminalCellCenter(_terminalRect(tester), column: 2);
+    await _doubleTapAt(tester, alphaTarget);
+    await _waitForSelectionText(
+      tester,
+      selectedText: () => currentContent?.text,
+      expected: 'alpha',
+    );
 
     expect(currentSelection, isNotNull);
     expect(currentContent?.text, 'alpha');
 
     await tester.pump(const Duration(milliseconds: 500));
-    await tester.tapAt(gammaTarget);
-    await tester.pumpAndSettle();
+    await _tapTerminalCell(tester, column: 13);
+    await _settleInteraction(tester);
 
     expect(currentSelection, isNull);
     expect(currentContent, isNull);
@@ -120,7 +119,7 @@ void main() {
     );
 
     await tester.tap(find.byKey(_editorFieldKey));
-    await tester.pumpAndSettle();
+    await _settleInteraction(tester);
     expect(editorFocusNode.hasFocus, isTrue);
 
     final terminalRect = _terminalRect(tester);
@@ -140,7 +139,7 @@ void main() {
 
     await _moveTouchInSteps(tester, gesture, from: scrollStart, to: scrollEnd);
     await gesture.up();
-    await tester.pumpAndSettle();
+    await _settleInteraction(tester);
 
     expect(scrollController.position.maxScrollExtent, greaterThan(0));
     expect(scrollController.offset, greaterThan(0));
@@ -149,7 +148,7 @@ void main() {
     await tester.longPressAt(
       Offset(terminalRect.left + 40, terminalRect.top + 40),
     );
-    await tester.pumpAndSettle();
+    await _settleInteraction(tester);
 
     expect(currentContent?.text, isNotEmpty);
   });
@@ -176,13 +175,13 @@ void main() {
     await tester.longPressAt(
       Offset(terminalRect.left + 40, terminalRect.top + 40),
     );
-    await tester.pumpAndSettle();
+    await _settleInteraction(tester);
 
     expect(find.byType(AdaptiveTextSelectionToolbar), findsOneWidget);
     expect(find.text('Copy'), findsOneWidget);
 
     await tester.tap(find.text('Copy'));
-    await tester.pumpAndSettle();
+    await _settleInteraction(tester);
 
     expect(copiedText, 'copyable terminal text');
     expect(find.byType(AdaptiveTextSelectionToolbar), findsNothing);
@@ -219,13 +218,13 @@ void main() {
     await tester.longPressAt(
       Offset(terminalRect.left + 40, terminalRect.top + 40),
     );
-    await tester.pumpAndSettle();
+    await _settleInteraction(tester);
 
     expect(find.text('Copy'), findsOneWidget);
     expect(find.text('Inspect'), findsOneWidget);
 
     await tester.tap(find.text('Inspect'));
-    await tester.pumpAndSettle();
+    await _settleInteraction(tester);
 
     expect(actionText, 'custom terminal action');
     expect(find.byType(AdaptiveTextSelectionToolbar), findsNothing);
@@ -253,7 +252,7 @@ void main() {
     await tester.longPressAt(
       Offset(terminalRect.left + 40, terminalRect.top + 44),
     );
-    await tester.pumpAndSettle();
+    await _settleInteraction(tester);
 
     expect(currentContent?.text, 'second line');
     final endHandle = find.byKey(
@@ -271,7 +270,7 @@ void main() {
     );
     await tester.pump();
     await gesture.up();
-    await tester.pumpAndSettle();
+    await _settleInteraction(tester);
 
     expect(currentContent?.text, contains('second line'));
     expect(currentContent?.text, contains('third'));
@@ -308,7 +307,7 @@ void main() {
     await tester.longPressAt(
       Offset(terminalRect.left + 40, terminalRect.bottom - 16),
     );
-    await tester.pumpAndSettle();
+    await _settleInteraction(tester);
 
     expect(currentContent?.text, 'Line 179');
     final startHandle = find.byKey(
@@ -334,7 +333,7 @@ void main() {
     expect(afterLines.length, greaterThan(beforeLines.length));
 
     await gesture.up();
-    await tester.pumpAndSettle();
+    await _settleInteraction(tester);
   });
 
   testWidgets('bottom-edge long press does not flash viewport selection', (
@@ -382,7 +381,7 @@ void main() {
     expect(selectionChanges, changesAfterLongPress);
 
     await gesture.up();
-    await tester.pumpAndSettle();
+    await _settleInteraction(tester);
   });
 
   testWidgets('touch drag selection can be opted in', (tester) async {
@@ -427,7 +426,7 @@ void main() {
       to: selectionEnd,
     );
     await gesture.up();
-    await tester.pumpAndSettle();
+    await _settleInteraction(tester);
 
     expect(scrollController.offset, 0);
     expect(currentSelection, isNotNull);
@@ -458,7 +457,7 @@ void main() {
     );
     await tester.pump();
     await gesture.up();
-    await tester.pumpAndSettle();
+    await _settleInteraction(tester);
 
     expect(controller.mouseEvents, isEmpty);
   });
@@ -488,7 +487,7 @@ void main() {
     );
     await tester.pump();
     await gesture.up();
-    await tester.pumpAndSettle();
+    await _settleInteraction(tester);
 
     expect(controller.mouseEvents, isNotEmpty);
     expect(
@@ -566,7 +565,7 @@ Future<void> _pumpTerminalHarness(
       ),
     ),
   );
-  await tester.pumpAndSettle();
+  await _settleInteraction(tester);
 }
 
 Rect _terminalRect(WidgetTester tester) {
@@ -604,6 +603,50 @@ double _measureTerminalCharWidth() {
   final width = painter.width;
   painter.dispose();
   return width;
+}
+
+Future<void> _tapTerminalCell(
+  WidgetTester tester, {
+  required int column,
+  int row = 0,
+}) async {
+  await tester.tapAt(
+    _terminalCellCenter(_terminalRect(tester), column: column, row: row),
+    kind: ui.PointerDeviceKind.touch,
+  );
+}
+
+Future<void> _doubleTapAt(WidgetTester tester, Offset target) async {
+  await tester.tapAt(target, kind: ui.PointerDeviceKind.touch);
+  await tester.pump(const Duration(milliseconds: 120));
+  await tester.tapAt(target, kind: ui.PointerDeviceKind.touch);
+  await _settleInteraction(tester);
+}
+
+Future<void> _settleInteraction(
+  WidgetTester tester, {
+  Duration duration = const Duration(milliseconds: 300),
+}) async {
+  const step = Duration(milliseconds: 50);
+  var elapsed = Duration.zero;
+  while (elapsed < duration) {
+    await tester.pump(step);
+    elapsed += step;
+  }
+}
+
+Future<void> _waitForSelectionText(
+  WidgetTester tester, {
+  required String? Function() selectedText,
+  required String expected,
+}) async {
+  for (var attempt = 0; attempt < 20; attempt++) {
+    if (selectedText() == expected) {
+      return;
+    }
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+  expect(selectedText(), expected);
 }
 
 String _lines(String prefix, int count) {

@@ -1,3 +1,12 @@
+## 0.1.3-wip
+
+- Improved mobile terminal text selection with touch handles, drag-to-extend
+  selection, adaptive selection toolbar support, and custom toolbar actions.
+- Fixed tap behavior so tapping a cell after an active word selection clears
+  the selection instead of replacing it with a single-character highlight.
+- Added Android integration coverage for focus, word selection, selection
+  clearing, scrolling, resize stability, and toolbar interactions.
+
 ## 0.1.2+1
 
 - Use latest ghostty_vte package version
