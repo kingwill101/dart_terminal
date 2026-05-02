@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.5-wip
+
+- Added shared hook metadata for portable_pty platform labels, library names,
+  and prebuilt artifact names.
+- The build hook now reports iOS native assets as static libraries for device
+  and simulator targets.
+- Added CI build coverage for the full native PTY target matrix, including
+  iOS, Android, Windows arm64, and Intel iOS simulator.
+
 ## 0.0.4
 
 - Default native shell resolution now uses `/system/bin/sh` on Android instead

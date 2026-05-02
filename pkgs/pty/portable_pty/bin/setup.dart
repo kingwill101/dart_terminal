@@ -1,7 +1,7 @@
 /// Downloads the prebuilt portable_pty native library for the host platform.
 ///
 /// Usage:
-///   dart run portable_pty:setup [--tag v0.0.2] [--platform linux-x64]
+///   dart run portable_pty:setup [--tag portable_pty-v0.0.4] [--platform linux-x64]
 ///
 /// The library is placed in `.prebuilt/<platform>/` at the project root,
 /// where the build hook will find it automatically.
@@ -9,21 +9,11 @@ library;
 
 import 'dart:io';
 
-const _repo = 'kingwill101/dart_terminal';
-const _defaultTag = 'v0.0.3';
+import 'package:portable_pty/src/hook/artifacts.dart';
+import 'package:portable_pty/src/hook/asset_hashes.dart';
 
-const _artifacts = <String, String>{
-  'linux-x64': 'pty-linux-x64.tar.gz',
-  'linux-arm64': 'pty-linux-arm64.tar.gz',
-  'macos-arm64': 'pty-macos-arm64.tar.gz',
-  'macos-x64': 'pty-macos-x64.tar.gz',
-  'windows-x64': 'pty-windows-x64.tar.gz',
-  'android-arm64': 'pty-android-arm64.tar.gz',
-  'android-arm': 'pty-android-arm.tar.gz',
-  'android-x64': 'pty-android-x64.tar.gz',
-  'ios-arm64': 'pty-ios-arm64.tar.gz',
-  'ios-sim-arm64': 'pty-ios-sim-arm64.tar.gz',
-};
+const _repo = 'kingwill101/dart_terminal';
+const _defaultTag = releaseTag;
 
 Future<void> main(List<String> args) async {
   var tag = _defaultTag;
@@ -54,11 +44,16 @@ Future<void> main(List<String> args) async {
 
   platform ??= _hostPlatform();
 
-  final artifact = _artifacts[platform];
+  final artifact = tag == releaseTag
+      ? assetHashes[platform]?.tarball
+      : portablePtyPrebuiltArtifacts[platform];
   if (artifact == null) {
+    final available = tag == releaseTag
+        ? assetHashes.keys
+        : portablePtyPrebuiltArtifacts.keys;
     stderr.writeln(
-      'No prebuilt portable_pty artifact for platform "$platform".\n'
-      'Available: ${_artifacts.keys.join(', ')}',
+      'No prebuilt portable_pty artifact for platform "$platform" in $tag.\n'
+      'Available: ${available.join(', ')}',
     );
     exitCode = 1;
     return;

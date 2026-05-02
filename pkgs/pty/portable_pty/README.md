@@ -5,8 +5,9 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/kingwill101/dart_terminal/blob/master/pkgs/pty/portable_pty/LICENSE)
 
 Cross-platform pseudo-terminal (PTY) for Dart. Spawn shell subprocesses on
-Linux, macOS, and Windows with full terminal I/O — or connect to a remote
-PTY server on the web via WebSocket / WebTransport.
+Linux, macOS, Windows, and Android with full terminal I/O, link native PTY
+assets into supported iOS builds, or connect to a remote PTY server on the web
+via WebSocket / WebTransport.
 
 ## Features
 
@@ -27,14 +28,18 @@ PTY server on the web via WebSocket / WebTransport.
 | macOS | Native PTY (Rust) | Rust (or prebuilt) |
 | Windows | ConPTY (Rust) | Rust (or prebuilt) |
 | Android | Native PTY (Rust) | Rust + cross (or prebuilt) |
-| iOS | Static lib (Rust) | Rust (or prebuilt) |
+| iOS | Static Rust library; local spawning depends on app sandbox | Rust (or prebuilt) |
 | Web | WebSocket / WebTransport | None (pure Dart) |
+
+iOS support covers native asset builds for device and simulator targets. A
+sandboxed iOS app generally cannot spawn arbitrary local shell subprocesses, so
+use a remote PTY transport for App Store-style iOS applications.
 
 ## Installation
 
 ```yaml
 dependencies:
-  portable_pty: ^0.0.2
+  portable_pty: ^0.0.4
 ```
 
 The Rust native library is compiled automatically by a
@@ -160,13 +165,13 @@ automatically — **no Rust install required**.
 You can also specify a release tag or target platform:
 
 ```bash
-dart run portable_pty:setup --tag v0.0.2 --platform macos-arm64
+dart run portable_pty:setup --tag portable_pty-v0.0.4 --platform macos-arm64
 ```
 
 **Monorepo users** can download all prebuilt libs at once:
 
 ```bash
-dart run tool/prebuilt.dart --tag v0.0.2 --lib pty
+dart run tool/prebuilt.dart --tag portable_pty-v0.0.4 --lib pty
 ```
 
 You can also set the `PORTABLE_PTY_PREBUILT` environment variable to point
