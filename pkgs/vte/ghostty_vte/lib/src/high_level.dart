@@ -279,6 +279,39 @@ final class GhosttyVt {
       calloc.free(out);
     }
   }
+
+  /// Returns a JSON string describing the layout of every C API struct.
+  ///
+  /// Primarily useful for language bindings that need struct field offsets
+  /// and sizes (e.g. wasm/JS environments that can't share C struct
+  /// definitions with the host).
+  ///
+  /// The returned string is valid for the lifetime of the process.
+  static String typeJson() {
+    final ptr = bindings.ghostty_type_json();
+    if (ptr == ffi.nullptr) return '{}';
+    return ptr.cast<Utf8>().toDartString();
+  }
+
+  /// Installs a process-global system option (e.g. a PNG decode callback).
+  ///
+  /// Call this once at startup before creating any terminal that depends
+  /// on the option.  Pass a null [value] pointer to clear the option.
+  ///
+  /// Example — install a no-op PNG decoder that always fails:
+  /// ```dart
+  /// // In practice supply a real decoder using NativeCallable.
+  /// GhosttyVt.sysSet(
+  ///   bindings.GhosttySysOption.GHOSTTY_SYS_OPT_DECODE_PNG,
+  ///   ffi.nullptr,
+  /// );
+  /// ```
+  static void sysSet(
+    bindings.GhosttySysOption option,
+    ffi.Pointer<ffi.Void> value,
+  ) {
+    _checkResult(bindings.ghostty_sys_set(option, value), 'ghostty_sys_set');
+  }
 }
 
 /// Exception thrown for libghostty-vt operation failures.
@@ -395,6 +428,8 @@ void _writeStyleColorToNative(
         ..r = rgb.r
         ..g = rgb.g
         ..b = rgb.b;
+    default: // _MAX_VALUE ABI sentinel – ignore
+      break;
   }
 }
 
@@ -745,6 +780,9 @@ final class VtModes {
   static const reverseWrap = VtMode(45);
   static const altScreenLegacy = VtMode(47);
   static const keypadKeys = VtMode(66);
+
+  /// Backarrow key mode (DECBKM, DEC mode 67).
+  static const backarrowKey = VtMode(67);
   static const leftRightMargin = VtMode(69);
   static const normalMouse = VtMode(1000);
   static const buttonMouse = VtMode(1002);
@@ -821,6 +859,27 @@ final class VtPoint {
   }
 }
 
+/// A selection range over a region of terminal content.
+///
+/// Used with [VtFormatterTerminalOptions.selection] to restrict
+/// formatter output to a specific region.
+final class VtSelection {
+  const VtSelection({
+    required this.start,
+    required this.end,
+    this.rectangle = false,
+  });
+
+  /// Start of the selection (inclusive).
+  final VtPoint start;
+
+  /// End of the selection (inclusive).
+  final VtPoint end;
+
+  /// Whether this is a rectangular (block) selection.
+  final bool rectangle;
+}
+
 /// Tagged style color resolved from Ghostty VT state.
 final class VtStyleColor {
   const VtStyleColor._({required this.tag, this.paletteIndex, this.rgb});
@@ -856,6 +915,8 @@ final class VtStyleColor {
       bindings.GhosttyStyleColorTag.GHOSTTY_STYLE_COLOR_RGB => VtStyleColor.rgb(
         _rgbFromNative(native.value.rgb),
       ),
+      // _MAX_VALUE is an ABI sizing sentinel; treat as none.
+      _ => const VtStyleColor.none(),
     };
   }
 }
@@ -1358,6 +1419,8 @@ final class VtRenderColors {
         color.paletteIndex!,
       ),
       bindings.GhosttyStyleColorTag.GHOSTTY_STYLE_COLOR_RGB => color.rgb,
+      // _MAX_VALUE is an ABI sizing sentinel; treat as none.
+      _ => defaultColor,
     };
   }
 
@@ -2071,12 +2134,20 @@ final class VtFormatterTerminalOptions {
     this.unwrap = false,
     this.trim = true,
     this.extra = const VtFormatterTerminalExtra(),
+    this.selection,
   });
 
   final bindings.GhosttyFormatterFormat emit;
   final bool unwrap;
   final bool trim;
   final VtFormatterTerminalExtra extra;
+
+  /// Optional selection to restrict output to a specific region.
+  ///
+  /// When non-null the formatter will only emit content within this
+  /// selection range.  Pass null (the default) to format the entire
+  /// visible screen.
+  final VtSelection? selection;
 }
 
 /// Stateful VT terminal emulator instance.
@@ -3947,6 +4018,10 @@ final class VtTerminalFormatter {
   ) {
     final out = calloc<bindings.GhosttyFormatter>();
     final nativeOptions = calloc<bindings.GhosttyFormatterTerminalOptions>();
+    // Allocate a selection struct only when a selection is provided.
+    final selPtr = options.selection != null
+        ? _resolveSelectionPtr(terminal._handle, options.selection!)
+        : ffi.nullptr;
     try {
       final screen = options.extra.screen;
       nativeOptions.ref
@@ -3967,7 +4042,8 @@ final class VtTerminalFormatter {
         ..extra.screen.hyperlink = screen.hyperlink
         ..extra.screen.protection = screen.protection
         ..extra.screen.kitty_keyboard = screen.kittyKeyboard
-        ..extra.screen.charsets = screen.charsets;
+        ..extra.screen.charsets = screen.charsets
+        ..selection = selPtr;
 
       final result = bindings.ghostty_formatter_terminal_new(
         ffi.nullptr,
@@ -3978,8 +4054,52 @@ final class VtTerminalFormatter {
       _checkResult(result, 'ghostty_formatter_terminal_new');
       return out.value;
     } finally {
+      if (selPtr != ffi.nullptr) calloc.free(selPtr);
       calloc.free(nativeOptions);
       calloc.free(out);
+    }
+  }
+
+  /// Resolves a [VtSelection] into a heap-allocated [GhosttySelection].
+  ///
+  /// The caller owns the returned pointer and must free it with
+  /// [calloc.free] when done.
+  static ffi.Pointer<bindings.GhosttySelection> _resolveSelectionPtr(
+    bindings.GhosttyTerminal terminal,
+    VtSelection selection,
+  ) {
+    final startRefPtr = calloc<bindings.GhosttyGridRef>();
+    final endRefPtr = calloc<bindings.GhosttyGridRef>();
+    final startPt = calloc<bindings.GhosttyPoint>();
+    final endPt = calloc<bindings.GhosttyPoint>();
+    final selPtr = calloc<bindings.GhosttySelection>();
+    try {
+      startRefPtr.ref.size = ffi.sizeOf<bindings.GhosttyGridRef>();
+      endRefPtr.ref.size = ffi.sizeOf<bindings.GhosttyGridRef>();
+      selection.start._writeTo(startPt.ref);
+      selection.end._writeTo(endPt.ref);
+      _checkResult(
+        bindings.ghostty_terminal_grid_ref(terminal, startPt.ref, startRefPtr),
+        'ghostty_terminal_grid_ref(selection.start)',
+      );
+      _checkResult(
+        bindings.ghostty_terminal_grid_ref(terminal, endPt.ref, endRefPtr),
+        'ghostty_terminal_grid_ref(selection.end)',
+      );
+      selPtr.ref
+        ..size = ffi.sizeOf<bindings.GhosttySelection>()
+        ..start = startRefPtr.ref
+        ..end = endRefPtr.ref
+        ..rectangle = selection.rectangle;
+      return selPtr;
+    } catch (_) {
+      calloc.free(selPtr);
+      rethrow;
+    } finally {
+      calloc.free(endPt);
+      calloc.free(startPt);
+      calloc.free(endRefPtr);
+      calloc.free(startRefPtr);
     }
   }
 
