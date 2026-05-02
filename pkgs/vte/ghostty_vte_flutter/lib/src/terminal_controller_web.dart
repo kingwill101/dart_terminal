@@ -88,6 +88,12 @@ class GhosttyTerminalController extends ChangeNotifier
   @override
   int get rows => _rows;
 
+  /// Build information for the compiled Ghostty VT library.
+  ///
+  /// Includes SIMD availability, Kitty graphics support, tmux control-mode
+  /// support, optimization level, and version information.
+  VtBuildInfo get buildInfo => GhosttyVt.buildInfo;
+
   /// Live VT terminal state backing this controller.
   VtTerminal get terminal => _ensureTerminal();
 
@@ -182,6 +188,36 @@ class GhosttyTerminalController extends ChangeNotifier
         unwrap: unwrap,
         trim: trim,
         extra: extra,
+      ),
+    );
+    try {
+      return formatter.formatText();
+    } finally {
+      formatter.close();
+    }
+  }
+
+  /// Formats the terminal output restricted to [selection].
+  ///
+  /// Uses [VtFormatterTerminalOptions.selection] to emit only the cells
+  /// covered by [selection].  The [emit], [unwrap], [trim], and [extra]
+  /// parameters mirror those of [formatTerminal].
+  String formatTerminalForSelection({
+    required VtSelection selection,
+    GhosttyFormatterFormat emit =
+        GhosttyFormatterFormat.GHOSTTY_FORMATTER_FORMAT_PLAIN,
+    bool unwrap = false,
+    bool trim = true,
+    VtFormatterTerminalExtra extra = const VtFormatterTerminalExtra(),
+  }) {
+    final terminal = _ensureTerminal();
+    final formatter = terminal.createFormatter(
+      VtFormatterTerminalOptions(
+        emit: emit,
+        unwrap: unwrap,
+        trim: trim,
+        extra: extra,
+        selection: selection,
       ),
     );
     try {

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0-wip
+
+- Bumped the `ghostty_vte` dependency to `^0.2.0-wip` for the new Kitty
+  Graphics Protocol wrapper APIs.
+- Exposed Ghostty VT build information and selection-scoped terminal
+  formatting through `GhosttyTerminalController`.
+- Improved explicit OSC 8 hyperlink hit testing by resolving hyperlink URIs
+  from native grid references before falling back to URL detection.
+
 ## 0.1.3
 
 - Improved mobile terminal text selection with touch handles, drag-to-extend

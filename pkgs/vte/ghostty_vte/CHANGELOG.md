@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.0-wip
+
+- Added high-level Kitty Graphics Protocol wrappers for image storage,
+  image lookup, placement iteration, placement viewport positions, placement
+  render info, image metadata, and borrowed raw pixel data.
+- Added `GhosttyVt.installPngDecoder()` for registering a Dart PNG decoder
+  callback with libghostty-vt.
+- Added terminal controls for Kitty image storage limits, Kitty image loading
+  media, APC buffer limits, and batch terminal data reads via `getMulti()`.
+- Exposed OSC 8 hyperlink URIs through grid-reference snapshots.
+
 ## 0.1.3
 
 - Added iOS device and simulator prebuilt target support for `libghostty-vt`
