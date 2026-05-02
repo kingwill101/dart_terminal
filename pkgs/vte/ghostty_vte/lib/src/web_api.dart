@@ -620,6 +620,112 @@ enum GhosttyFormatterFormat {
   final int value;
 }
 
+/// Queryable data kinds for ghostty_kitty_graphics_get().
+enum GhosttyKittyGraphicsData {
+  GHOSTTY_KITTY_GRAPHICS_DATA_INVALID(0),
+  GHOSTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR(1);
+
+  const GhosttyKittyGraphicsData(this.value);
+  final int value;
+}
+
+/// Queryable data kinds for ghostty_kitty_graphics_placement_get().
+enum GhosttyKittyGraphicsPlacementData {
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_INVALID(0),
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID(1),
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_PLACEMENT_ID(2),
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IS_VIRTUAL(3),
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_X_OFFSET(4),
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Y_OFFSET(5),
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_X(6),
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_Y(7),
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_WIDTH(8),
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_HEIGHT(9),
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_COLUMNS(10),
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_ROWS(11),
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Z(12);
+
+  const GhosttyKittyGraphicsPlacementData(this.value);
+  final int value;
+}
+
+/// Z-layer classification for kitty graphics placements.
+enum GhosttyKittyPlacementLayer {
+  GHOSTTY_KITTY_PLACEMENT_LAYER_ALL(0),
+  GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG(1),
+  GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT(2),
+  GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT(3);
+
+  const GhosttyKittyPlacementLayer(this.value);
+  final int value;
+}
+
+/// Settable options for a placement iterator.
+enum GhosttyKittyGraphicsPlacementIteratorOption {
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER(0);
+
+  const GhosttyKittyGraphicsPlacementIteratorOption(this.value);
+  final int value;
+}
+
+/// Pixel format of a Kitty graphics image.
+enum GhosttyKittyImageFormat {
+  GHOSTTY_KITTY_IMAGE_FORMAT_RGB(0),
+  GHOSTTY_KITTY_IMAGE_FORMAT_RGBA(1),
+  GHOSTTY_KITTY_IMAGE_FORMAT_PNG(2),
+  GHOSTTY_KITTY_IMAGE_FORMAT_GRAY_ALPHA(3),
+  GHOSTTY_KITTY_IMAGE_FORMAT_GRAY(4);
+
+  const GhosttyKittyImageFormat(this.value);
+  final int value;
+}
+
+/// Compression of a Kitty graphics image.
+enum GhosttyKittyImageCompression {
+  GHOSTTY_KITTY_IMAGE_COMPRESSION_NONE(0),
+  GHOSTTY_KITTY_IMAGE_COMPRESSION_ZLIB_DEFLATE(1);
+
+  const GhosttyKittyImageCompression(this.value);
+  final int value;
+}
+
+/// Queryable data kinds for ghostty_kitty_graphics_image_get().
+enum GhosttyKittyGraphicsImageData {
+  GHOSTTY_KITTY_IMAGE_DATA_INVALID(0),
+  GHOSTTY_KITTY_IMAGE_DATA_ID(1),
+  GHOSTTY_KITTY_IMAGE_DATA_NUMBER(2),
+  GHOSTTY_KITTY_IMAGE_DATA_WIDTH(3),
+  GHOSTTY_KITTY_IMAGE_DATA_HEIGHT(4),
+  GHOSTTY_KITTY_IMAGE_DATA_FORMAT(5),
+  GHOSTTY_KITTY_IMAGE_DATA_COMPRESSION(6),
+  GHOSTTY_KITTY_IMAGE_DATA_DATA_PTR(7),
+  GHOSTTY_KITTY_IMAGE_DATA_DATA_LEN(8);
+
+  const GhosttyKittyGraphicsImageData(this.value);
+  final int value;
+}
+
+/// Log severity levels for the sys log callback.
+enum GhosttySysLogLevel {
+  GHOSTTY_SYS_LOG_LEVEL_ERROR(0),
+  GHOSTTY_SYS_LOG_LEVEL_WARNING(1),
+  GHOSTTY_SYS_LOG_LEVEL_INFO(2),
+  GHOSTTY_SYS_LOG_LEVEL_DEBUG(3);
+
+  const GhosttySysLogLevel(this.value);
+  final int value;
+}
+
+/// System option identifiers for ghostty_sys_set().
+enum GhosttySysOption {
+  GHOSTTY_SYS_OPT_USERDATA(0),
+  GHOSTTY_SYS_OPT_DECODE_PNG(1),
+  GHOSTTY_SYS_OPT_LOG(2);
+
+  const GhosttySysOption(this.value);
+  final int value;
+}
+
 /// Key encoder feature flags.
 enum GhosttyKeyEncoderOption {
   GHOSTTY_KEY_ENCODER_OPT_CURSOR_KEY_APPLICATION(0),
@@ -868,7 +974,7 @@ void _checkResult(int result, String operation) {
 const int _ghosttyTerminalOptionsSize = 8;
 const int _ghosttyFormatterScreenExtraSize = 12;
 const int _ghosttyFormatterTerminalExtraSize = 24;
-const int _ghosttyFormatterTerminalOptionsSize = 36;
+const int _ghosttyFormatterTerminalOptionsSize = 40;
 const int _ghosttyTerminalScrollViewportSize = 24;
 const int _ghosttyStringSize = 8;
 const int _ghosttyColorRgbSize = 3;
@@ -1013,6 +1119,8 @@ void _writeFormatterTerminalOptions(
   _writeBoolByte(rt, ptr, 31, screen.protection);
   _writeBoolByte(rt, ptr, 32, screen.kittyKeyboard);
   _writeBoolByte(rt, ptr, 33, screen.charsets);
+  // selection pointer (NULL = no restriction); offset 36 on wasm32.
+  rt.writeU32(ptr + 36, 0);
 }
 
 final class GhosttyModsMask {
@@ -1156,6 +1264,9 @@ final class VtModes {
   static const reverseWrap = VtMode(45);
   static const altScreenLegacy = VtMode(47);
   static const keypadKeys = VtMode(66);
+
+  /// Backarrow key mode (DECBKM, DEC mode 67).
+  static const backarrowKey = VtMode(67);
   static const leftRightMargin = VtMode(69);
   static const normalMouse = VtMode(1000);
   static const buttonMouse = VtMode(1002);
@@ -2866,6 +2977,30 @@ Never _unsupportedTerminalApi(String member) {
   );
 }
 
+/// A selection range over a region of terminal content.
+///
+/// Used with [VtFormatterTerminalOptions.selection] to restrict formatter
+/// output to a specific region.
+///
+/// Selection is accepted in the API on the web target but is currently
+/// ignored — the formatter always emits the full screen.
+final class VtSelection {
+  const VtSelection({
+    required this.start,
+    required this.end,
+    this.rectangle = false,
+  });
+
+  /// Start of the selection (inclusive).
+  final VtPoint start;
+
+  /// End of the selection (inclusive).
+  final VtPoint end;
+
+  /// Whether this is a rectangular (block) selection.
+  final bool rectangle;
+}
+
 final class VtTerminalScrollViewport {
   const VtTerminalScrollViewport._(this._tag, {this.delta = 0});
 
@@ -2940,12 +3075,19 @@ final class VtFormatterTerminalOptions {
     this.unwrap = false,
     this.trim = true,
     this.extra = const VtFormatterTerminalExtra(),
+    this.selection,
   });
 
   final GhosttyFormatterFormat emit;
   final bool unwrap;
   final bool trim;
   final VtFormatterTerminalExtra extra;
+
+  /// Optional selection to restrict output to a specific region.
+  ///
+  /// Currently ignored on the web (wasm) target — the full screen is
+  /// always formatted.  Set to null (the default) for no restriction.
+  final VtSelection? selection;
 }
 
 final class VtAllocator {
@@ -4048,5 +4190,26 @@ final class GhosttyVt {
     } finally {
       rt.freeU8Array(out, 4);
     }
+  }
+
+  /// Returns a JSON string describing the layout of every C API struct.
+  ///
+  /// Calls the wasm `ghostty_type_json` export, reads the null-terminated
+  /// string from wasm memory, and returns it as a Dart [String].
+  static String typeJson() {
+    final rt = _requireTerminalRuntime('GhosttyVt.typeJson');
+    final ptr = rt.callInt('ghostty_type_json', const <Object>[]);
+    if (ptr == 0) return '{}';
+    return rt.readCString(ptr);
+  }
+
+  /// Installs a process-global system option.
+  ///
+  /// Currently a no-op on the web target: system callbacks (such as a
+  /// PNG decoder) cannot be installed into the wasm module from Dart.
+  /// This method exists solely for API parity with the native target.
+  static void sysSet(GhosttySysOption option, Object? value) {
+    // Wasm callback installation is not yet supported.
+    // ignore: no-op on web
   }
 }

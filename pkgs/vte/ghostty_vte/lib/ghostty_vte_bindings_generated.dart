@@ -9,6 +9,40 @@
 // ignore_for_file: type=lint, unused_import
 import 'dart:ffi' as ffi;
 
+/// Return a pointer to a null-terminated JSON string describing the
+/// layout of every C API struct for the current target.
+///
+/// This is primarily useful for language bindings that can't easily
+/// set C struct fields and need to do so via byte offsets. For example,
+/// WebAssembly modules can't share struct definitions with the host.
+///
+/// Example (abbreviated):
+/// @code{.json}
+/// {
+/// "GhosttyMouseEncoderSize": {
+/// "size": 40,
+/// "align": 8,
+/// "fields": {
+/// "size":           { "offset": 0,  "size": 8, "type": "u64" },
+/// "screen_width":   { "offset": 8,  "size": 4, "type": "u32" },
+/// "screen_height":  { "offset": 12, "size": 4, "type": "u32" },
+/// "cell_width":     { "offset": 16, "size": 4, "type": "u32" },
+/// "cell_height":    { "offset": 20, "size": 4, "type": "u32" },
+/// "padding_top":    { "offset": 24, "size": 4, "type": "u32" },
+/// "padding_bottom": { "offset": 28, "size": 4, "type": "u32" },
+/// "padding_right":  { "offset": 32, "size": 4, "type": "u32" },
+/// "padding_left":   { "offset": 36, "size": 4, "type": "u32" }
+/// }
+/// }
+/// }
+/// @endcode
+///
+/// The returned pointer is valid for the lifetime of the process.
+///
+/// @return Pointer to the null-terminated JSON string.
+@ffi.Native<ffi.Pointer<ffi.Char> Function()>()
+external ffi.Pointer<ffi.Char> ghostty_type_json();
+
 /// Allocate a buffer of `len` bytes.
 ///
 /// Uses the provided allocator, or the default allocator if NULL is passed.
@@ -150,96 +184,6 @@ GhosttyResult ghostty_focus_encode(
   _ghostty_focus_encode(event.value, buf, buf_len, out_written),
 );
 
-/// Encode a DECRPM (DEC Private Mode Report) response sequence.
-///
-/// Writes a mode report escape sequence into the provided buffer.
-/// The generated sequence has the form:
-/// - DEC private mode: CSI ? Ps1 ; Ps2 $ y
-/// - ANSI mode:        CSI Ps1 ; Ps2 $ y
-///
-/// If the buffer is too small, the function returns GHOSTTY_OUT_OF_SPACE
-/// and writes the required buffer size to @p out_written. The caller can
-/// then retry with a sufficiently sized buffer.
-///
-/// @param mode The mode identifying the mode to report on
-/// @param state The report state for this mode
-/// @param buf Output buffer to write the encoded sequence into (may be NULL)
-/// @param buf_len Size of the output buffer in bytes
-/// @param[out] out_written On success, the number of bytes written. On
-/// GHOSTTY_OUT_OF_SPACE, the required buffer size.
-/// @return GHOSTTY_SUCCESS on success, GHOSTTY_OUT_OF_SPACE if the buffer
-/// is too small
-@ffi.Native<
-  ffi.Int Function(
-    GhosttyMode,
-    ffi.UnsignedInt,
-    ffi.Pointer<ffi.Char>,
-    ffi.Size,
-    ffi.Pointer<ffi.Size>,
-  )
->(symbol: 'ghostty_mode_report_encode')
-external int _ghostty_mode_report_encode(
-  int mode,
-  int state,
-  ffi.Pointer<ffi.Char> buf,
-  int buf_len,
-  ffi.Pointer<ffi.Size> out_written,
-);
-
-GhosttyResult ghostty_mode_report_encode(
-  DartGhosttyMode mode,
-  GhosttyModeReportState state,
-  ffi.Pointer<ffi.Char> buf,
-  int buf_len,
-  ffi.Pointer<ffi.Size> out_written,
-) => GhosttyResult.fromValue(
-  _ghostty_mode_report_encode(mode, state.value, buf, buf_len, out_written),
-);
-
-/// Encode a terminal size report into an escape sequence.
-///
-/// Encodes a size report in the format specified by @p style into the
-/// provided buffer.
-///
-/// If the buffer is too small, the function returns GHOSTTY_OUT_OF_SPACE
-/// and writes the required buffer size to @p out_written. The caller can
-/// then retry with a sufficiently sized buffer.
-///
-/// @param style The size report format to encode
-/// @param size Terminal size information
-/// @param buf Output buffer to write the encoded sequence into (may be NULL)
-/// @param buf_len Size of the output buffer in bytes
-/// @param[out] out_written On success, the number of bytes written. On
-/// GHOSTTY_OUT_OF_SPACE, the required buffer size.
-/// @return GHOSTTY_SUCCESS on success, GHOSTTY_OUT_OF_SPACE if the buffer
-/// is too small
-@ffi.Native<
-  ffi.Int Function(
-    ffi.UnsignedInt,
-    GhosttySizeReportSize,
-    ffi.Pointer<ffi.Char>,
-    ffi.Size,
-    ffi.Pointer<ffi.Size>,
-  )
->(symbol: 'ghostty_size_report_encode')
-external int _ghostty_size_report_encode(
-  int style,
-  GhosttySizeReportSize size,
-  ffi.Pointer<ffi.Char> buf,
-  int buf_len,
-  ffi.Pointer<ffi.Size> out_written,
-);
-
-GhosttyResult ghostty_size_report_encode(
-  GhosttySizeReportStyle style,
-  GhosttySizeReportSize size,
-  ffi.Pointer<ffi.Char> buf,
-  int buf_len,
-  ffi.Pointer<ffi.Size> out_written,
-) => GhosttyResult.fromValue(
-  _ghostty_size_report_encode(style.value, size, buf, buf_len, out_written),
-);
-
 /// Get data from a cell.
 ///
 /// Extracts typed data from the given cell based on the specified
@@ -265,6 +209,52 @@ GhosttyResult ghostty_cell_get(
   ffi.Pointer<ffi.Void> out,
 ) => GhosttyResult.fromValue(_ghostty_cell_get(cell, data.value, out));
 
+/// Get multiple data fields from a cell in a single call.
+///
+/// Each element in the keys array specifies a data kind, and the
+/// corresponding element in the values array receives the result.
+///
+/// Processing stops at the first error; on success out_written
+/// is set to count, on error it is set to the index of the
+/// failing key (i.e. the number of values successfully written).
+///
+/// @param cell The cell value
+/// @param count Number of key/value pairs
+/// @param keys Array of data kinds to query
+/// @param values Array of output pointers (types must match each key's
+/// documented output type)
+/// @param[out] out_written On return, receives the number of values
+/// successfully written (may be NULL)
+/// @return GHOSTTY_SUCCESS if all queries succeed
+///
+/// @ingroup screen
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyCell,
+    ffi.Size,
+    ffi.Pointer<ffi.UnsignedInt>,
+    ffi.Pointer<ffi.Pointer<ffi.Void>>,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_cell_get_multi')
+external int _ghostty_cell_get_multi(
+  int cell,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_cell_get_multi(
+  DartGhosttyCell cell,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_cell_get_multi(cell, count, keys, values, out_written),
+);
+
 /// Get data from a row.
 ///
 /// Extracts typed data from the given row based on the specified
@@ -289,6 +279,52 @@ GhosttyResult ghostty_row_get(
   GhosttyRowData data,
   ffi.Pointer<ffi.Void> out,
 ) => GhosttyResult.fromValue(_ghostty_row_get(row, data.value, out));
+
+/// Get multiple data fields from a row in a single call.
+///
+/// Each element in the keys array specifies a data kind, and the
+/// corresponding element in the values array receives the result.
+///
+/// Processing stops at the first error; on success out_written
+/// is set to count, on error it is set to the index of the
+/// failing key (i.e. the number of values successfully written).
+///
+/// @param row The row value
+/// @param count Number of key/value pairs
+/// @param keys Array of data kinds to query
+/// @param values Array of output pointers (types must match each key's
+/// documented output type)
+/// @param[out] out_written On return, receives the number of values
+/// successfully written (may be NULL)
+/// @return GHOSTTY_SUCCESS if all queries succeed
+///
+/// @ingroup screen
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyRow,
+    ffi.Size,
+    ffi.Pointer<ffi.UnsignedInt>,
+    ffi.Pointer<ffi.Pointer<ffi.Void>>,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_row_get_multi')
+external int _ghostty_row_get_multi(
+  int row,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_row_get_multi(
+  DartGhosttyRow row,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_row_get_multi(row, count, keys, values, out_written),
+);
 
 /// Get the default style.
 ///
@@ -397,6 +433,48 @@ GhosttyResult ghostty_grid_ref_graphemes(
   _ghostty_grid_ref_graphemes(ref, buf, buf_len, out_len),
 );
 
+/// Get the hyperlink URI for the cell at the grid reference's position.
+///
+/// Writes the URI bytes into the provided buffer. If the cell has no
+/// hyperlink, out_len is set to 0 and GHOSTTY_SUCCESS is returned.
+///
+/// If the buffer is too small (or NULL), the function returns
+/// GHOSTTY_OUT_OF_SPACE and writes the required number of bytes to
+/// out_len. The caller can then retry with a sufficiently sized buffer.
+///
+/// @param ref Pointer to the grid reference
+/// @param buf Output buffer for the URI bytes (may be NULL)
+/// @param buf_len Size of the output buffer in bytes
+/// @param[out] out_len On success, the number of bytes written. On
+/// GHOSTTY_OUT_OF_SPACE, the required buffer size in bytes.
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if the ref's
+/// node is NULL, GHOSTTY_OUT_OF_SPACE if the buffer is too small
+///
+/// @ingroup grid_ref
+@ffi.Native<
+  ffi.Int Function(
+    ffi.Pointer<GhosttyGridRef>,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_grid_ref_hyperlink_uri')
+external int _ghostty_grid_ref_hyperlink_uri(
+  ffi.Pointer<GhosttyGridRef> ref,
+  ffi.Pointer<ffi.Uint8> buf,
+  int buf_len,
+  ffi.Pointer<ffi.Size> out_len,
+);
+
+GhosttyResult ghostty_grid_ref_hyperlink_uri(
+  ffi.Pointer<GhosttyGridRef> ref,
+  ffi.Pointer<ffi.Uint8> buf,
+  int buf_len,
+  ffi.Pointer<ffi.Size> out_len,
+) => GhosttyResult.fromValue(
+  _ghostty_grid_ref_hyperlink_uri(ref, buf, buf_len, out_len),
+);
+
 /// Get the style of the cell at the grid reference's position.
 ///
 /// @param ref Pointer to the grid reference
@@ -417,6 +495,727 @@ GhosttyResult ghostty_grid_ref_style(
   ffi.Pointer<GhosttyGridRef> ref,
   ffi.Pointer<GhosttyStyle> out_style,
 ) => GhosttyResult.fromValue(_ghostty_grid_ref_style(ref, out_style));
+
+/// Encode a DECRPM (DEC Private Mode Report) response sequence.
+///
+/// Writes a mode report escape sequence into the provided buffer.
+/// The generated sequence has the form:
+/// - DEC private mode: CSI ? Ps1 ; Ps2 $ y
+/// - ANSI mode:        CSI Ps1 ; Ps2 $ y
+///
+/// If the buffer is too small, the function returns GHOSTTY_OUT_OF_SPACE
+/// and writes the required buffer size to @p out_written. The caller can
+/// then retry with a sufficiently sized buffer.
+///
+/// @param mode The mode identifying the mode to report on
+/// @param state The report state for this mode
+/// @param buf Output buffer to write the encoded sequence into (may be NULL)
+/// @param buf_len Size of the output buffer in bytes
+/// @param[out] out_written On success, the number of bytes written. On
+/// GHOSTTY_OUT_OF_SPACE, the required buffer size.
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_OUT_OF_SPACE if the buffer
+/// is too small
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyMode,
+    ffi.UnsignedInt,
+    ffi.Pointer<ffi.Char>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_mode_report_encode')
+external int _ghostty_mode_report_encode(
+  int mode,
+  int state,
+  ffi.Pointer<ffi.Char> buf,
+  int buf_len,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_mode_report_encode(
+  DartGhosttyMode mode,
+  GhosttyModeReportState state,
+  ffi.Pointer<ffi.Char> buf,
+  int buf_len,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_mode_report_encode(mode, state.value, buf, buf_len, out_written),
+);
+
+/// Encode a terminal size report into an escape sequence.
+///
+/// Encodes a size report in the format specified by @p style into the
+/// provided buffer.
+///
+/// If the buffer is too small, the function returns GHOSTTY_OUT_OF_SPACE
+/// and writes the required buffer size to @p out_written. The caller can
+/// then retry with a sufficiently sized buffer.
+///
+/// @param style The size report format to encode
+/// @param size Terminal size information
+/// @param buf Output buffer to write the encoded sequence into (may be NULL)
+/// @param buf_len Size of the output buffer in bytes
+/// @param[out] out_written On success, the number of bytes written. On
+/// GHOSTTY_OUT_OF_SPACE, the required buffer size.
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_OUT_OF_SPACE if the buffer
+/// is too small
+@ffi.Native<
+  ffi.Int Function(
+    ffi.UnsignedInt,
+    GhosttySizeReportSize,
+    ffi.Pointer<ffi.Char>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_size_report_encode')
+external int _ghostty_size_report_encode(
+  int style,
+  GhosttySizeReportSize size,
+  ffi.Pointer<ffi.Char> buf,
+  int buf_len,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_size_report_encode(
+  GhosttySizeReportStyle style,
+  GhosttySizeReportSize size,
+  ffi.Pointer<ffi.Char> buf,
+  int buf_len,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_size_report_encode(style.value, size, buf, buf_len, out_written),
+);
+
+/// Get data from a kitty graphics storage instance.
+///
+/// The output pointer must be of the appropriate type for the requested
+/// data kind.
+///
+/// Returns GHOSTTY_NO_VALUE when Kitty graphics are disabled at build time.
+///
+/// @param graphics The kitty graphics handle
+/// @param data The type of data to extract
+/// @param[out] out Pointer to store the extracted data
+/// @return GHOSTTY_SUCCESS on success
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(GhosttyKittyGraphics, ffi.UnsignedInt, ffi.Pointer<ffi.Void>)
+>(symbol: 'ghostty_kitty_graphics_get')
+external int _ghostty_kitty_graphics_get(
+  GhosttyKittyGraphics graphics,
+  int data,
+  ffi.Pointer<ffi.Void> out,
+);
+
+GhosttyResult ghostty_kitty_graphics_get(
+  GhosttyKittyGraphics graphics,
+  GhosttyKittyGraphicsData data,
+  ffi.Pointer<ffi.Void> out,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_get(graphics, data.value, out),
+);
+
+/// Look up a Kitty graphics image by its image ID.
+///
+/// Returns NULL if no image with the given ID exists or if Kitty graphics
+/// are disabled at build time.
+///
+/// @param graphics The kitty graphics handle
+/// @param image_id The image ID to look up
+/// @return An opaque image handle, or NULL if not found
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  GhosttyKittyGraphicsImage Function(GhosttyKittyGraphics, ffi.Uint32)
+>()
+external GhosttyKittyGraphicsImage ghostty_kitty_graphics_image(
+  GhosttyKittyGraphics graphics,
+  int image_id,
+);
+
+/// Get data from a Kitty graphics image.
+///
+/// The output pointer must be of the appropriate type for the requested
+/// data kind.
+///
+/// @param image The image handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param data The data kind to query
+/// @param[out] out Pointer to receive the queried value
+/// @return GHOSTTY_SUCCESS on success
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyKittyGraphicsImage,
+    ffi.UnsignedInt,
+    ffi.Pointer<ffi.Void>,
+  )
+>(symbol: 'ghostty_kitty_graphics_image_get')
+external int _ghostty_kitty_graphics_image_get(
+  GhosttyKittyGraphicsImage image,
+  int data,
+  ffi.Pointer<ffi.Void> out,
+);
+
+GhosttyResult ghostty_kitty_graphics_image_get(
+  GhosttyKittyGraphicsImage image,
+  GhosttyKittyGraphicsImageData data,
+  ffi.Pointer<ffi.Void> out,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_image_get(image, data.value, out),
+);
+
+/// Get multiple data fields from a Kitty graphics image in a single call.
+///
+/// This is an optimization over calling ghostty_kitty_graphics_image_get()
+/// repeatedly, particularly useful in environments with high per-call
+/// overhead such as FFI or Cgo.
+///
+/// Each element in the keys array specifies a data kind, and the
+/// corresponding element in the values array receives the result.
+/// The type of each values[i] pointer must match the output type
+/// documented for keys[i].
+///
+/// Processing stops at the first error; on success out_written
+/// is set to count, on error it is set to the index of the
+/// failing key (i.e. the number of values successfully written).
+///
+/// @param image The image handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param count Number of key/value pairs
+/// @param keys Array of data kinds to query
+/// @param values Array of output pointers (types must match each key's
+/// documented output type)
+/// @param[out] out_written On return, receives the number of values
+/// successfully written (may be NULL)
+/// @return GHOSTTY_SUCCESS if all queries succeed
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyKittyGraphicsImage,
+    ffi.Size,
+    ffi.Pointer<ffi.UnsignedInt>,
+    ffi.Pointer<ffi.Pointer<ffi.Void>>,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_kitty_graphics_image_get_multi')
+external int _ghostty_kitty_graphics_image_get_multi(
+  GhosttyKittyGraphicsImage image,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_kitty_graphics_image_get_multi(
+  GhosttyKittyGraphicsImage image,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_image_get_multi(
+    image,
+    count,
+    keys,
+    values,
+    out_written,
+  ),
+);
+
+/// Create a new placement iterator instance.
+///
+/// All fields except the allocator are left undefined until populated
+/// via ghostty_kitty_graphics_get() with
+/// GHOSTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR.
+///
+/// @param allocator Pointer to allocator, or NULL to use the default allocator
+/// @param[out] out_iterator On success, receives the created iterator handle
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_OUT_OF_MEMORY on allocation
+/// failure
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(
+    ffi.Pointer<GhosttyAllocator>,
+    ffi.Pointer<GhosttyKittyGraphicsPlacementIterator>,
+  )
+>(symbol: 'ghostty_kitty_graphics_placement_iterator_new')
+external int _ghostty_kitty_graphics_placement_iterator_new(
+  ffi.Pointer<GhosttyAllocator> allocator,
+  ffi.Pointer<GhosttyKittyGraphicsPlacementIterator> out_iterator,
+);
+
+GhosttyResult ghostty_kitty_graphics_placement_iterator_new(
+  ffi.Pointer<GhosttyAllocator> allocator,
+  ffi.Pointer<GhosttyKittyGraphicsPlacementIterator> out_iterator,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_placement_iterator_new(allocator, out_iterator),
+);
+
+/// Free a placement iterator.
+///
+/// @param iterator The iterator handle to free (may be NULL)
+///
+/// @ingroup kitty_graphics
+@ffi.Native<ffi.Void Function(GhosttyKittyGraphicsPlacementIterator)>()
+external void ghostty_kitty_graphics_placement_iterator_free(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+);
+
+/// Set an option on a placement iterator.
+///
+/// Use GHOSTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER with a
+/// GhosttyKittyPlacementLayer value to filter placements by z-layer.
+/// The filter is applied during iteration: ghostty_kitty_graphics_placement_next()
+/// will skip placements that do not match the configured layer.
+///
+/// The default layer is GHOSTTY_KITTY_PLACEMENT_LAYER_ALL (no filtering).
+///
+/// @param iterator The iterator handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param option The option to set
+/// @param value Pointer to the value (type depends on option; NULL returns
+/// GHOSTTY_INVALID_VALUE)
+/// @return GHOSTTY_SUCCESS on success
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyKittyGraphicsPlacementIterator,
+    ffi.UnsignedInt,
+    ffi.Pointer<ffi.Void>,
+  )
+>(symbol: 'ghostty_kitty_graphics_placement_iterator_set')
+external int _ghostty_kitty_graphics_placement_iterator_set(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  int option,
+  ffi.Pointer<ffi.Void> value,
+);
+
+GhosttyResult ghostty_kitty_graphics_placement_iterator_set(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsPlacementIteratorOption option,
+  ffi.Pointer<ffi.Void> value,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_placement_iterator_set(iterator, option.value, value),
+);
+
+/// Advance the placement iterator to the next placement.
+///
+/// If a layer filter has been set via
+/// ghostty_kitty_graphics_placement_iterator_set(), only placements
+/// matching that layer are returned.
+///
+/// @param iterator The iterator handle (may be NULL)
+/// @return true if advanced to the next placement, false if at the end
+///
+/// @ingroup kitty_graphics
+@ffi.Native<ffi.Bool Function(GhosttyKittyGraphicsPlacementIterator)>()
+external bool ghostty_kitty_graphics_placement_next(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+);
+
+/// Get data from the current placement in a placement iterator.
+///
+/// Call ghostty_kitty_graphics_placement_next() at least once before
+/// calling this function.
+///
+/// @param iterator The iterator handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param data The data kind to query
+/// @param[out] out Pointer to receive the queried value
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if the
+/// iterator is NULL or not positioned on a placement
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyKittyGraphicsPlacementIterator,
+    ffi.UnsignedInt,
+    ffi.Pointer<ffi.Void>,
+  )
+>(symbol: 'ghostty_kitty_graphics_placement_get')
+external int _ghostty_kitty_graphics_placement_get(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  int data,
+  ffi.Pointer<ffi.Void> out,
+);
+
+GhosttyResult ghostty_kitty_graphics_placement_get(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsPlacementData data,
+  ffi.Pointer<ffi.Void> out,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_placement_get(iterator, data.value, out),
+);
+
+/// Get multiple data fields from the current placement in a single call.
+///
+/// This is an optimization over calling ghostty_kitty_graphics_placement_get()
+/// repeatedly, particularly useful in environments with high per-call
+/// overhead such as FFI or Cgo.
+///
+/// Each element in the keys array specifies a data kind, and the
+/// corresponding element in the values array receives the result.
+/// The type of each values[i] pointer must match the output type
+/// documented for keys[i].
+///
+/// Processing stops at the first error; on success out_written
+/// is set to count, on error it is set to the index of the
+/// failing key (i.e. the number of values successfully written).
+///
+/// @param iterator The iterator handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param count Number of key/value pairs
+/// @param keys Array of data kinds to query
+/// @param values Array of output pointers (types must match each key's
+/// documented output type)
+/// @param[out] out_written On return, receives the number of values
+/// successfully written (may be NULL)
+/// @return GHOSTTY_SUCCESS if all queries succeed
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyKittyGraphicsPlacementIterator,
+    ffi.Size,
+    ffi.Pointer<ffi.UnsignedInt>,
+    ffi.Pointer<ffi.Pointer<ffi.Void>>,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_kitty_graphics_placement_get_multi')
+external int _ghostty_kitty_graphics_placement_get_multi(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_kitty_graphics_placement_get_multi(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_placement_get_multi(
+    iterator,
+    count,
+    keys,
+    values,
+    out_written,
+  ),
+);
+
+/// Compute the grid rectangle occupied by the current placement.
+///
+/// Uses the placement's pin, the image dimensions, and the terminal's
+/// cell/pixel geometry to calculate the bounding rectangle. Virtual
+/// placements (unicode placeholders) return GHOSTTY_NO_VALUE.
+///
+/// @param terminal The terminal handle
+/// @param image The image handle for this placement's image
+/// @param iterator The placement iterator positioned on a placement
+/// @param[out] out_selection On success, receives the bounding rectangle
+/// as a selection with rectangle=true
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if any handle
+/// is NULL or the iterator is not positioned, GHOSTTY_NO_VALUE for
+/// virtual placements or when Kitty graphics are disabled
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyKittyGraphicsPlacementIterator,
+    GhosttyKittyGraphicsImage,
+    GhosttyTerminal,
+    ffi.Pointer<GhosttySelection>,
+  )
+>(symbol: 'ghostty_kitty_graphics_placement_rect')
+external int _ghostty_kitty_graphics_placement_rect(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsImage image,
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttySelection> out_selection,
+);
+
+GhosttyResult ghostty_kitty_graphics_placement_rect(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsImage image,
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttySelection> out_selection,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_placement_rect(
+    iterator,
+    image,
+    terminal,
+    out_selection,
+  ),
+);
+
+/// Compute the rendered pixel size of the current placement.
+///
+/// Takes into account the placement's source rectangle, specified
+/// columns/rows, and aspect ratio to calculate the final rendered
+/// pixel dimensions.
+///
+/// @param iterator The placement iterator positioned on a placement
+/// @param image The image handle for this placement's image
+/// @param terminal The terminal handle
+/// @param[out] out_width On success, receives the width in pixels
+/// @param[out] out_height On success, receives the height in pixels
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if any handle
+/// is NULL or the iterator is not positioned, GHOSTTY_NO_VALUE when
+/// Kitty graphics are disabled
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyKittyGraphicsPlacementIterator,
+    GhosttyKittyGraphicsImage,
+    GhosttyTerminal,
+    ffi.Pointer<ffi.Uint32>,
+    ffi.Pointer<ffi.Uint32>,
+  )
+>(symbol: 'ghostty_kitty_graphics_placement_pixel_size')
+external int _ghostty_kitty_graphics_placement_pixel_size(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsImage image,
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Uint32> out_width,
+  ffi.Pointer<ffi.Uint32> out_height,
+);
+
+GhosttyResult ghostty_kitty_graphics_placement_pixel_size(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsImage image,
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Uint32> out_width,
+  ffi.Pointer<ffi.Uint32> out_height,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_placement_pixel_size(
+    iterator,
+    image,
+    terminal,
+    out_width,
+    out_height,
+  ),
+);
+
+/// Compute the grid cell size of the current placement.
+///
+/// Returns the number of columns and rows that the placement occupies
+/// in the terminal grid. If the placement specifies explicit columns
+/// and rows, those are returned directly; otherwise they are calculated
+/// from the pixel size and cell dimensions.
+///
+/// @param iterator The placement iterator positioned on a placement
+/// @param image The image handle for this placement's image
+/// @param terminal The terminal handle
+/// @param[out] out_cols On success, receives the number of columns
+/// @param[out] out_rows On success, receives the number of rows
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if any handle
+/// is NULL or the iterator is not positioned, GHOSTTY_NO_VALUE when
+/// Kitty graphics are disabled
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyKittyGraphicsPlacementIterator,
+    GhosttyKittyGraphicsImage,
+    GhosttyTerminal,
+    ffi.Pointer<ffi.Uint32>,
+    ffi.Pointer<ffi.Uint32>,
+  )
+>(symbol: 'ghostty_kitty_graphics_placement_grid_size')
+external int _ghostty_kitty_graphics_placement_grid_size(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsImage image,
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Uint32> out_cols,
+  ffi.Pointer<ffi.Uint32> out_rows,
+);
+
+GhosttyResult ghostty_kitty_graphics_placement_grid_size(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsImage image,
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Uint32> out_cols,
+  ffi.Pointer<ffi.Uint32> out_rows,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_placement_grid_size(
+    iterator,
+    image,
+    terminal,
+    out_cols,
+    out_rows,
+  ),
+);
+
+/// Get the viewport-relative grid position of the current placement.
+///
+/// Converts the placement's internal pin to viewport-relative column and
+/// row coordinates. The returned coordinates represent the top-left
+/// corner of the placement in the viewport's grid coordinate space.
+///
+/// The row value can be negative when the placement's origin has
+/// scrolled above the top of the viewport. For example, a 4-row
+/// image that has scrolled up by 2 rows returns row=-2, meaning
+/// its top 2 rows are above the visible area but its bottom 2 rows
+/// are still on screen. Embedders should use these coordinates
+/// directly when computing the destination rectangle for rendering;
+/// the embedder is responsible for clipping the portion of the image
+/// that falls outside the viewport.
+///
+/// Returns GHOSTTY_SUCCESS for any placement that is at least
+/// partially visible in the viewport. Returns GHOSTTY_NO_VALUE when
+/// the placement is completely outside the viewport (its bottom edge
+/// is above the viewport or its top edge is at or below the last
+/// viewport row), or when the placement is a virtual (unicode
+/// placeholder) placement.
+///
+/// @param iterator The placement iterator positioned on a placement
+/// @param image The image handle for this placement's image
+/// @param terminal The terminal handle
+/// @param[out] out_col On success, receives the viewport-relative column
+/// @param[out] out_row On success, receives the viewport-relative row
+/// (may be negative for partially visible placements)
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_NO_VALUE if fully
+/// off-screen or virtual, GHOSTTY_INVALID_VALUE if any handle
+/// is NULL or the iterator is not positioned
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyKittyGraphicsPlacementIterator,
+    GhosttyKittyGraphicsImage,
+    GhosttyTerminal,
+    ffi.Pointer<ffi.Int32>,
+    ffi.Pointer<ffi.Int32>,
+  )
+>(symbol: 'ghostty_kitty_graphics_placement_viewport_pos')
+external int _ghostty_kitty_graphics_placement_viewport_pos(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsImage image,
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Int32> out_col,
+  ffi.Pointer<ffi.Int32> out_row,
+);
+
+GhosttyResult ghostty_kitty_graphics_placement_viewport_pos(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsImage image,
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Int32> out_col,
+  ffi.Pointer<ffi.Int32> out_row,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_placement_viewport_pos(
+    iterator,
+    image,
+    terminal,
+    out_col,
+    out_row,
+  ),
+);
+
+/// Get the resolved source rectangle for the current placement.
+///
+/// Applies kitty protocol semantics: a width or height of 0 in the
+/// placement means "use the full image dimension", and the resulting
+/// rectangle is clamped to the actual image bounds. The returned
+/// values are in pixels and are ready to use for texture sampling.
+///
+/// @param iterator The placement iterator positioned on a placement
+/// @param image The image handle for this placement's image
+/// @param[out] out_x Source rect x origin in pixels
+/// @param[out] out_y Source rect y origin in pixels
+/// @param[out] out_width Source rect width in pixels
+/// @param[out] out_height Source rect height in pixels
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if any
+/// handle is NULL or the iterator is not positioned
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyKittyGraphicsPlacementIterator,
+    GhosttyKittyGraphicsImage,
+    ffi.Pointer<ffi.Uint32>,
+    ffi.Pointer<ffi.Uint32>,
+    ffi.Pointer<ffi.Uint32>,
+    ffi.Pointer<ffi.Uint32>,
+  )
+>(symbol: 'ghostty_kitty_graphics_placement_source_rect')
+external int _ghostty_kitty_graphics_placement_source_rect(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsImage image,
+  ffi.Pointer<ffi.Uint32> out_x,
+  ffi.Pointer<ffi.Uint32> out_y,
+  ffi.Pointer<ffi.Uint32> out_width,
+  ffi.Pointer<ffi.Uint32> out_height,
+);
+
+GhosttyResult ghostty_kitty_graphics_placement_source_rect(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsImage image,
+  ffi.Pointer<ffi.Uint32> out_x,
+  ffi.Pointer<ffi.Uint32> out_y,
+  ffi.Pointer<ffi.Uint32> out_width,
+  ffi.Pointer<ffi.Uint32> out_height,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_placement_source_rect(
+    iterator,
+    image,
+    out_x,
+    out_y,
+    out_width,
+    out_height,
+  ),
+);
+
+/// Get all rendering geometry for a placement in a single call.
+///
+/// Combines pixel size, grid size, viewport position, and source
+/// rectangle into one struct. Initialize with
+/// GHOSTTY_INIT_SIZED(GhosttyKittyGraphicsPlacementRenderInfo).
+///
+/// When viewport_visible is false, the placement is fully off-screen
+/// or is a virtual placement; viewport_col and viewport_row may
+/// contain meaningless values in that case.
+///
+/// @param iterator The iterator positioned on a placement
+/// @param image The image handle for this placement's image
+/// @param terminal The terminal handle
+/// @param[out] out_info Pointer to receive the rendering geometry
+/// @return GHOSTTY_SUCCESS on success
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyKittyGraphicsPlacementIterator,
+    GhosttyKittyGraphicsImage,
+    GhosttyTerminal,
+    ffi.Pointer<GhosttyKittyGraphicsPlacementRenderInfo>,
+  )
+>(symbol: 'ghostty_kitty_graphics_placement_render_info')
+external int _ghostty_kitty_graphics_placement_render_info(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsImage image,
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttyKittyGraphicsPlacementRenderInfo> out_info,
+);
+
+GhosttyResult ghostty_kitty_graphics_placement_render_info(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsImage image,
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttyKittyGraphicsPlacementRenderInfo> out_info,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_placement_render_info(
+    iterator,
+    image,
+    terminal,
+    out_info,
+  ),
+);
 
 /// Create a new terminal instance.
 ///
@@ -680,6 +1479,58 @@ GhosttyResult ghostty_terminal_get(
   ffi.Pointer<ffi.Void> out,
 ) => GhosttyResult.fromValue(_ghostty_terminal_get(terminal, data.value, out));
 
+/// Get multiple data fields from a terminal in a single call.
+///
+/// This is an optimization over calling ghostty_terminal_get()
+/// repeatedly, particularly useful in environments with high per-call
+/// overhead such as FFI or Cgo.
+///
+/// Each element in the keys array specifies a data kind, and the
+/// corresponding element in the values array receives the result.
+/// The type of each values[i] pointer must match the output type
+/// documented for keys[i].
+///
+/// Processing stops at the first error; on success out_written
+/// is set to count, on error it is set to the index of the
+/// failing key (i.e. the number of values successfully written).
+///
+/// @param terminal The terminal handle (may be NULL)
+/// @param count Number of key/value pairs
+/// @param keys Array of data kinds to query
+/// @param values Array of output pointers (types must match each key's
+/// documented output type)
+/// @param[out] out_written On return, receives the number of values
+/// successfully written (may be NULL)
+/// @return GHOSTTY_SUCCESS if all queries succeed
+///
+/// @ingroup terminal
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyTerminal,
+    ffi.Size,
+    ffi.Pointer<ffi.UnsignedInt>,
+    ffi.Pointer<ffi.Pointer<ffi.Void>>,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_terminal_get_multi')
+external int _ghostty_terminal_get_multi(
+  GhosttyTerminal terminal,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_terminal_get_multi(
+  GhosttyTerminal terminal,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_terminal_get_multi(terminal, count, keys, values, out_written),
+);
+
 /// Resolve a point in the terminal grid to a grid reference.
 ///
 /// Resolves the given point (which can be in active, viewport, screen,
@@ -719,6 +1570,55 @@ GhosttyResult ghostty_terminal_grid_ref(
   ffi.Pointer<GhosttyGridRef> out_ref,
 ) => GhosttyResult.fromValue(
   _ghostty_terminal_grid_ref(terminal, point, out_ref),
+);
+
+/// Convert a grid reference back to a point in the given coordinate system.
+///
+/// This is the inverse of ghostty_terminal_grid_ref(): given a grid reference,
+/// it returns the x/y coordinates in the requested coordinate system (active,
+/// viewport, screen, or history).
+///
+/// The grid reference must have been obtained from the same terminal instance.
+/// Like all grid references, it is only valid until the next mutating terminal
+/// call.
+///
+/// Not every grid reference is representable in every coordinate system. For
+/// example, a cell in scrollback history cannot be expressed in active
+/// coordinates, and a cell that has scrolled off the visible area cannot be
+/// expressed in viewport coordinates. In these cases, the function returns
+/// GHOSTTY_NO_VALUE.
+///
+/// @param terminal The terminal handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param ref Pointer to the grid reference to convert
+/// @param tag The target coordinate system
+/// @param[out] out On success, set to the coordinate in the requested system (may be NULL)
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if the terminal
+/// or ref is NULL/invalid, GHOSTTY_NO_VALUE if the ref falls outside
+/// the requested coordinate system
+///
+/// @ingroup terminal
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyTerminal,
+    ffi.Pointer<GhosttyGridRef>,
+    ffi.UnsignedInt,
+    ffi.Pointer<GhosttyPointCoordinate>,
+  )
+>(symbol: 'ghostty_terminal_point_from_grid_ref')
+external int _ghostty_terminal_point_from_grid_ref(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttyGridRef> ref,
+  int tag,
+  ffi.Pointer<GhosttyPointCoordinate> out,
+);
+
+GhosttyResult ghostty_terminal_point_from_grid_ref(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttyGridRef> ref,
+  GhosttyPointTag tag,
+  ffi.Pointer<GhosttyPointCoordinate> out,
+) => GhosttyResult.fromValue(
+  _ghostty_terminal_point_from_grid_ref(terminal, ref, tag.value, out),
 );
 
 /// Create a formatter for a terminal's active screen.
@@ -938,6 +1838,52 @@ GhosttyResult ghostty_render_state_get(
   ffi.Pointer<ffi.Void> out,
 ) => GhosttyResult.fromValue(_ghostty_render_state_get(state, data.value, out));
 
+/// Get multiple data fields from a render state in a single call.
+///
+/// Each element in the keys array specifies a data kind, and the
+/// corresponding element in the values array receives the result.
+///
+/// Processing stops at the first error; on success out_written
+/// is set to count, on error it is set to the index of the
+/// failing key (i.e. the number of values successfully written).
+///
+/// @param state The render state handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param count Number of key/value pairs
+/// @param keys Array of data kinds to query
+/// @param values Array of output pointers (types must match each key's
+/// documented output type)
+/// @param[out] out_written On return, receives the number of values
+/// successfully written (may be NULL)
+/// @return GHOSTTY_SUCCESS if all queries succeed
+///
+/// @ingroup render
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyRenderState,
+    ffi.Size,
+    ffi.Pointer<ffi.UnsignedInt>,
+    ffi.Pointer<ffi.Pointer<ffi.Void>>,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_render_state_get_multi')
+external int _ghostty_render_state_get_multi(
+  GhosttyRenderState state,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_render_state_get_multi(
+  GhosttyRenderState state,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_render_state_get_multi(state, count, keys, values, out_written),
+);
+
 /// Set an option on a render state.
 ///
 /// The `value` pointer must point to a value of the type corresponding to the
@@ -1086,6 +2032,58 @@ GhosttyResult ghostty_render_state_row_get(
   _ghostty_render_state_row_get(iterator, data.value, out),
 );
 
+/// Get multiple data fields from the current row in a single call.
+///
+/// Each element in the keys array specifies a data kind, and the
+/// corresponding element in the values array receives the result.
+///
+/// Processing stops at the first error; on success out_written
+/// is set to count, on error it is set to the index of the
+/// failing key (i.e. the number of values successfully written).
+///
+/// @param iterator The iterator handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param count Number of key/value pairs
+/// @param keys Array of data kinds to query
+/// @param values Array of output pointers (types must match each key's
+/// documented output type)
+/// @param[out] out_written On return, receives the number of values
+/// successfully written (may be NULL)
+/// @return GHOSTTY_SUCCESS if all queries succeed
+///
+/// @ingroup render
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyRenderStateRowIterator,
+    ffi.Size,
+    ffi.Pointer<ffi.UnsignedInt>,
+    ffi.Pointer<ffi.Pointer<ffi.Void>>,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_render_state_row_get_multi')
+external int _ghostty_render_state_row_get_multi(
+  GhosttyRenderStateRowIterator iterator,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_render_state_row_get_multi(
+  GhosttyRenderStateRowIterator iterator,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_render_state_row_get_multi(
+    iterator,
+    count,
+    keys,
+    values,
+    out_written,
+  ),
+);
+
 /// Set an option on the current row in a render-state row iterator.
 ///
 /// The `value` pointer must point to a value of the type corresponding to the
@@ -1229,6 +2227,58 @@ GhosttyResult ghostty_render_state_row_cells_get(
   ffi.Pointer<ffi.Void> out,
 ) => GhosttyResult.fromValue(
   _ghostty_render_state_row_cells_get(cells, data.value, out),
+);
+
+/// Get multiple data fields from the current cell in a single call.
+///
+/// Each element in the keys array specifies a data kind, and the
+/// corresponding element in the values array receives the result.
+///
+/// Processing stops at the first error; on success out_written
+/// is set to count, on error it is set to the index of the
+/// failing key (i.e. the number of values successfully written).
+///
+/// @param cells The row cells handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param count Number of key/value pairs
+/// @param keys Array of data kinds to query
+/// @param values Array of output pointers (types must match each key's
+/// documented output type)
+/// @param[out] out_written On return, receives the number of values
+/// successfully written (may be NULL)
+/// @return GHOSTTY_SUCCESS if all queries succeed
+///
+/// @ingroup render
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyRenderStateRowCells,
+    ffi.Size,
+    ffi.Pointer<ffi.UnsignedInt>,
+    ffi.Pointer<ffi.Pointer<ffi.Void>>,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_render_state_row_cells_get_multi')
+external int _ghostty_render_state_row_cells_get_multi(
+  GhosttyRenderStateRowCells cells,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_render_state_row_cells_get_multi(
+  GhosttyRenderStateRowCells cells,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_render_state_row_cells_get_multi(
+    cells,
+    count,
+    keys,
+    values,
+    out_written,
+  ),
 );
 
 /// Free a row cells instance.
@@ -1575,6 +2625,70 @@ GhosttySgrAttributeTag ghostty_sgr_attribute_tag(GhosttySgrAttribute attr) =>
 >()
 external ffi.Pointer<GhosttySgrAttributeValue> ghostty_sgr_attribute_value(
   ffi.Pointer<GhosttySgrAttribute> attr,
+);
+
+/// Set a system-level option.
+///
+/// Configures a process-global implementation function. These should be
+/// set once at startup before using any terminal functionality that
+/// depends on them.
+///
+/// @param option The option to set
+/// @param value  Pointer to the value (type depends on the option),
+/// or NULL to clear it
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if the
+/// option is not recognized
+@ffi.Native<ffi.Int Function(ffi.UnsignedInt, ffi.Pointer<ffi.Void>)>(
+  symbol: 'ghostty_sys_set',
+)
+external int _ghostty_sys_set(int option, ffi.Pointer<ffi.Void> value);
+
+GhosttyResult ghostty_sys_set(
+  GhosttySysOption option,
+  ffi.Pointer<ffi.Void> value,
+) => GhosttyResult.fromValue(_ghostty_sys_set(option.value, value));
+
+/// Built-in log callback that writes to stderr.
+///
+/// Formats each message as "[level](scope): message\n".
+/// Can be passed directly to ghostty_sys_set():
+///
+/// @code
+/// ghostty_sys_set(GHOSTTY_SYS_OPT_LOG, &ghostty_sys_log_stderr);
+/// @endcode
+@ffi.Native<
+  ffi.Void Function(
+    ffi.Pointer<ffi.Void>,
+    ffi.UnsignedInt,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+  )
+>(symbol: 'ghostty_sys_log_stderr')
+external void _ghostty_sys_log_stderr(
+  ffi.Pointer<ffi.Void> userdata,
+  int level,
+  ffi.Pointer<ffi.Uint8> scope,
+  int scope_len,
+  ffi.Pointer<ffi.Uint8> message,
+  int message_len,
+);
+
+void ghostty_sys_log_stderr(
+  ffi.Pointer<ffi.Void> userdata,
+  GhosttySysLogLevel level,
+  ffi.Pointer<ffi.Uint8> scope,
+  int scope_len,
+  ffi.Pointer<ffi.Uint8> message,
+  int message_len,
+) => _ghostty_sys_log_stderr(
+  userdata,
+  level.value,
+  scope,
+  scope_len,
+  message,
+  message_len,
 );
 
 /// Create a new key event instance.
@@ -2338,7 +3452,8 @@ enum GhosttyResult {
   GHOSTTY_OUT_OF_SPACE(-3),
 
   /// The requested value has no value
-  GHOSTTY_NO_VALUE(-4);
+  GHOSTTY_NO_VALUE(-4),
+  GHOSTTY_RESULT_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyResult(this.value);
@@ -2349,9 +3464,108 @@ enum GhosttyResult {
     -2 => GHOSTTY_INVALID_VALUE,
     -3 => GHOSTTY_OUT_OF_SPACE,
     -4 => GHOSTTY_NO_VALUE,
+    2147483647 => GHOSTTY_RESULT_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyResult: $value'),
   };
 }
+
+final class GhosttyTerminalImpl extends ffi.Opaque {}
+
+/// Opaque handle to a terminal instance.
+///
+/// @ingroup terminal
+typedef GhosttyTerminal = ffi.Pointer<GhosttyTerminalImpl>;
+
+final class GhosttyKittyGraphicsImpl extends ffi.Opaque {}
+
+/// Opaque handle to a Kitty graphics image storage.
+///
+/// Obtained via ghostty_terminal_get() with
+/// GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS. The pointer is borrowed from
+/// the terminal and remains valid until the next mutating terminal call
+/// (e.g. ghostty_terminal_vt_write() or ghostty_terminal_reset()).
+///
+/// @ingroup kitty_graphics
+typedef GhosttyKittyGraphics = ffi.Pointer<GhosttyKittyGraphicsImpl>;
+
+final class GhosttyKittyGraphicsImageImpl extends ffi.Opaque {}
+
+/// Opaque handle to a Kitty graphics image.
+///
+/// Obtained via ghostty_kitty_graphics_image() with an image ID. The
+/// pointer is borrowed from the storage and remains valid until the next
+/// mutating terminal call.
+///
+/// @ingroup kitty_graphics
+typedef GhosttyKittyGraphicsImage = ffi.Pointer<GhosttyKittyGraphicsImageImpl>;
+
+final class GhosttyKittyGraphicsPlacementIteratorImpl extends ffi.Opaque {}
+
+/// Opaque handle to a Kitty graphics placement iterator.
+///
+/// @ingroup kitty_graphics
+typedef GhosttyKittyGraphicsPlacementIterator =
+    ffi.Pointer<GhosttyKittyGraphicsPlacementIteratorImpl>;
+
+final class GhosttyRenderStateImpl extends ffi.Opaque {}
+
+/// Opaque handle to a render state instance.
+///
+/// @ingroup render
+typedef GhosttyRenderState = ffi.Pointer<GhosttyRenderStateImpl>;
+
+final class GhosttyRenderStateRowIteratorImpl extends ffi.Opaque {}
+
+/// Opaque handle to a render-state row iterator.
+///
+/// @ingroup render
+typedef GhosttyRenderStateRowIterator =
+    ffi.Pointer<GhosttyRenderStateRowIteratorImpl>;
+
+final class GhosttyRenderStateRowCellsImpl extends ffi.Opaque {}
+
+/// Opaque handle to render-state row cells.
+///
+/// @ingroup render
+typedef GhosttyRenderStateRowCells =
+    ffi.Pointer<GhosttyRenderStateRowCellsImpl>;
+
+final class GhosttySgrParserImpl extends ffi.Opaque {}
+
+/// Opaque handle to an SGR parser instance.
+///
+/// This handle represents an SGR (Select Graphic Rendition) parser that can
+/// be used to parse SGR sequences and extract individual text attributes.
+///
+/// @ingroup sgr
+typedef GhosttySgrParser = ffi.Pointer<GhosttySgrParserImpl>;
+
+final class GhosttyFormatterImpl extends ffi.Opaque {}
+
+/// Opaque handle to a formatter instance.
+///
+/// @ingroup formatter
+typedef GhosttyFormatter = ffi.Pointer<GhosttyFormatterImpl>;
+
+final class GhosttyOscParserImpl extends ffi.Opaque {}
+
+/// Opaque handle to an OSC parser instance.
+///
+/// This handle represents an OSC (Operating System Command) parser that can
+/// be used to parse the contents of OSC sequences.
+///
+/// @ingroup osc
+typedef GhosttyOscParser = ffi.Pointer<GhosttyOscParserImpl>;
+
+final class GhosttyOscCommandImpl extends ffi.Opaque {}
+
+/// Opaque handle to a single OSC command.
+///
+/// This handle represents a parsed OSC (Operating System Command) command.
+/// The command can be queried for its type and associated data.
+///
+/// @ingroup osc
+typedef GhosttyOscCommand = ffi.Pointer<GhosttyOscCommandImpl>;
 
 /// A borrowed byte string (pointer + length).
 ///
@@ -2544,7 +3758,8 @@ enum GhosttyOptimizeMode {
   GHOSTTY_OPTIMIZE_DEBUG(0),
   GHOSTTY_OPTIMIZE_RELEASE_SAFE(1),
   GHOSTTY_OPTIMIZE_RELEASE_SMALL(2),
-  GHOSTTY_OPTIMIZE_RELEASE_FAST(3);
+  GHOSTTY_OPTIMIZE_RELEASE_FAST(3),
+  GHOSTTY_OPTIMIZE_MODE_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyOptimizeMode(this.value);
@@ -2554,6 +3769,7 @@ enum GhosttyOptimizeMode {
     1 => GHOSTTY_OPTIMIZE_RELEASE_SAFE,
     2 => GHOSTTY_OPTIMIZE_RELEASE_SMALL,
     3 => GHOSTTY_OPTIMIZE_RELEASE_FAST,
+    2147483647 => GHOSTTY_OPTIMIZE_MODE_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyOptimizeMode: $value'),
   };
 }
@@ -2605,11 +3821,18 @@ enum GhosttyBuildInfo {
   /// Output type: size_t *
   GHOSTTY_BUILD_INFO_VERSION_PATCH(8),
 
+  /// The pre metadata string (e.g. "alpha", "beta", "dev"). Has zero length if
+  /// no pre metadata is present.
+  ///
+  /// Output type: GhosttyString *
+  GHOSTTY_BUILD_INFO_VERSION_PRE(9),
+
   /// The build metadata string (e.g. commit hash). Has zero length if
   /// no build metadata is present.
   ///
   /// Output type: GhosttyString *
-  GHOSTTY_BUILD_INFO_VERSION_BUILD(9);
+  GHOSTTY_BUILD_INFO_VERSION_BUILD(10),
+  GHOSTTY_BUILD_INFO_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyBuildInfo(this.value);
@@ -2624,7 +3847,9 @@ enum GhosttyBuildInfo {
     6 => GHOSTTY_BUILD_INFO_VERSION_MAJOR,
     7 => GHOSTTY_BUILD_INFO_VERSION_MINOR,
     8 => GHOSTTY_BUILD_INFO_VERSION_PATCH,
-    9 => GHOSTTY_BUILD_INFO_VERSION_BUILD,
+    9 => GHOSTTY_BUILD_INFO_VERSION_PRE,
+    10 => GHOSTTY_BUILD_INFO_VERSION_BUILD,
+    2147483647 => GHOSTTY_BUILD_INFO_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyBuildInfo: $value'),
   };
 }
@@ -2657,7 +3882,8 @@ typedef DartGhosttyColorPaletteIndex = int;
 /// @ingroup terminal
 enum GhosttyColorScheme {
   GHOSTTY_COLOR_SCHEME_LIGHT(0),
-  GHOSTTY_COLOR_SCHEME_DARK(1);
+  GHOSTTY_COLOR_SCHEME_DARK(1),
+  GHOSTTY_COLOR_SCHEME_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyColorScheme(this.value);
@@ -2665,6 +3891,7 @@ enum GhosttyColorScheme {
   static GhosttyColorScheme fromValue(int value) => switch (value) {
     0 => GHOSTTY_COLOR_SCHEME_LIGHT,
     1 => GHOSTTY_COLOR_SCHEME_DARK,
+    2147483647 => GHOSTTY_COLOR_SCHEME_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyColorScheme: $value'),
   };
 }
@@ -2743,7 +3970,8 @@ enum GhosttyFocusEvent {
   GHOSTTY_FOCUS_GAINED(0),
 
   /// Terminal window lost focus
-  GHOSTTY_FOCUS_LOST(1);
+  GHOSTTY_FOCUS_LOST(1),
+  GHOSTTY_FOCUS_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyFocusEvent(this.value);
@@ -2751,100 +3979,9 @@ enum GhosttyFocusEvent {
   static GhosttyFocusEvent fromValue(int value) => switch (value) {
     0 => GHOSTTY_FOCUS_GAINED,
     1 => GHOSTTY_FOCUS_LOST,
+    2147483647 => GHOSTTY_FOCUS_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyFocusEvent: $value'),
   };
-}
-
-/// A packed 16-bit terminal mode.
-///
-/// Encodes a mode value (bits 0–14) and an ANSI flag (bit 15) into a
-/// single 16-bit integer. Use the inline helper functions to construct
-/// and inspect modes rather than manipulating bits directly.
-typedef GhosttyMode = ffi.Uint16;
-typedef DartGhosttyMode = int;
-
-/// DECRPM report state values.
-///
-/// These correspond to the Ps2 parameter in a DECRPM response
-/// sequence (CSI ? Ps1 ; Ps2 $ y).
-enum GhosttyModeReportState {
-  /// Mode is not recognized
-  GHOSTTY_MODE_REPORT_NOT_RECOGNIZED(0),
-
-  /// Mode is set (enabled)
-  GHOSTTY_MODE_REPORT_SET(1),
-
-  /// Mode is reset (disabled)
-  GHOSTTY_MODE_REPORT_RESET(2),
-
-  /// Mode is permanently set
-  GHOSTTY_MODE_REPORT_PERMANENTLY_SET(3),
-
-  /// Mode is permanently reset
-  GHOSTTY_MODE_REPORT_PERMANENTLY_RESET(4);
-
-  final int value;
-  const GhosttyModeReportState(this.value);
-
-  static GhosttyModeReportState fromValue(int value) => switch (value) {
-    0 => GHOSTTY_MODE_REPORT_NOT_RECOGNIZED,
-    1 => GHOSTTY_MODE_REPORT_SET,
-    2 => GHOSTTY_MODE_REPORT_RESET,
-    3 => GHOSTTY_MODE_REPORT_PERMANENTLY_SET,
-    4 => GHOSTTY_MODE_REPORT_PERMANENTLY_RESET,
-    _ => throw ArgumentError(
-      'Unknown value for GhosttyModeReportState: $value',
-    ),
-  };
-}
-
-/// Size report style.
-///
-/// Determines the output format for the terminal size report.
-enum GhosttySizeReportStyle {
-  /// In-band size report (mode 2048): ESC [ 48 ; rows ; cols ; height ; width t
-  GHOSTTY_SIZE_REPORT_MODE_2048(0),
-
-  /// XTWINOPS text area size in pixels: ESC [ 4 ; height ; width t
-  GHOSTTY_SIZE_REPORT_CSI_14_T(1),
-
-  /// XTWINOPS cell size in pixels: ESC [ 6 ; height ; width t
-  GHOSTTY_SIZE_REPORT_CSI_16_T(2),
-
-  /// XTWINOPS text area size in characters: ESC [ 8 ; rows ; cols t
-  GHOSTTY_SIZE_REPORT_CSI_18_T(3);
-
-  final int value;
-  const GhosttySizeReportStyle(this.value);
-
-  static GhosttySizeReportStyle fromValue(int value) => switch (value) {
-    0 => GHOSTTY_SIZE_REPORT_MODE_2048,
-    1 => GHOSTTY_SIZE_REPORT_CSI_14_T,
-    2 => GHOSTTY_SIZE_REPORT_CSI_16_T,
-    3 => GHOSTTY_SIZE_REPORT_CSI_18_T,
-    _ => throw ArgumentError(
-      'Unknown value for GhosttySizeReportStyle: $value',
-    ),
-  };
-}
-
-/// Terminal size information for encoding size reports.
-final class GhosttySizeReportSize extends ffi.Struct {
-  /// Terminal row count in cells.
-  @ffi.Uint16()
-  external int rows;
-
-  /// Terminal column count in cells.
-  @ffi.Uint16()
-  external int columns;
-
-  /// Width of a single terminal cell in pixels.
-  @ffi.Uint32()
-  external int cell_width;
-
-  /// Height of a single terminal cell in pixels.
-  @ffi.Uint32()
-  external int cell_height;
 }
 
 /// Opaque cell value.
@@ -2883,7 +4020,8 @@ enum GhosttyCellContentTag {
   GHOSTTY_CELL_CONTENT_BG_COLOR_PALETTE(2),
 
   /// No text; background color as RGB.
-  GHOSTTY_CELL_CONTENT_BG_COLOR_RGB(3);
+  GHOSTTY_CELL_CONTENT_BG_COLOR_RGB(3),
+  GHOSTTY_CELL_CONTENT_TAG_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyCellContentTag(this.value);
@@ -2893,6 +4031,7 @@ enum GhosttyCellContentTag {
     1 => GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME,
     2 => GHOSTTY_CELL_CONTENT_BG_COLOR_PALETTE,
     3 => GHOSTTY_CELL_CONTENT_BG_COLOR_RGB,
+    2147483647 => GHOSTTY_CELL_CONTENT_TAG_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyCellContentTag: $value'),
   };
 }
@@ -2913,7 +4052,8 @@ enum GhosttyCellWide {
   GHOSTTY_CELL_WIDE_SPACER_TAIL(2),
 
   /// Spacer at end of soft-wrapped line for a wide character.
-  GHOSTTY_CELL_WIDE_SPACER_HEAD(3);
+  GHOSTTY_CELL_WIDE_SPACER_HEAD(3),
+  GHOSTTY_CELL_WIDE_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyCellWide(this.value);
@@ -2923,6 +4063,7 @@ enum GhosttyCellWide {
     1 => GHOSTTY_CELL_WIDE_WIDE,
     2 => GHOSTTY_CELL_WIDE_SPACER_TAIL,
     3 => GHOSTTY_CELL_WIDE_SPACER_HEAD,
+    2147483647 => GHOSTTY_CELL_WIDE_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyCellWide: $value'),
   };
 }
@@ -2941,7 +4082,8 @@ enum GhosttyCellSemanticContent {
   GHOSTTY_CELL_SEMANTIC_INPUT(1),
 
   /// Content that is part of a shell prompt.
-  GHOSTTY_CELL_SEMANTIC_PROMPT(2);
+  GHOSTTY_CELL_SEMANTIC_PROMPT(2),
+  GHOSTTY_CELL_SEMANTIC_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyCellSemanticContent(this.value);
@@ -2950,6 +4092,7 @@ enum GhosttyCellSemanticContent {
     0 => GHOSTTY_CELL_SEMANTIC_OUTPUT,
     1 => GHOSTTY_CELL_SEMANTIC_INPUT,
     2 => GHOSTTY_CELL_SEMANTIC_PROMPT,
+    2147483647 => GHOSTTY_CELL_SEMANTIC_MAX_VALUE,
     _ => throw ArgumentError(
       'Unknown value for GhosttyCellSemanticContent: $value',
     ),
@@ -3021,7 +4164,8 @@ enum GhosttyCellData {
   /// Only valid when content_tag is GHOSTTY_CELL_CONTENT_BG_COLOR_RGB.
   ///
   /// Output type: GhosttyColorRgb *
-  GHOSTTY_CELL_DATA_COLOR_RGB(11);
+  GHOSTTY_CELL_DATA_COLOR_RGB(11),
+  GHOSTTY_CELL_DATA_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyCellData(this.value);
@@ -3039,6 +4183,7 @@ enum GhosttyCellData {
     9 => GHOSTTY_CELL_DATA_SEMANTIC_CONTENT,
     10 => GHOSTTY_CELL_DATA_COLOR_PALETTE,
     11 => GHOSTTY_CELL_DATA_COLOR_RGB,
+    2147483647 => GHOSTTY_CELL_DATA_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyCellData: $value'),
   };
 }
@@ -3057,7 +4202,8 @@ enum GhosttyRowSemanticPrompt {
   GHOSTTY_ROW_SEMANTIC_PROMPT(1),
 
   /// Prompt cells exist and this is a continuation line.
-  GHOSTTY_ROW_SEMANTIC_PROMPT_CONTINUATION(2);
+  GHOSTTY_ROW_SEMANTIC_PROMPT_CONTINUATION(2),
+  GHOSTTY_ROW_SEMANTIC_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyRowSemanticPrompt(this.value);
@@ -3066,6 +4212,7 @@ enum GhosttyRowSemanticPrompt {
     0 => GHOSTTY_ROW_SEMANTIC_NONE,
     1 => GHOSTTY_ROW_SEMANTIC_PROMPT,
     2 => GHOSTTY_ROW_SEMANTIC_PROMPT_CONTINUATION,
+    2147483647 => GHOSTTY_ROW_SEMANTIC_MAX_VALUE,
     _ => throw ArgumentError(
       'Unknown value for GhosttyRowSemanticPrompt: $value',
     ),
@@ -3120,7 +4267,8 @@ enum GhosttyRowData {
   /// Whether this row is dirty and requires a redraw.
   ///
   /// Output type: bool *
-  GHOSTTY_ROW_DATA_DIRTY(8);
+  GHOSTTY_ROW_DATA_DIRTY(8),
+  GHOSTTY_ROW_DATA_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyRowData(this.value);
@@ -3135,6 +4283,7 @@ enum GhosttyRowData {
     6 => GHOSTTY_ROW_DATA_SEMANTIC_PROMPT,
     7 => GHOSTTY_ROW_DATA_KITTY_VIRTUAL_PLACEHOLDER,
     8 => GHOSTTY_ROW_DATA_DIRTY,
+    2147483647 => GHOSTTY_ROW_DATA_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyRowData: $value'),
   };
 }
@@ -3157,7 +4306,8 @@ typedef DartGhosttyStyleId = int;
 enum GhosttyStyleColorTag {
   GHOSTTY_STYLE_COLOR_NONE(0),
   GHOSTTY_STYLE_COLOR_PALETTE(1),
-  GHOSTTY_STYLE_COLOR_RGB(2);
+  GHOSTTY_STYLE_COLOR_RGB(2),
+  GHOSTTY_STYLE_COLOR_TAG_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyStyleColorTag(this.value);
@@ -3166,6 +4316,7 @@ enum GhosttyStyleColorTag {
     0 => GHOSTTY_STYLE_COLOR_NONE,
     1 => GHOSTTY_STYLE_COLOR_PALETTE,
     2 => GHOSTTY_STYLE_COLOR_RGB,
+    2147483647 => GHOSTTY_STYLE_COLOR_TAG_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyStyleColorTag: $value'),
   };
 }
@@ -3267,6 +4418,481 @@ final class GhosttyGridRef extends ffi.Struct {
   external int y;
 }
 
+/// A selection range defined by two grid references.
+///
+/// This is a sized struct. Use GHOSTTY_INIT_SIZED() to initialize it.
+///
+/// @ingroup selection
+final class GhosttySelection extends ffi.Struct {
+  /// Size of this struct in bytes. Must be set to sizeof(GhosttySelection).
+  @ffi.Size()
+  external int size;
+
+  /// Start of the selection range (inclusive).
+  external GhosttyGridRef start;
+
+  /// End of the selection range (inclusive).
+  external GhosttyGridRef end;
+
+  /// Whether the selection is rectangular (block) rather than linear.
+  @ffi.Bool()
+  external bool rectangle;
+}
+
+/// A packed 16-bit terminal mode.
+///
+/// Encodes a mode value (bits 0–14) and an ANSI flag (bit 15) into a
+/// single 16-bit integer. Use the inline helper functions to construct
+/// and inspect modes rather than manipulating bits directly.
+typedef GhosttyMode = ffi.Uint16;
+typedef DartGhosttyMode = int;
+
+/// DECRPM report state values.
+///
+/// These correspond to the Ps2 parameter in a DECRPM response
+/// sequence (CSI ? Ps1 ; Ps2 $ y).
+enum GhosttyModeReportState {
+  /// Mode is not recognized
+  GHOSTTY_MODE_REPORT_NOT_RECOGNIZED(0),
+
+  /// Mode is set (enabled)
+  GHOSTTY_MODE_REPORT_SET(1),
+
+  /// Mode is reset (disabled)
+  GHOSTTY_MODE_REPORT_RESET(2),
+
+  /// Mode is permanently set
+  GHOSTTY_MODE_REPORT_PERMANENTLY_SET(3),
+
+  /// Mode is permanently reset
+  GHOSTTY_MODE_REPORT_PERMANENTLY_RESET(4),
+  GHOSTTY_MODE_REPORT_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyModeReportState(this.value);
+
+  static GhosttyModeReportState fromValue(int value) => switch (value) {
+    0 => GHOSTTY_MODE_REPORT_NOT_RECOGNIZED,
+    1 => GHOSTTY_MODE_REPORT_SET,
+    2 => GHOSTTY_MODE_REPORT_RESET,
+    3 => GHOSTTY_MODE_REPORT_PERMANENTLY_SET,
+    4 => GHOSTTY_MODE_REPORT_PERMANENTLY_RESET,
+    2147483647 => GHOSTTY_MODE_REPORT_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyModeReportState: $value',
+    ),
+  };
+}
+
+/// Size report style.
+///
+/// Determines the output format for the terminal size report.
+enum GhosttySizeReportStyle {
+  /// In-band size report (mode 2048): ESC [ 48 ; rows ; cols ; height ; width t
+  GHOSTTY_SIZE_REPORT_MODE_2048(0),
+
+  /// XTWINOPS text area size in pixels: ESC [ 4 ; height ; width t
+  GHOSTTY_SIZE_REPORT_CSI_14_T(1),
+
+  /// XTWINOPS cell size in pixels: ESC [ 6 ; height ; width t
+  GHOSTTY_SIZE_REPORT_CSI_16_T(2),
+
+  /// XTWINOPS text area size in characters: ESC [ 8 ; rows ; cols t
+  GHOSTTY_SIZE_REPORT_CSI_18_T(3),
+  GHOSTTY_SIZE_REPORT_STYLE_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttySizeReportStyle(this.value);
+
+  static GhosttySizeReportStyle fromValue(int value) => switch (value) {
+    0 => GHOSTTY_SIZE_REPORT_MODE_2048,
+    1 => GHOSTTY_SIZE_REPORT_CSI_14_T,
+    2 => GHOSTTY_SIZE_REPORT_CSI_16_T,
+    3 => GHOSTTY_SIZE_REPORT_CSI_18_T,
+    2147483647 => GHOSTTY_SIZE_REPORT_STYLE_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttySizeReportStyle: $value',
+    ),
+  };
+}
+
+/// Terminal size information for encoding size reports.
+final class GhosttySizeReportSize extends ffi.Struct {
+  /// Terminal row count in cells.
+  @ffi.Uint16()
+  external int rows;
+
+  /// Terminal column count in cells.
+  @ffi.Uint16()
+  external int columns;
+
+  /// Width of a single terminal cell in pixels.
+  @ffi.Uint32()
+  external int cell_width;
+
+  /// Height of a single terminal cell in pixels.
+  @ffi.Uint32()
+  external int cell_height;
+}
+
+/// Queryable data kinds for ghostty_kitty_graphics_get().
+///
+/// @ingroup kitty_graphics
+enum GhosttyKittyGraphicsData {
+  /// Invalid / sentinel value.
+  GHOSTTY_KITTY_GRAPHICS_DATA_INVALID(0),
+
+  /// Populate a pre-allocated placement iterator with placement data from
+  /// the storage. Iterator data is only valid as long as the underlying
+  /// terminal is not mutated.
+  ///
+  /// Output type: GhosttyKittyGraphicsPlacementIterator *
+  GHOSTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR(1),
+  GHOSTTY_KITTY_GRAPHICS_DATA_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyKittyGraphicsData(this.value);
+
+  static GhosttyKittyGraphicsData fromValue(int value) => switch (value) {
+    0 => GHOSTTY_KITTY_GRAPHICS_DATA_INVALID,
+    1 => GHOSTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR,
+    2147483647 => GHOSTTY_KITTY_GRAPHICS_DATA_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyKittyGraphicsData: $value',
+    ),
+  };
+}
+
+/// Queryable data kinds for ghostty_kitty_graphics_placement_get().
+///
+/// @ingroup kitty_graphics
+enum GhosttyKittyGraphicsPlacementData {
+  /// Invalid / sentinel value.
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_INVALID(0),
+
+  /// The image ID this placement belongs to.
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID(1),
+
+  /// The placement ID.
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_PLACEMENT_ID(2),
+
+  /// Whether this is a virtual placement (unicode placeholder).
+  ///
+  /// Output type: bool *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IS_VIRTUAL(3),
+
+  /// Pixel offset from the left edge of the cell.
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_X_OFFSET(4),
+
+  /// Pixel offset from the top edge of the cell.
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Y_OFFSET(5),
+
+  /// Source rectangle x origin in pixels.
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_X(6),
+
+  /// Source rectangle y origin in pixels.
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_Y(7),
+
+  /// Source rectangle width in pixels (0 = full image width).
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_WIDTH(8),
+
+  /// Source rectangle height in pixels (0 = full image height).
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_HEIGHT(9),
+
+  /// Number of columns this placement occupies.
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_COLUMNS(10),
+
+  /// Number of rows this placement occupies.
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_ROWS(11),
+
+  /// Z-index for this placement.
+  ///
+  /// Output type: int32_t *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Z(12),
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyKittyGraphicsPlacementData(this.value);
+
+  static GhosttyKittyGraphicsPlacementData fromValue(int value) =>
+      switch (value) {
+        0 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_INVALID,
+        1 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID,
+        2 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_PLACEMENT_ID,
+        3 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IS_VIRTUAL,
+        4 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_X_OFFSET,
+        5 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Y_OFFSET,
+        6 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_X,
+        7 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_Y,
+        8 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_WIDTH,
+        9 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_HEIGHT,
+        10 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_COLUMNS,
+        11 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_ROWS,
+        12 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Z,
+        2147483647 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_MAX_VALUE,
+        _ => throw ArgumentError(
+          'Unknown value for GhosttyKittyGraphicsPlacementData: $value',
+        ),
+      };
+}
+
+/// Z-layer classification for kitty graphics placements.
+///
+/// Based on the kitty protocol z-index conventions:
+/// - BELOW_BG:   z < INT32_MIN/2  (drawn below cell background)
+/// - BELOW_TEXT:  INT32_MIN/2 <= z < 0  (above background, below text)
+/// - ABOVE_TEXT:  z >= 0  (above text)
+/// - ALL:         no filtering (current behavior)
+///
+/// @ingroup kitty_graphics
+enum GhosttyKittyPlacementLayer {
+  GHOSTTY_KITTY_PLACEMENT_LAYER_ALL(0),
+  GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG(1),
+  GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT(2),
+  GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT(3),
+  GHOSTTY_KITTY_PLACEMENT_LAYER_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyKittyPlacementLayer(this.value);
+
+  static GhosttyKittyPlacementLayer fromValue(int value) => switch (value) {
+    0 => GHOSTTY_KITTY_PLACEMENT_LAYER_ALL,
+    1 => GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG,
+    2 => GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT,
+    3 => GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT,
+    2147483647 => GHOSTTY_KITTY_PLACEMENT_LAYER_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyKittyPlacementLayer: $value',
+    ),
+  };
+}
+
+/// Settable options for ghostty_kitty_graphics_placement_iterator_set().
+///
+/// @ingroup kitty_graphics
+enum GhosttyKittyGraphicsPlacementIteratorOption {
+  /// Set the z-layer filter for the iterator.
+  ///
+  /// Input type: GhosttyKittyPlacementLayer *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER(0),
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyKittyGraphicsPlacementIteratorOption(this.value);
+
+  static GhosttyKittyGraphicsPlacementIteratorOption fromValue(
+    int value,
+  ) => switch (value) {
+    0 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER,
+    2147483647 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyKittyGraphicsPlacementIteratorOption: $value',
+    ),
+  };
+}
+
+/// Pixel format of a Kitty graphics image.
+///
+/// @ingroup kitty_graphics
+enum GhosttyKittyImageFormat {
+  GHOSTTY_KITTY_IMAGE_FORMAT_RGB(0),
+  GHOSTTY_KITTY_IMAGE_FORMAT_RGBA(1),
+  GHOSTTY_KITTY_IMAGE_FORMAT_PNG(2),
+  GHOSTTY_KITTY_IMAGE_FORMAT_GRAY_ALPHA(3),
+  GHOSTTY_KITTY_IMAGE_FORMAT_GRAY(4),
+  GHOSTTY_KITTY_IMAGE_FORMAT_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyKittyImageFormat(this.value);
+
+  static GhosttyKittyImageFormat fromValue(int value) => switch (value) {
+    0 => GHOSTTY_KITTY_IMAGE_FORMAT_RGB,
+    1 => GHOSTTY_KITTY_IMAGE_FORMAT_RGBA,
+    2 => GHOSTTY_KITTY_IMAGE_FORMAT_PNG,
+    3 => GHOSTTY_KITTY_IMAGE_FORMAT_GRAY_ALPHA,
+    4 => GHOSTTY_KITTY_IMAGE_FORMAT_GRAY,
+    2147483647 => GHOSTTY_KITTY_IMAGE_FORMAT_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyKittyImageFormat: $value',
+    ),
+  };
+}
+
+/// Compression of a Kitty graphics image.
+///
+/// @ingroup kitty_graphics
+enum GhosttyKittyImageCompression {
+  GHOSTTY_KITTY_IMAGE_COMPRESSION_NONE(0),
+  GHOSTTY_KITTY_IMAGE_COMPRESSION_ZLIB_DEFLATE(1),
+  GHOSTTY_KITTY_IMAGE_COMPRESSION_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyKittyImageCompression(this.value);
+
+  static GhosttyKittyImageCompression fromValue(int value) => switch (value) {
+    0 => GHOSTTY_KITTY_IMAGE_COMPRESSION_NONE,
+    1 => GHOSTTY_KITTY_IMAGE_COMPRESSION_ZLIB_DEFLATE,
+    2147483647 => GHOSTTY_KITTY_IMAGE_COMPRESSION_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyKittyImageCompression: $value',
+    ),
+  };
+}
+
+/// Queryable data kinds for ghostty_kitty_graphics_image_get().
+///
+/// @ingroup kitty_graphics
+enum GhosttyKittyGraphicsImageData {
+  /// Invalid / sentinel value.
+  GHOSTTY_KITTY_IMAGE_DATA_INVALID(0),
+
+  /// The image ID.
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_IMAGE_DATA_ID(1),
+
+  /// The image number.
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_IMAGE_DATA_NUMBER(2),
+
+  /// Image width in pixels.
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_IMAGE_DATA_WIDTH(3),
+
+  /// Image height in pixels.
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_IMAGE_DATA_HEIGHT(4),
+
+  /// Pixel format of the image.
+  ///
+  /// Output type: GhosttyKittyImageFormat *
+  GHOSTTY_KITTY_IMAGE_DATA_FORMAT(5),
+
+  /// Compression of the image.
+  ///
+  /// Output type: GhosttyKittyImageCompression *
+  GHOSTTY_KITTY_IMAGE_DATA_COMPRESSION(6),
+
+  /// Borrowed pointer to the raw pixel data. Valid as long as the
+  /// underlying terminal is not mutated.
+  ///
+  /// Output type: const uint8_t **
+  GHOSTTY_KITTY_IMAGE_DATA_DATA_PTR(7),
+
+  /// Length of the raw pixel data in bytes.
+  ///
+  /// Output type: size_t *
+  GHOSTTY_KITTY_IMAGE_DATA_DATA_LEN(8),
+  GHOSTTY_KITTY_IMAGE_DATA_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyKittyGraphicsImageData(this.value);
+
+  static GhosttyKittyGraphicsImageData fromValue(int value) => switch (value) {
+    0 => GHOSTTY_KITTY_IMAGE_DATA_INVALID,
+    1 => GHOSTTY_KITTY_IMAGE_DATA_ID,
+    2 => GHOSTTY_KITTY_IMAGE_DATA_NUMBER,
+    3 => GHOSTTY_KITTY_IMAGE_DATA_WIDTH,
+    4 => GHOSTTY_KITTY_IMAGE_DATA_HEIGHT,
+    5 => GHOSTTY_KITTY_IMAGE_DATA_FORMAT,
+    6 => GHOSTTY_KITTY_IMAGE_DATA_COMPRESSION,
+    7 => GHOSTTY_KITTY_IMAGE_DATA_DATA_PTR,
+    8 => GHOSTTY_KITTY_IMAGE_DATA_DATA_LEN,
+    2147483647 => GHOSTTY_KITTY_IMAGE_DATA_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyKittyGraphicsImageData: $value',
+    ),
+  };
+}
+
+/// Combined rendering geometry for a placement in a single sized struct.
+///
+/// Combines the results of ghostty_kitty_graphics_placement_pixel_size(),
+/// ghostty_kitty_graphics_placement_grid_size(),
+/// ghostty_kitty_graphics_placement_viewport_pos(), and
+/// ghostty_kitty_graphics_placement_source_rect() into one call. This is
+/// an optimization over calling those four functions individually,
+/// particularly useful in environments with high per-call overhead such
+/// as FFI or Cgo.
+///
+/// This struct uses the sized-struct ABI pattern. Initialize with
+/// GHOSTTY_INIT_SIZED(GhosttyKittyGraphicsPlacementRenderInfo) before calling
+/// ghostty_kitty_graphics_placement_render_info().
+///
+/// @ingroup kitty_graphics
+final class GhosttyKittyGraphicsPlacementRenderInfo extends ffi.Struct {
+  /// Size of this struct in bytes. Must be set to sizeof(GhosttyKittyGraphicsPlacementRenderInfo).
+  @ffi.Size()
+  external int size;
+
+  /// Rendered width in pixels.
+  @ffi.Uint32()
+  external int pixel_width;
+
+  /// Rendered height in pixels.
+  @ffi.Uint32()
+  external int pixel_height;
+
+  /// Number of grid columns the placement occupies.
+  @ffi.Uint32()
+  external int grid_cols;
+
+  /// Number of grid rows the placement occupies.
+  @ffi.Uint32()
+  external int grid_rows;
+
+  /// Viewport-relative column (may be negative for partially visible placements).
+  @ffi.Int32()
+  external int viewport_col;
+
+  /// Viewport-relative row (may be negative for partially visible placements).
+  @ffi.Int32()
+  external int viewport_row;
+
+  /// False when the placement is fully off-screen or virtual.
+  @ffi.Bool()
+  external bool viewport_visible;
+
+  /// Resolved source rectangle x origin in pixels.
+  @ffi.Uint32()
+  external int source_x;
+
+  /// Resolved source rectangle y origin in pixels.
+  @ffi.Uint32()
+  external int source_y;
+
+  /// Resolved source rectangle width in pixels.
+  @ffi.Uint32()
+  external int source_width;
+
+  /// Resolved source rectangle height in pixels.
+  @ffi.Uint32()
+  external int source_height;
+}
+
 /// A coordinate in the terminal grid.
 ///
 /// @ingroup point
@@ -3296,7 +4922,8 @@ enum GhosttyPointTag {
   GHOSTTY_POINT_TAG_SCREEN(2),
 
   /// Scrollback history only (before active area).
-  GHOSTTY_POINT_TAG_HISTORY(3);
+  GHOSTTY_POINT_TAG_HISTORY(3),
+  GHOSTTY_POINT_TAG_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyPointTag(this.value);
@@ -3306,6 +4933,7 @@ enum GhosttyPointTag {
     1 => GHOSTTY_POINT_TAG_VIEWPORT,
     2 => GHOSTTY_POINT_TAG_SCREEN,
     3 => GHOSTTY_POINT_TAG_HISTORY,
+    2147483647 => GHOSTTY_POINT_TAG_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyPointTag: $value'),
   };
 }
@@ -3333,13 +4961,6 @@ final class GhosttyPoint extends ffi.Struct {
 
   external GhosttyPointValue value;
 }
-
-final class GhosttyTerminalImpl extends ffi.Opaque {}
-
-/// Opaque handle to a terminal instance.
-///
-/// @ingroup terminal
-typedef GhosttyTerminal = ffi.Pointer<GhosttyTerminalImpl>;
 
 /// Terminal initialization options.
 ///
@@ -3369,7 +4990,8 @@ enum GhosttyTerminalScrollViewportTag {
   GHOSTTY_SCROLL_VIEWPORT_BOTTOM(1),
 
   /// Scroll by a delta amount (up is negative).
-  GHOSTTY_SCROLL_VIEWPORT_DELTA(2);
+  GHOSTTY_SCROLL_VIEWPORT_DELTA(2),
+  GHOSTTY_SCROLL_VIEWPORT_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyTerminalScrollViewportTag(this.value);
@@ -3379,6 +5001,7 @@ enum GhosttyTerminalScrollViewportTag {
         0 => GHOSTTY_SCROLL_VIEWPORT_TOP,
         1 => GHOSTTY_SCROLL_VIEWPORT_BOTTOM,
         2 => GHOSTTY_SCROLL_VIEWPORT_DELTA,
+        2147483647 => GHOSTTY_SCROLL_VIEWPORT_MAX_VALUE,
         _ => throw ArgumentError(
           'Unknown value for GhosttyTerminalScrollViewportTag: $value',
         ),
@@ -3421,7 +5044,8 @@ enum GhosttyTerminalScreen {
   GHOSTTY_TERMINAL_SCREEN_PRIMARY(0),
 
   /// The alternate screen.
-  GHOSTTY_TERMINAL_SCREEN_ALTERNATE(1);
+  GHOSTTY_TERMINAL_SCREEN_ALTERNATE(1),
+  GHOSTTY_TERMINAL_SCREEN_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyTerminalScreen(this.value);
@@ -3429,6 +5053,7 @@ enum GhosttyTerminalScreen {
   static GhosttyTerminalScreen fromValue(int value) => switch (value) {
     0 => GHOSTTY_TERMINAL_SCREEN_PRIMARY,
     1 => GHOSTTY_TERMINAL_SCREEN_ALTERNATE,
+    2147483647 => GHOSTTY_TERMINAL_SCREEN_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyTerminalScreen: $value'),
   };
 }
@@ -3748,7 +5373,58 @@ enum GhosttyTerminalOption {
   /// A NULL value pointer resets to the built-in default palette.
   ///
   /// Input type: `GhosttyColorRgb[256]`*
-  GHOSTTY_TERMINAL_OPT_COLOR_PALETTE(14);
+  GHOSTTY_TERMINAL_OPT_COLOR_PALETTE(14),
+
+  /// Set the Kitty image storage limit in bytes.
+  ///
+  /// Applied to all initialized screens (primary and alternate).
+  /// A value of zero disables the Kitty graphics protocol entirely,
+  /// deleting all stored images and placements. A NULL value pointer
+  /// is equivalent to zero (disables). Has no effect when Kitty graphics
+  /// are disabled at build time.
+  ///
+  /// Input type: uint64_t*
+  GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT(15),
+
+  /// Enable or disable Kitty image loading via the file medium.
+  ///
+  /// A NULL value pointer is a no-op. Has no effect when Kitty graphics
+  /// are disabled at build time.
+  ///
+  /// Input type: bool*
+  GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_FILE(16),
+
+  /// Enable or disable Kitty image loading via the temporary file medium.
+  ///
+  /// A NULL value pointer is a no-op. Has no effect when Kitty graphics
+  /// are disabled at build time.
+  ///
+  /// Input type: bool*
+  GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE(17),
+
+  /// Enable or disable Kitty image loading via the shared memory medium.
+  ///
+  /// A NULL value pointer is a no-op. Has no effect when Kitty graphics
+  /// are disabled at build time.
+  ///
+  /// Input type: bool*
+  GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_SHARED_MEM(18),
+
+  /// Set the maximum bytes the APC handler will buffer for all protocols.
+  /// This prevents malicious input from causing unbounded memory allocation.
+  /// A NULL value pointer removes all overrides, reverting to the built-in
+  /// defaults.
+  ///
+  /// Input type: size_t*
+  GHOSTTY_TERMINAL_OPT_APC_MAX_BYTES(19),
+
+  /// Set the maximum bytes the APC handler will buffer for Kitty graphics
+  /// protocol data. A NULL value pointer removes the override, reverting
+  /// to the built-in default.
+  ///
+  /// Input type: size_t*
+  GHOSTTY_TERMINAL_OPT_APC_MAX_BYTES_KITTY(20),
+  GHOSTTY_TERMINAL_OPT_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyTerminalOption(this.value);
@@ -3769,6 +5445,13 @@ enum GhosttyTerminalOption {
     12 => GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND,
     13 => GHOSTTY_TERMINAL_OPT_COLOR_CURSOR,
     14 => GHOSTTY_TERMINAL_OPT_COLOR_PALETTE,
+    15 => GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT,
+    16 => GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_FILE,
+    17 => GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE,
+    18 => GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_SHARED_MEM,
+    19 => GHOSTTY_TERMINAL_OPT_APC_MAX_BYTES,
+    20 => GHOSTTY_TERMINAL_OPT_APC_MAX_BYTES_KITTY,
+    2147483647 => GHOSTTY_TERMINAL_OPT_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyTerminalOption: $value'),
   };
 }
@@ -3940,7 +5623,51 @@ enum GhosttyTerminalData {
   /// The default 256-color palette (ignoring any OSC overrides).
   ///
   /// Output type: `GhosttyColorRgb[256]` *
-  GHOSTTY_TERMINAL_DATA_COLOR_PALETTE_DEFAULT(25);
+  GHOSTTY_TERMINAL_DATA_COLOR_PALETTE_DEFAULT(25),
+
+  /// The Kitty image storage limit in bytes for the active screen.
+  ///
+  /// A value of zero means the Kitty graphics protocol is disabled.
+  /// Returns GHOSTTY_NO_VALUE when Kitty graphics are disabled at build time.
+  ///
+  /// Output type: uint64_t *
+  GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_STORAGE_LIMIT(26),
+
+  /// Whether the file medium is enabled for Kitty image loading on the
+  /// active screen.
+  ///
+  /// Returns GHOSTTY_NO_VALUE when Kitty graphics are disabled at build time.
+  ///
+  /// Output type: bool *
+  GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_FILE(27),
+
+  /// Whether the temporary file medium is enabled for Kitty image loading
+  /// on the active screen.
+  ///
+  /// Returns GHOSTTY_NO_VALUE when Kitty graphics are disabled at build time.
+  ///
+  /// Output type: bool *
+  GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_TEMP_FILE(28),
+
+  /// Whether the shared memory medium is enabled for Kitty image loading
+  /// on the active screen.
+  ///
+  /// Returns GHOSTTY_NO_VALUE when Kitty graphics are disabled at build time.
+  ///
+  /// Output type: bool *
+  GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_SHARED_MEM(29),
+
+  /// The Kitty graphics image storage for the active screen.
+  ///
+  /// Returns a borrowed pointer to the image storage. The pointer is valid
+  /// until the next mutating terminal call (e.g. ghostty_terminal_vt_write()
+  /// or ghostty_terminal_reset()).
+  ///
+  /// Returns GHOSTTY_NO_VALUE when Kitty graphics are disabled at build time.
+  ///
+  /// Output type: GhosttyKittyGraphics *
+  GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS(30),
+  GHOSTTY_TERMINAL_DATA_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyTerminalData(this.value);
@@ -3972,6 +5699,12 @@ enum GhosttyTerminalData {
     23 => GHOSTTY_TERMINAL_DATA_COLOR_BACKGROUND_DEFAULT,
     24 => GHOSTTY_TERMINAL_DATA_COLOR_CURSOR_DEFAULT,
     25 => GHOSTTY_TERMINAL_DATA_COLOR_PALETTE_DEFAULT,
+    26 => GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_STORAGE_LIMIT,
+    27 => GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_FILE,
+    28 => GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_TEMP_FILE,
+    29 => GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_SHARED_MEM,
+    30 => GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS,
+    2147483647 => GHOSTTY_TERMINAL_DATA_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyTerminalData: $value'),
   };
 }
@@ -3987,7 +5720,8 @@ enum GhosttyFormatterFormat {
   GHOSTTY_FORMATTER_FORMAT_VT(1),
 
   /// HTML with inline styles.
-  GHOSTTY_FORMATTER_FORMAT_HTML(2);
+  GHOSTTY_FORMATTER_FORMAT_HTML(2),
+  GHOSTTY_FORMATTER_FORMAT_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyFormatterFormat(this.value);
@@ -3996,6 +5730,7 @@ enum GhosttyFormatterFormat {
     0 => GHOSTTY_FORMATTER_FORMAT_PLAIN,
     1 => GHOSTTY_FORMATTER_FORMAT_VT,
     2 => GHOSTTY_FORMATTER_FORMAT_HTML,
+    2147483647 => GHOSTTY_FORMATTER_FORMAT_MAX_VALUE,
     _ => throw ArgumentError(
       'Unknown value for GhosttyFormatterFormat: $value',
     ),
@@ -4071,13 +5806,6 @@ final class GhosttyFormatterTerminalExtra extends ffi.Struct {
   external GhosttyFormatterScreenExtra screen;
 }
 
-final class GhosttyFormatterImpl extends ffi.Opaque {}
-
-/// Opaque handle to a formatter instance.
-///
-/// @ingroup formatter
-typedef GhosttyFormatter = ffi.Pointer<GhosttyFormatterImpl>;
-
 /// Options for creating a terminal formatter.
 ///
 /// @ingroup formatter
@@ -4103,30 +5831,11 @@ final class GhosttyFormatterTerminalOptions extends ffi.Struct {
 
   /// Extra terminal state to include in styled output.
   external GhosttyFormatterTerminalExtra extra;
+
+  /// Optional selection to restrict output to a range.
+  /// If NULL, the entire screen is formatted.
+  external ffi.Pointer<GhosttySelection> selection;
 }
-
-final class GhosttyRenderStateImpl extends ffi.Opaque {}
-
-/// Opaque handle to a render state instance.
-///
-/// @ingroup render
-typedef GhosttyRenderState = ffi.Pointer<GhosttyRenderStateImpl>;
-
-final class GhosttyRenderStateRowIteratorImpl extends ffi.Opaque {}
-
-/// Opaque handle to a render-state row iterator.
-///
-/// @ingroup render
-typedef GhosttyRenderStateRowIterator =
-    ffi.Pointer<GhosttyRenderStateRowIteratorImpl>;
-
-final class GhosttyRenderStateRowCellsImpl extends ffi.Opaque {}
-
-/// Opaque handle to render-state row cells.
-///
-/// @ingroup render
-typedef GhosttyRenderStateRowCells =
-    ffi.Pointer<GhosttyRenderStateRowCellsImpl>;
 
 /// Dirty state of a render state after update.
 ///
@@ -4139,7 +5848,8 @@ enum GhosttyRenderStateDirty {
   GHOSTTY_RENDER_STATE_DIRTY_PARTIAL(1),
 
   /// Global state changed; renderer should redraw everything.
-  GHOSTTY_RENDER_STATE_DIRTY_FULL(2);
+  GHOSTTY_RENDER_STATE_DIRTY_FULL(2),
+  GHOSTTY_RENDER_STATE_DIRTY_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyRenderStateDirty(this.value);
@@ -4148,6 +5858,7 @@ enum GhosttyRenderStateDirty {
     0 => GHOSTTY_RENDER_STATE_DIRTY_FALSE,
     1 => GHOSTTY_RENDER_STATE_DIRTY_PARTIAL,
     2 => GHOSTTY_RENDER_STATE_DIRTY_FULL,
+    2147483647 => GHOSTTY_RENDER_STATE_DIRTY_MAX_VALUE,
     _ => throw ArgumentError(
       'Unknown value for GhosttyRenderStateDirty: $value',
     ),
@@ -4168,7 +5879,8 @@ enum GhosttyRenderStateCursorVisualStyle {
   GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE(2),
 
   /// Hollow block cursor.
-  GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW(3);
+  GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW(3),
+  GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyRenderStateCursorVisualStyle(this.value);
@@ -4179,6 +5891,7 @@ enum GhosttyRenderStateCursorVisualStyle {
         1 => GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK,
         2 => GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE,
         3 => GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW,
+        2147483647 => GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_MAX_VALUE,
         _ => throw ArgumentError(
           'Unknown value for GhosttyRenderStateCursorVisualStyle: $value',
         ),
@@ -4250,7 +5963,8 @@ enum GhosttyRenderStateData {
 
   /// Whether the cursor is on the tail of a wide character (bool).
   /// Only valid when CURSOR_VIEWPORT_HAS_VALUE is true.
-  GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL(17);
+  GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL(17),
+  GHOSTTY_RENDER_STATE_DATA_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyRenderStateData(this.value);
@@ -4274,6 +5988,7 @@ enum GhosttyRenderStateData {
     15 => GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X,
     16 => GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y,
     17 => GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL,
+    2147483647 => GHOSTTY_RENDER_STATE_DATA_MAX_VALUE,
     _ => throw ArgumentError(
       'Unknown value for GhosttyRenderStateData: $value',
     ),
@@ -4285,13 +6000,15 @@ enum GhosttyRenderStateData {
 /// @ingroup render
 enum GhosttyRenderStateOption {
   /// Set dirty state (GhosttyRenderStateDirty).
-  GHOSTTY_RENDER_STATE_OPTION_DIRTY(0);
+  GHOSTTY_RENDER_STATE_OPTION_DIRTY(0),
+  GHOSTTY_RENDER_STATE_OPTION_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyRenderStateOption(this.value);
 
   static GhosttyRenderStateOption fromValue(int value) => switch (value) {
     0 => GHOSTTY_RENDER_STATE_OPTION_DIRTY,
+    2147483647 => GHOSTTY_RENDER_STATE_OPTION_MAX_VALUE,
     _ => throw ArgumentError(
       'Unknown value for GhosttyRenderStateOption: $value',
     ),
@@ -4315,7 +6032,8 @@ enum GhosttyRenderStateRowData {
   /// the current row (GhosttyRenderStateRowCells). Cell data is only
   /// valid as long as the underlying render state is not updated.
   /// It is unsafe to use cell data after updating the render state.
-  GHOSTTY_RENDER_STATE_ROW_DATA_CELLS(3);
+  GHOSTTY_RENDER_STATE_ROW_DATA_CELLS(3),
+  GHOSTTY_RENDER_STATE_ROW_DATA_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyRenderStateRowData(this.value);
@@ -4325,6 +6043,7 @@ enum GhosttyRenderStateRowData {
     1 => GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY,
     2 => GHOSTTY_RENDER_STATE_ROW_DATA_RAW,
     3 => GHOSTTY_RENDER_STATE_ROW_DATA_CELLS,
+    2147483647 => GHOSTTY_RENDER_STATE_ROW_DATA_MAX_VALUE,
     _ => throw ArgumentError(
       'Unknown value for GhosttyRenderStateRowData: $value',
     ),
@@ -4336,13 +6055,15 @@ enum GhosttyRenderStateRowData {
 /// @ingroup render
 enum GhosttyRenderStateRowOption {
   /// Set dirty state for the current row (bool).
-  GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY(0);
+  GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY(0),
+  GHOSTTY_RENDER_STATE_ROW_OPTION_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyRenderStateRowOption(this.value);
 
   static GhosttyRenderStateRowOption fromValue(int value) => switch (value) {
     0 => GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY,
+    2147483647 => GHOSTTY_RENDER_STATE_ROW_OPTION_MAX_VALUE,
     _ => throw ArgumentError(
       'Unknown value for GhosttyRenderStateRowOption: $value',
     ),
@@ -4423,7 +6144,8 @@ enum GhosttyRenderStateRowCellsData {
   /// Returns GHOSTTY_INVALID_VALUE if the cell has no explicit foreground
   /// color, in which case the caller should use whatever default foreground
   /// color it wants (e.g. the terminal foreground).
-  GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR(6);
+  GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR(6),
+  GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyRenderStateRowCellsData(this.value);
@@ -4436,31 +6158,12 @@ enum GhosttyRenderStateRowCellsData {
     4 => GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF,
     5 => GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR,
     6 => GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR,
+    2147483647 => GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_MAX_VALUE,
     _ => throw ArgumentError(
       'Unknown value for GhosttyRenderStateRowCellsData: $value',
     ),
   };
 }
-
-final class GhosttyOscParserImpl extends ffi.Opaque {}
-
-/// Opaque handle to an OSC parser instance.
-///
-/// This handle represents an OSC (Operating System Command) parser that can
-/// be used to parse the contents of OSC sequences.
-///
-/// @ingroup osc
-typedef GhosttyOscParser = ffi.Pointer<GhosttyOscParserImpl>;
-
-final class GhosttyOscCommandImpl extends ffi.Opaque {}
-
-/// Opaque handle to a single OSC command.
-///
-/// This handle represents a parsed OSC (Operating System Command) command.
-/// The command can be queried for its type and associated data.
-///
-/// @ingroup osc
-typedef GhosttyOscCommand = ffi.Pointer<GhosttyOscCommandImpl>;
 
 /// OSC command types.
 ///
@@ -4488,7 +6191,8 @@ enum GhosttyOscCommandType {
   GHOSTTY_OSC_COMMAND_CONEMU_OUTPUT_ENVIRONMENT_VARIABLE(19),
   GHOSTTY_OSC_COMMAND_CONEMU_XTERM_EMULATION(20),
   GHOSTTY_OSC_COMMAND_CONEMU_COMMENT(21),
-  GHOSTTY_OSC_COMMAND_KITTY_TEXT_SIZING(22);
+  GHOSTTY_OSC_COMMAND_KITTY_TEXT_SIZING(22),
+  GHOSTTY_OSC_COMMAND_TYPE_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyOscCommandType(this.value);
@@ -4517,6 +6221,7 @@ enum GhosttyOscCommandType {
     20 => GHOSTTY_OSC_COMMAND_CONEMU_XTERM_EMULATION,
     21 => GHOSTTY_OSC_COMMAND_CONEMU_COMMENT,
     22 => GHOSTTY_OSC_COMMAND_KITTY_TEXT_SIZING,
+    2147483647 => GHOSTTY_OSC_COMMAND_TYPE_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyOscCommandType: $value'),
   };
 }
@@ -4539,7 +6244,8 @@ enum GhosttyOscCommandData {
   ///
   /// Lifetime: Valid until the next call to any ghostty_osc_* function with
   /// the same parser instance. Memory is owned by the parser.
-  GHOSTTY_OSC_DATA_CHANGE_WINDOW_TITLE_STR(1);
+  GHOSTTY_OSC_DATA_CHANGE_WINDOW_TITLE_STR(1),
+  GHOSTTY_OSC_DATA_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyOscCommandData(this.value);
@@ -4547,19 +6253,10 @@ enum GhosttyOscCommandData {
   static GhosttyOscCommandData fromValue(int value) => switch (value) {
     0 => GHOSTTY_OSC_DATA_INVALID,
     1 => GHOSTTY_OSC_DATA_CHANGE_WINDOW_TITLE_STR,
+    2147483647 => GHOSTTY_OSC_DATA_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyOscCommandData: $value'),
   };
 }
-
-final class GhosttySgrParserImpl extends ffi.Opaque {}
-
-/// Opaque handle to an SGR parser instance.
-///
-/// This handle represents an SGR (Select Graphic Rendition) parser that can
-/// be used to parse SGR sequences and extract individual text attributes.
-///
-/// @ingroup sgr
-typedef GhosttySgrParser = ffi.Pointer<GhosttySgrParserImpl>;
 
 /// SGR attribute tags.
 ///
@@ -4598,7 +6295,8 @@ enum GhosttySgrAttributeTag {
   GHOSTTY_SGR_ATTR_BRIGHT_BG_8(27),
   GHOSTTY_SGR_ATTR_BRIGHT_FG_8(28),
   GHOSTTY_SGR_ATTR_BG_256(29),
-  GHOSTTY_SGR_ATTR_FG_256(30);
+  GHOSTTY_SGR_ATTR_FG_256(30),
+  GHOSTTY_SGR_ATTR_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttySgrAttributeTag(this.value);
@@ -4635,6 +6333,7 @@ enum GhosttySgrAttributeTag {
     28 => GHOSTTY_SGR_ATTR_BRIGHT_FG_8,
     29 => GHOSTTY_SGR_ATTR_BG_256,
     30 => GHOSTTY_SGR_ATTR_FG_256,
+    2147483647 => GHOSTTY_SGR_ATTR_MAX_VALUE,
     _ => throw ArgumentError(
       'Unknown value for GhosttySgrAttributeTag: $value',
     ),
@@ -4650,7 +6349,8 @@ enum GhosttySgrUnderline {
   GHOSTTY_SGR_UNDERLINE_DOUBLE(2),
   GHOSTTY_SGR_UNDERLINE_CURLY(3),
   GHOSTTY_SGR_UNDERLINE_DOTTED(4),
-  GHOSTTY_SGR_UNDERLINE_DASHED(5);
+  GHOSTTY_SGR_UNDERLINE_DASHED(5),
+  GHOSTTY_SGR_UNDERLINE_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttySgrUnderline(this.value);
@@ -4662,6 +6362,7 @@ enum GhosttySgrUnderline {
     3 => GHOSTTY_SGR_UNDERLINE_CURLY,
     4 => GHOSTTY_SGR_UNDERLINE_DOTTED,
     5 => GHOSTTY_SGR_UNDERLINE_DASHED,
+    2147483647 => GHOSTTY_SGR_UNDERLINE_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttySgrUnderline: $value'),
   };
 }
@@ -4750,6 +6451,167 @@ final class GhosttySgrAttribute extends ffi.Struct {
   external GhosttySgrAttributeValue value;
 }
 
+/// Result of decoding an image.
+///
+/// The `data` buffer must be allocated through the allocator provided to
+/// the decode callback. The library takes ownership and will free it
+/// with the same allocator.
+final class GhosttySysImage extends ffi.Struct {
+  /// Image width in pixels.
+  @ffi.Uint32()
+  external int width;
+
+  /// Image height in pixels.
+  @ffi.Uint32()
+  external int height;
+
+  /// Pointer to the decoded RGBA pixel data.
+  external ffi.Pointer<ffi.Uint8> data;
+
+  /// Length of the pixel data in bytes.
+  @ffi.Size()
+  external int data_len;
+}
+
+/// Log severity levels for the log callback.
+enum GhosttySysLogLevel {
+  GHOSTTY_SYS_LOG_LEVEL_ERROR(0),
+  GHOSTTY_SYS_LOG_LEVEL_WARNING(1),
+  GHOSTTY_SYS_LOG_LEVEL_INFO(2),
+  GHOSTTY_SYS_LOG_LEVEL_DEBUG(3),
+  GHOSTTY_SYS_LOG_LEVEL_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttySysLogLevel(this.value);
+
+  static GhosttySysLogLevel fromValue(int value) => switch (value) {
+    0 => GHOSTTY_SYS_LOG_LEVEL_ERROR,
+    1 => GHOSTTY_SYS_LOG_LEVEL_WARNING,
+    2 => GHOSTTY_SYS_LOG_LEVEL_INFO,
+    3 => GHOSTTY_SYS_LOG_LEVEL_DEBUG,
+    2147483647 => GHOSTTY_SYS_LOG_LEVEL_MAX_VALUE,
+    _ => throw ArgumentError('Unknown value for GhosttySysLogLevel: $value'),
+  };
+}
+
+typedef GhosttySysLogFnFunction =
+    ffi.Void Function(
+      ffi.Pointer<ffi.Void> userdata,
+      ffi.UnsignedInt level,
+      ffi.Pointer<ffi.Uint8> scope,
+      ffi.Size scope_len,
+      ffi.Pointer<ffi.Uint8> message,
+      ffi.Size message_len,
+    );
+typedef DartGhosttySysLogFnFunction =
+    void Function(
+      ffi.Pointer<ffi.Void> userdata,
+      GhosttySysLogLevel level,
+      ffi.Pointer<ffi.Uint8> scope,
+      int scope_len,
+      ffi.Pointer<ffi.Uint8> message,
+      int message_len,
+    );
+
+/// Callback type for logging.
+///
+/// When installed, internal library log messages are delivered through
+/// this callback instead of being discarded. The embedder is responsible
+/// for formatting and routing log output.
+///
+/// @p scope is the log scope name as UTF-8 bytes (e.g. "osc", "kitty").
+/// When the log is unscoped (default scope), @p scope_len is 0.
+///
+/// All pointer arguments are only valid for the duration of the callback.
+/// The callback must be safe to call from any thread.
+///
+/// @param userdata    The userdata pointer set via GHOSTTY_SYS_OPT_USERDATA
+/// @param level       The severity level of the log message
+/// @param scope       Pointer to the scope name bytes
+/// @param scope_len   Length of the scope name in bytes
+/// @param message     Pointer to the log message bytes
+/// @param message_len Length of the log message in bytes
+typedef GhosttySysLogFn =
+    ffi.Pointer<ffi.NativeFunction<GhosttySysLogFnFunction>>;
+typedef GhosttySysDecodePngFnFunction =
+    ffi.Bool Function(
+      ffi.Pointer<ffi.Void> userdata,
+      ffi.Pointer<GhosttyAllocator> allocator,
+      ffi.Pointer<ffi.Uint8> data,
+      ffi.Size data_len,
+      ffi.Pointer<GhosttySysImage> out,
+    );
+typedef DartGhosttySysDecodePngFnFunction =
+    bool Function(
+      ffi.Pointer<ffi.Void> userdata,
+      ffi.Pointer<GhosttyAllocator> allocator,
+      ffi.Pointer<ffi.Uint8> data,
+      int data_len,
+      ffi.Pointer<GhosttySysImage> out,
+    );
+
+/// Callback type for PNG decoding.
+///
+/// Decodes raw PNG data into RGBA pixels. The output pixel data must be
+/// allocated through the provided allocator. The library takes ownership
+/// of the buffer and will free it with the same allocator.
+///
+/// @param userdata  The userdata pointer set via GHOSTTY_SYS_OPT_USERDATA
+/// @param allocator The allocator to use for the output pixel buffer
+/// @param data      Pointer to the raw PNG data
+/// @param data_len  Length of the raw PNG data in bytes
+/// @param[out] out  On success, filled with the decoded image
+/// @return true on success, false on failure
+typedef GhosttySysDecodePngFn =
+    ffi.Pointer<ffi.NativeFunction<GhosttySysDecodePngFnFunction>>;
+
+/// System option identifiers for ghostty_sys_set().
+enum GhosttySysOption {
+  /// Set the userdata pointer passed to all sys callbacks.
+  ///
+  /// Input type: void* (or NULL)
+  GHOSTTY_SYS_OPT_USERDATA(0),
+
+  /// Set the PNG decode function.
+  ///
+  /// When set, the terminal can accept PNG images via the Kitty
+  /// Graphics Protocol. When cleared (NULL value), PNG decoding is
+  /// unsupported and PNG image data will be rejected.
+  ///
+  /// Input type: GhosttySysDecodePngFn (function pointer, or NULL)
+  GHOSTTY_SYS_OPT_DECODE_PNG(1),
+
+  /// Set the log callback.
+  ///
+  /// When set, internal library log messages are delivered to this
+  /// callback. When cleared (NULL value), log messages are silently
+  /// discarded.
+  ///
+  /// Use ghostty_sys_log_stderr as a convenience callback that
+  /// writes formatted messages to stderr.
+  ///
+  /// Which log levels are emitted depends on the build mode of the
+  /// library and is not configurable at runtime. Debug builds emit
+  /// all levels (debug and above). Release builds emit info and
+  /// above; debug-level messages are compiled out entirely and will
+  /// never reach the callback.
+  ///
+  /// Input type: GhosttySysLogFn (function pointer, or NULL)
+  GHOSTTY_SYS_OPT_LOG(2),
+  GHOSTTY_SYS_OPT_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttySysOption(this.value);
+
+  static GhosttySysOption fromValue(int value) => switch (value) {
+    0 => GHOSTTY_SYS_OPT_USERDATA,
+    1 => GHOSTTY_SYS_OPT_DECODE_PNG,
+    2 => GHOSTTY_SYS_OPT_LOG,
+    2147483647 => GHOSTTY_SYS_OPT_MAX_VALUE,
+    _ => throw ArgumentError('Unknown value for GhosttySysOption: $value'),
+  };
+}
+
 final class GhosttyKeyEventImpl extends ffi.Opaque {}
 
 /// Opaque handle to a key event.
@@ -4771,7 +6633,8 @@ enum GhosttyKeyAction {
   GHOSTTY_KEY_ACTION_PRESS(1),
 
   /// Key is being repeated (held down)
-  GHOSTTY_KEY_ACTION_REPEAT(2);
+  GHOSTTY_KEY_ACTION_REPEAT(2),
+  GHOSTTY_KEY_ACTION_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyKeyAction(this.value);
@@ -4780,6 +6643,7 @@ enum GhosttyKeyAction {
     0 => GHOSTTY_KEY_ACTION_RELEASE,
     1 => GHOSTTY_KEY_ACTION_PRESS,
     2 => GHOSTTY_KEY_ACTION_REPEAT,
+    2147483647 => GHOSTTY_KEY_ACTION_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyKeyAction: $value'),
   };
 }
@@ -5005,7 +6869,8 @@ enum GhosttyKey {
   /// Legacy, Non-standard, and Special Keys (W3C § 3.7)
   GHOSTTY_KEY_COPY(173),
   GHOSTTY_KEY_CUT(174),
-  GHOSTTY_KEY_PASTE(175);
+  GHOSTTY_KEY_PASTE(175),
+  GHOSTTY_KEY_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyKey(this.value);
@@ -5187,6 +7052,7 @@ enum GhosttyKey {
     173 => GHOSTTY_KEY_COPY,
     174 => GHOSTTY_KEY_CUT,
     175 => GHOSTTY_KEY_PASTE,
+    2147483647 => GHOSTTY_KEY_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyKey: $value'),
   };
 }
@@ -5228,7 +7094,8 @@ enum GhosttyOptionAsAlt {
   GHOSTTY_OPTION_AS_ALT_LEFT(2),
 
   /// Only right option key is treated as alt
-  GHOSTTY_OPTION_AS_ALT_RIGHT(3);
+  GHOSTTY_OPTION_AS_ALT_RIGHT(3),
+  GHOSTTY_OPTION_AS_ALT_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyOptionAsAlt(this.value);
@@ -5238,6 +7105,7 @@ enum GhosttyOptionAsAlt {
     1 => GHOSTTY_OPTION_AS_ALT_TRUE,
     2 => GHOSTTY_OPTION_AS_ALT_LEFT,
     3 => GHOSTTY_OPTION_AS_ALT_RIGHT,
+    2147483647 => GHOSTTY_OPTION_AS_ALT_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyOptionAsAlt: $value'),
   };
 }
@@ -5268,7 +7136,14 @@ enum GhosttyKeyEncoderOption {
   GHOSTTY_KEY_ENCODER_OPT_KITTY_FLAGS(5),
 
   /// macOS option-as-alt setting (value: GhosttyOptionAsAlt)
-  GHOSTTY_KEY_ENCODER_OPT_MACOS_OPTION_AS_ALT(6);
+  GHOSTTY_KEY_ENCODER_OPT_MACOS_OPTION_AS_ALT(6),
+
+  /// Backarrow key mode (value: bool)
+  /// See https://vt100.net/dec/ek-vt3xx-tp-002.pdf page 170
+  /// If `false` (the default), `backspace` emits 0x7f
+  /// If `true`, `backspace` emits 0x08
+  GHOSTTY_KEY_ENCODER_OPT_BACKARROW_KEY_MODE(7),
+  GHOSTTY_KEY_ENCODER_OPT_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyKeyEncoderOption(this.value);
@@ -5281,6 +7156,8 @@ enum GhosttyKeyEncoderOption {
     4 => GHOSTTY_KEY_ENCODER_OPT_MODIFY_OTHER_KEYS_STATE_2,
     5 => GHOSTTY_KEY_ENCODER_OPT_KITTY_FLAGS,
     6 => GHOSTTY_KEY_ENCODER_OPT_MACOS_OPTION_AS_ALT,
+    7 => GHOSTTY_KEY_ENCODER_OPT_BACKARROW_KEY_MODE,
+    2147483647 => GHOSTTY_KEY_ENCODER_OPT_MAX_VALUE,
     _ => throw ArgumentError(
       'Unknown value for GhosttyKeyEncoderOption: $value',
     ),
@@ -5308,7 +7185,8 @@ enum GhosttyMouseAction {
   GHOSTTY_MOUSE_ACTION_RELEASE(1),
 
   /// Mouse moved.
-  GHOSTTY_MOUSE_ACTION_MOTION(2);
+  GHOSTTY_MOUSE_ACTION_MOTION(2),
+  GHOSTTY_MOUSE_ACTION_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyMouseAction(this.value);
@@ -5317,6 +7195,7 @@ enum GhosttyMouseAction {
     0 => GHOSTTY_MOUSE_ACTION_PRESS,
     1 => GHOSTTY_MOUSE_ACTION_RELEASE,
     2 => GHOSTTY_MOUSE_ACTION_MOTION,
+    2147483647 => GHOSTTY_MOUSE_ACTION_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyMouseAction: $value'),
   };
 }
@@ -5336,7 +7215,8 @@ enum GhosttyMouseButton {
   GHOSTTY_MOUSE_BUTTON_EIGHT(8),
   GHOSTTY_MOUSE_BUTTON_NINE(9),
   GHOSTTY_MOUSE_BUTTON_TEN(10),
-  GHOSTTY_MOUSE_BUTTON_ELEVEN(11);
+  GHOSTTY_MOUSE_BUTTON_ELEVEN(11),
+  GHOSTTY_MOUSE_BUTTON_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyMouseButton(this.value);
@@ -5354,6 +7234,7 @@ enum GhosttyMouseButton {
     9 => GHOSTTY_MOUSE_BUTTON_NINE,
     10 => GHOSTTY_MOUSE_BUTTON_TEN,
     11 => GHOSTTY_MOUSE_BUTTON_ELEVEN,
+    2147483647 => GHOSTTY_MOUSE_BUTTON_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyMouseButton: $value'),
   };
 }
@@ -5396,7 +7277,8 @@ enum GhosttyMouseTrackingMode {
   GHOSTTY_MOUSE_TRACKING_BUTTON(3),
 
   /// Any-event tracking mode.
-  GHOSTTY_MOUSE_TRACKING_ANY(4);
+  GHOSTTY_MOUSE_TRACKING_ANY(4),
+  GHOSTTY_MOUSE_TRACKING_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyMouseTrackingMode(this.value);
@@ -5407,6 +7289,7 @@ enum GhosttyMouseTrackingMode {
     2 => GHOSTTY_MOUSE_TRACKING_NORMAL,
     3 => GHOSTTY_MOUSE_TRACKING_BUTTON,
     4 => GHOSTTY_MOUSE_TRACKING_ANY,
+    2147483647 => GHOSTTY_MOUSE_TRACKING_MAX_VALUE,
     _ => throw ArgumentError(
       'Unknown value for GhosttyMouseTrackingMode: $value',
     ),
@@ -5421,7 +7304,8 @@ enum GhosttyMouseFormat {
   GHOSTTY_MOUSE_FORMAT_UTF8(1),
   GHOSTTY_MOUSE_FORMAT_SGR(2),
   GHOSTTY_MOUSE_FORMAT_URXVT(3),
-  GHOSTTY_MOUSE_FORMAT_SGR_PIXELS(4);
+  GHOSTTY_MOUSE_FORMAT_SGR_PIXELS(4),
+  GHOSTTY_MOUSE_FORMAT_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyMouseFormat(this.value);
@@ -5432,6 +7316,7 @@ enum GhosttyMouseFormat {
     2 => GHOSTTY_MOUSE_FORMAT_SGR,
     3 => GHOSTTY_MOUSE_FORMAT_URXVT,
     4 => GHOSTTY_MOUSE_FORMAT_SGR_PIXELS,
+    2147483647 => GHOSTTY_MOUSE_FORMAT_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyMouseFormat: $value'),
   };
 }
@@ -5500,7 +7385,8 @@ enum GhosttyMouseEncoderOption {
   GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED(3),
 
   /// Whether to enable motion deduplication by last cell (value: bool).
-  GHOSTTY_MOUSE_ENCODER_OPT_TRACK_LAST_CELL(4);
+  GHOSTTY_MOUSE_ENCODER_OPT_TRACK_LAST_CELL(4),
+  GHOSTTY_MOUSE_ENCODER_OPT_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyMouseEncoderOption(this.value);
@@ -5511,11 +7397,14 @@ enum GhosttyMouseEncoderOption {
     2 => GHOSTTY_MOUSE_ENCODER_OPT_SIZE,
     3 => GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED,
     4 => GHOSTTY_MOUSE_ENCODER_OPT_TRACK_LAST_CELL,
+    2147483647 => GHOSTTY_MOUSE_ENCODER_OPT_MAX_VALUE,
     _ => throw ArgumentError(
       'Unknown value for GhosttyMouseEncoderOption: $value',
     ),
   };
 }
+
+const int GHOSTTY_ENUM_MAX_VALUE = 2147483647;
 
 const int GHOSTTY_COLOR_NAMED_BLACK = 0;
 
