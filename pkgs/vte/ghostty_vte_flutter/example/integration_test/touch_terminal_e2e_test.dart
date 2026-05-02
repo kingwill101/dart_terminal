@@ -627,22 +627,32 @@ Future<void> _tapTerminalCell(
   required int column,
   int row = 0,
 }) async {
-  await tester.tapAt(
+  await _touchTapAt(
+    tester,
     _terminalCellCenter(
       tester,
       controller: controller,
       column: column,
       row: row,
     ),
-    kind: ui.PointerDeviceKind.touch,
   );
 }
 
 Future<void> _doubleTapAt(WidgetTester tester, Offset target) async {
-  await tester.tapAt(target, kind: ui.PointerDeviceKind.touch);
-  await tester.pump(const Duration(milliseconds: 120));
-  await tester.tapAt(target, kind: ui.PointerDeviceKind.touch);
+  await _touchTapAt(tester, target);
+  await tester.pump(const Duration(milliseconds: 80));
+  await _touchTapAt(tester, target);
   await _settleInteraction(tester);
+}
+
+Future<void> _touchTapAt(WidgetTester tester, Offset target) async {
+  final gesture = await tester.startGesture(
+    target,
+    kind: ui.PointerDeviceKind.touch,
+  );
+  await tester.pump(const Duration(milliseconds: 48));
+  await gesture.up();
+  await tester.pump(const Duration(milliseconds: 40));
 }
 
 Future<void> _settleInteraction(
