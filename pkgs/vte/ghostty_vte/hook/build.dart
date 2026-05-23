@@ -112,6 +112,7 @@ bool _shouldPreferSourceBuild(BuildInput input) {
 }
 
 bool isPubCachePackagePath(String packagePath) {
+  const cacheSegmentNames = <String>{'.pub-cache', 'pub_cache'};
   final segments = packagePath
       .replaceAll('\\', '/')
       .toLowerCase()
@@ -120,7 +121,7 @@ bool isPubCachePackagePath(String packagePath) {
       .toList();
 
   for (var i = 0; i < segments.length; i++) {
-    if (segments[i] == '.pub-cache') {
+    if (cacheSegmentNames.contains(segments[i])) {
       return true;
     }
     if (segments[i] == 'pub' &&

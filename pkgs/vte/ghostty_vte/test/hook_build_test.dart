@@ -23,6 +23,15 @@ void main() {
       );
     });
 
+    test('recognizes Puro pub_cache paths', () {
+      expect(
+        build_hook.isPubCachePackagePath(
+          '/Users/me/.puro/shared/pub_cache/hosted/pub.dev/ghostty_vte-0.1.3',
+        ),
+        isTrue,
+      );
+    });
+
     test('does not classify local checkouts as pub cache paths', () {
       expect(
         build_hook.isPubCachePackagePath('/work/dart_terminal/pkgs/vte'),
