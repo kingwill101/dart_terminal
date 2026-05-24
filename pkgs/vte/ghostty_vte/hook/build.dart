@@ -103,12 +103,26 @@ void main(List<String> args) async {
 
 bool _shouldPreferSourceBuild(BuildInput input) {
   final override = Platform.environment['GHOSTTY_VTE_PREFER_SOURCE'];
-  if (override != null && override.isNotEmpty && override != '0') {
-    return true;
+  if (override != null && override.isNotEmpty) {
+    return _envFlagValue(override);
   }
 
   final packagePath = Directory.fromUri(input.packageRoot).absolute.path;
-  return !isPubCachePackagePath(packagePath);
+  return shouldPreferSourceBuildForPackagePath(
+    packagePath,
+    hasGhosttySourceRoot: _canResolveGhosttySourceRoot(input),
+  );
+}
+
+bool shouldPreferSourceBuildForPackagePath(
+  String packagePath, {
+  required bool hasGhosttySourceRoot,
+}) {
+  if (isPubCachePackagePath(packagePath)) {
+    return false;
+  }
+
+  return hasGhosttySourceRoot;
 }
 
 bool isPubCachePackagePath(String packagePath) {
@@ -530,6 +544,10 @@ bool _isGhosttyRoot(Directory dir) {
 bool _envFlag(String name) {
   final value = Platform.environment[name];
   if (value == null) return false;
+  return _envFlagValue(value);
+}
+
+bool _envFlagValue(String value) {
   switch (value.toLowerCase()) {
     case '1':
     case 'true':
@@ -538,6 +556,38 @@ bool _envFlag(String name) {
       return true;
   }
   return false;
+}
+
+bool _canResolveGhosttySourceRoot(BuildInput input) {
+  final envPath = Platform.environment['GHOSTTY_SRC'];
+  if (envPath != null &&
+      envPath.isNotEmpty &&
+      _isGhosttyRoot(Directory(envPath))) {
+    return true;
+  }
+
+  final submoduleDir = Directory.fromUri(
+    input.packageRoot.resolve('third_party/ghostty/'),
+  );
+  if (_isGhosttyRoot(submoduleDir)) {
+    return true;
+  }
+  if (_envFlag('GHOSTTY_SRC_AUTO_FETCH')) {
+    return true;
+  }
+
+  final packageRoot = Directory.fromUri(input.packageRoot);
+  var current = packageRoot.absolute;
+  while (true) {
+    if (_isGhosttyRoot(current)) {
+      return true;
+    }
+    final parent = current.parent;
+    if (parent.path == current.path) {
+      return false;
+    }
+    current = parent;
+  }
 }
 
 void _cloneGhosttySource(Directory targetDir) {

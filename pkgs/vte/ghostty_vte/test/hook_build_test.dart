@@ -49,6 +49,41 @@ void main() {
     });
   });
 
+  group('shouldPreferSourceBuildForPackagePath', () {
+    test('does not prefer source builds for pub cache packages', () {
+      expect(
+        build_hook.shouldPreferSourceBuildForPackagePath(
+          '/Users/me/.pub-cache/hosted/pub.dev/ghostty_vte-0.1.3',
+          hasGhosttySourceRoot: true,
+        ),
+        isFalse,
+      );
+    });
+
+    test(
+      'does not prefer source builds for local packages without Ghostty',
+      () {
+        expect(
+          build_hook.shouldPreferSourceBuildForPackagePath(
+            '/work/alera/third_party/dart_terminal/pkgs/vte/ghostty_vte',
+            hasGhosttySourceRoot: false,
+          ),
+          isFalse,
+        );
+      },
+    );
+
+    test('prefers source builds for local packages with Ghostty source', () {
+      expect(
+        build_hook.shouldPreferSourceBuildForPackagePath(
+          '/work/dart_terminal/pkgs/vte/ghostty_vte',
+          hasGhosttySourceRoot: true,
+        ),
+        isTrue,
+      );
+    });
+  });
+
   group('platformLabelForBuildHook', () {
     test('labels iOS device and simulator targets distinctly', () {
       expect(
