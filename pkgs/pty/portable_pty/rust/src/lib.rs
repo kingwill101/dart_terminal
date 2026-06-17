@@ -1277,6 +1277,87 @@ mod tests {
         reader.join().expect("reader panicked");
     }
 
+    /// Stress-test the full PTY lifecycle (open → spawn → wait → close)
+    /// across many concurrent processes.
+    ///
+    /// This exercises the SIGCHLD handler installation (`ensure_sigchld_handler`),
+    /// PID registration (`register_pid`), signal delivery and status capture
+    /// (`sigchld_handler`), and the wait/exit-code fallback path in
+    /// `portable_pty_wait`.
+    ///
+    /// Each thread opens a PTY, spawns a child that exits immediately, waits
+    /// for it, and closes the PTY — repeated `ITERATIONS` times.
+    #[cfg(unix)]
+    #[test]
+    fn test_spawn_stress() {
+        use std::time::Instant;
+
+        const ITERATIONS: usize = 50;
+        const THREADS: usize = 4;
+
+        let start = Instant::now();
+        let mut handles = Vec::new();
+
+        for t in 0..THREADS {
+            handles.push(thread::spawn(move || {
+                use std::ffi::CString as CS;
+
+                let cmd = CS::new("/bin/true").unwrap();
+                let arg0 = CS::new("true").unwrap();
+                let argv: [*const c_char; 2] = [arg0.as_ptr(), ptr::null()];
+
+                for i in 0..ITERATIONS {
+                    let mut handle: *mut PortablePty = ptr::null_mut();
+                    let result = portable_pty_open(24, 80, &mut handle);
+                    assert!(
+                        matches!(result, PortablePtyResult::Ok),
+                        "Thread {t} iter {i}: open failed: {}",
+                        result as u32,
+                    );
+                    assert!(!handle.is_null());
+
+                    let result =
+                        portable_pty_spawn(handle, cmd.as_ptr(), argv.as_ptr(), ptr::null());
+                    assert!(
+                        matches!(result, PortablePtyResult::Ok),
+                        "Thread {t} iter {i}: spawn failed: {}",
+                        result as u32,
+                    );
+
+                    // Block until the child exits.
+                    let mut status: c_int = 0;
+                    let result = portable_pty_wait_blocking(handle, &mut status);
+                    assert!(
+                        matches!(result, PortablePtyResult::Ok),
+                        "Thread {t} iter {i}: wait_blocking failed: {}",
+                        result as u32,
+                    );
+                    assert_eq!(
+                        status, 0,
+                        "Thread {t} iter {i}: unexpected exit code {}",
+                        status,
+                    );
+
+                    portable_pty_close(handle);
+                }
+                eprintln!("  [stress] thread {t} done — {ITERATIONS} iterations");
+            }));
+        }
+
+        for h in handles {
+            h.join().expect("stress thread panicked");
+        }
+
+        let elapsed = start.elapsed();
+        eprintln!(
+            "  [stress] {} PTY sessions across {} threads in {:?} ({:.0} PTY/s)",
+            ITERATIONS * THREADS,
+            THREADS,
+            elapsed,
+            (ITERATIONS * THREADS) as f64 / elapsed.as_secs_f64(),
+        );
+    }
+
     #[test]
     fn test_open_and_close() {
         let mut handle: *mut PortablePty = ptr::null_mut();
