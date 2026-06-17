@@ -26,7 +26,7 @@ use std::io::{Read, Write};
 #[cfg(target_os = "android")]
 use std::os::fd::AsRawFd;
 #[cfg(unix)]
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 /// Helper to get the current errno value on Unix platforms.
@@ -119,9 +119,15 @@ static PID_REGISTRY: [PidSlot; MAX_TRACKED_PIDS] = {
     [EMPTY; MAX_TRACKED_PIDS]
 };
 
-/// Previous SIGCHLD handler action, saved so we can chain to it.
+/// Previous SIGCHLD handler function pointer, saved atomically so the signal
+/// handler can read it without tearing even if another thread is concurrently
+/// re-installing the handler.
 #[cfg(unix)]
-static mut PREV_SIGCHLD_ACTION: libc::sigaction = unsafe { std::mem::zeroed() };
+static PREV_SIGCHLD_HANDLER: AtomicUsize = AtomicUsize::new(0);
+
+/// Flags from the previous SIGCHLD handler action (e.g. SA_SIGINFO).
+#[cfg(unix)]
+static PREV_SIGCHLD_FLAGS: AtomicI32 = AtomicI32::new(0);
 
 /// Flag indicating whether we've installed our handler at least once.
 /// We use AtomicI32 instead of Once so we can re-install if Dart overwrites us.
@@ -264,25 +270,21 @@ extern "C" fn sigchld_handler(sig: c_int, info: *mut libc::siginfo_t, ctx: *mut 
         // a previous signal delivery).
     }
 
-    // Chain to the previous handler.
-    unsafe {
-        let prev = &*(&raw const PREV_SIGCHLD_ACTION);
-        let flags = prev.sa_flags;
+    // Chain to the previous handler. The function pointer and flags are
+    // stored atomically so this read is always consistent even if another
+    // thread is concurrently re-installing the handler in ensure_sigchld_handler.
+    let handler = PREV_SIGCHLD_HANDLER.load(Ordering::SeqCst);
+    let flags = PREV_SIGCHLD_FLAGS.load(Ordering::SeqCst);
+    if handler != libc::SIG_DFL as usize && handler != libc::SIG_IGN as usize {
         if flags & libc::SA_SIGINFO != 0 {
             // SA_SIGINFO handler: void (*)(int, siginfo_t*, void*)
-            let handler = prev.sa_sigaction;
-            if handler != libc::SIG_DFL && handler != libc::SIG_IGN {
-                let f: extern "C" fn(c_int, *mut libc::siginfo_t, *mut libc::c_void) =
-                    std::mem::transmute(handler);
-                f(sig, info, ctx);
-            }
+            let f: extern "C" fn(c_int, *mut libc::siginfo_t, *mut libc::c_void) =
+                unsafe { std::mem::transmute(handler) };
+            f(sig, info, ctx);
         } else {
             // Traditional handler: void (*)(int)
-            let handler = prev.sa_sigaction;
-            if handler != libc::SIG_DFL && handler != libc::SIG_IGN {
-                let f: extern "C" fn(c_int) = std::mem::transmute(handler);
-                f(sig);
-            }
+            let f: extern "C" fn(c_int) = unsafe { std::mem::transmute(handler) };
+            f(sig);
         }
     }
 }
@@ -305,13 +307,18 @@ fn ensure_sigchld_handler() {
         }
 
         // Either first install or someone overwrote us. (Re-)install.
+        // Save the current handler (Dart's or whoever overwrote us) atomically
+        // BEFORE installing ours, so the signal handler always reads a valid
+        // pointer even if a SIGCHLD is delivered concurrently on another thread.
+        PREV_SIGCHLD_HANDLER.store(current.sa_sigaction, Ordering::SeqCst);
+        PREV_SIGCHLD_FLAGS.store(current.sa_flags, Ordering::SeqCst);
+
         let mut sa: libc::sigaction = std::mem::zeroed();
         sa.sa_sigaction = sigchld_handler as usize;
         sa.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_NOCLDSTOP;
         libc::sigemptyset(&mut sa.sa_mask);
 
-        // Save the current handler (Dart's or whoever overwrote us) for chaining.
-        libc::sigaction(libc::SIGCHLD, &sa, &raw mut PREV_SIGCHLD_ACTION);
+        libc::sigaction(libc::SIGCHLD, &sa, std::ptr::null_mut());
         SIGCHLD_INSTALLED.store(1, Ordering::Relaxed);
     }
 }
@@ -1141,6 +1148,134 @@ pub extern "C" fn portable_pty_close(handle: *mut PortablePty) {
 mod tests {
     use super::*;
     use std::ptr;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::Duration;
+
+    /// Two distinct signal handlers used for the race test.
+    extern "C" fn race_handler_a(
+        _sig: c_int,
+        _info: *mut libc::siginfo_t,
+        _ctx: *mut libc::c_void,
+    ) {
+    }
+    extern "C" fn race_handler_b(
+        _sig: c_int,
+        _info: *mut libc::siginfo_t,
+        _ctx: *mut libc::c_void,
+    ) {
+    }
+
+    /// Verify that the atomic `PREV_SIGCHLD_HANDLER` and
+    /// `PREV_SIGCHLD_FLAGS` globals never return torn values under
+    /// concurrent write+read stress.
+    ///
+    /// With the buggy `static mut sigaction` approach (ghostty_vte#16) the
+    /// kernel's multi-word struct write can tear, producing a corrupted
+    /// function pointer → SIGSEGV on macOS.  The fix uses two
+    /// `AtomicUsize`/`AtomicI32` globals — each individual load is always
+    /// a valid previously-stored value.
+    ///
+    /// Because the handler and flags are stored in **separate** atomics,
+    /// a reader doing two back-to-back loads can see a transient mismatch
+    /// (handler from one write, flags from the adjacent write).  This is
+    /// **not** a data race and the function pointer is always valid.  In
+    /// production the flags are always SA_SIGINFO so the calling-convention
+    /// decision is stable; the test therefore verifies each atomic
+    /// independently.
+    ///
+    /// ## Running
+    ///
+    /// ```ignore
+    /// cargo test test_sigchld_prev_action_atomic -- --nocapture
+    /// ```
+    #[cfg(unix)]
+    #[test]
+    fn test_sigchld_prev_action_atomic() {
+        let addr_a = race_handler_a as usize;
+        let addr_b = race_handler_b as usize;
+
+        if addr_a == addr_b {
+            eprintln!("WARNING: race_handler_a == race_handler_b — skipping test");
+            return;
+        }
+
+        const FLAGS_A: i32 = libc::SA_SIGINFO;
+        const FLAGS_B: i32 = libc::SA_SIGINFO | libc::SA_RESTART;
+
+        // Seed the atomics with pattern A.
+        PREV_SIGCHLD_HANDLER.store(addr_a, Ordering::SeqCst);
+        PREV_SIGCHLD_FLAGS.store(FLAGS_A, Ordering::SeqCst);
+
+        let running = Arc::new(AtomicBool::new(true));
+        let r1 = running.clone();
+        let r2 = running.clone();
+
+        // --- Writer thread: alternates between patterns A and B.
+        let writer = thread::spawn(move || {
+            let mut toggle = false;
+            while r1.load(Ordering::Relaxed) {
+                if toggle {
+                    PREV_SIGCHLD_HANDLER.store(addr_a, Ordering::SeqCst);
+                    PREV_SIGCHLD_FLAGS.store(FLAGS_A, Ordering::SeqCst);
+                } else {
+                    PREV_SIGCHLD_HANDLER.store(addr_b, Ordering::SeqCst);
+                    PREV_SIGCHLD_FLAGS.store(FLAGS_B, Ordering::SeqCst);
+                }
+                // Keep the kernel's handler in sync.
+                unsafe {
+                    let mut sa: libc::sigaction = std::mem::zeroed();
+                    sa.sa_sigaction = if toggle { addr_a } else { addr_b };
+                    sa.sa_flags = if toggle { FLAGS_A } else { FLAGS_B };
+                    libc::sigemptyset(&mut sa.sa_mask);
+                    libc::sigaction(libc::SIGCHLD, &sa, std::ptr::null_mut());
+                }
+                toggle = !toggle;
+            }
+        });
+
+        // --- Reader thread: verifies each atomic individually.
+        let reader = thread::spawn(move || {
+            let mut total: u64 = 0;
+            let mut bad_handler: u64 = 0;
+            let mut bad_flags: u64 = 0;
+
+            while r2.load(Ordering::Relaxed) {
+                let handler = PREV_SIGCHLD_HANDLER.load(Ordering::SeqCst);
+                let flags = PREV_SIGCHLD_FLAGS.load(Ordering::SeqCst);
+
+                if handler != addr_a && handler != addr_b {
+                    bad_handler += 1;
+                }
+                if flags != FLAGS_A && flags != FLAGS_B {
+                    bad_flags += 1;
+                }
+                total += 1;
+            }
+
+            eprintln!(
+                "  [atomic-test] {} reads, {} bad-handler, {} bad-flags",
+                total, bad_handler, bad_flags,
+            );
+            assert_eq!(
+                bad_handler, 0,
+                "AtomicUsize produced {} invalid values — should never tear!",
+                bad_handler,
+            );
+            assert_eq!(
+                bad_flags, 0,
+                "AtomicI32 produced {} invalid values — should never tear!",
+                bad_flags,
+            );
+        });
+
+        thread::sleep(Duration::from_secs(3));
+        running.store(false, Ordering::Relaxed);
+
+        writer.join().expect("writer panicked");
+        reader.join().expect("reader panicked");
+    }
 
     #[test]
     fn test_open_and_close() {
