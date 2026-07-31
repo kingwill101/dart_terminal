@@ -1,0 +1,128 @@
+name: Publish Dart packages
+
+on:
+  push:
+    tags:
+      - 'portable_pty-v*'
+      - 'ghostty_vte-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Package release tag to publish'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Flutter is required to validate the Flutter workspace members. The
+      # Dart SDK bundled with Flutter is used for pub publishing.
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      # Enables pub.dev's short-lived OIDC publishing credentials.
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: Resolve release metadata
+        id: metadata
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          case "$RELEASE_TAG" in
+            portable_pty-v*)
+              version="${RELEASE_TAG#portable_pty-v}"
+              packages=(
+                pkgs/pty/portable_pty
+                pkgs/pty/portable_pty_flutter
+              )
+              ;;
+            ghostty_vte-v*)
+              version="${RELEASE_TAG#ghostty_vte-v}"
+              packages=(
+                pkgs/vte/ghostty_vte
+                pkgs/vte/ghostty_vte_flutter
+              )
+              ;;
+            *)
+              echo "Unsupported package release tag: $RELEASE_TAG" >&2
+              exit 1
+              ;;
+          esac
+
+          {
+            echo "tag=$RELEASE_TAG"
+            echo "version=$version"
+            echo 'packages<<EOF'
+            printf '%s\n' "${packages[@]}"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install workspace dependencies
+        run: flutter pub get
+
+      - name: Validate package versions
+        env:
+          RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
+          PACKAGES: ${{ steps.metadata.outputs.packages }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r package; do
+            [ -z "$package" ] && continue
+            actual=$(awk '/^version:/{print $2; exit}' "$package/pubspec.yaml")
+            if [ "$actual" != "$RELEASE_VERSION" ]; then
+              echo "$package has version $actual, expected $RELEASE_VERSION" >&2
+              exit 1
+            fi
+          done <<< "$PACKAGES"
+
+      - name: Validate publish contents
+        env:
+          PACKAGES: ${{ steps.metadata.outputs.packages }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r package; do
+            [ -z "$package" ] && continue
+            (cd "$package" && dart pub publish --dry-run)
+          done <<< "$PACKAGES"
+
+      - name: Publish packages in dependency order
+        env:
+          PACKAGES: ${{ steps.metadata.outputs.packages }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r package; do
+            [ -z "$package" ] && continue
+            echo "Publishing $package"
+            for attempt in 1 2 3 4 5; do
+              if (cd "$package" && dart pub publish --force); then
+                break
+              fi
+              if [ "$attempt" = 5 ]; then
+                echo "Failed to publish $package" >&2
+                exit 1
+              fi
+              echo "Publish failed; retrying after pub.dev propagation delay..."
+              sleep 30
+            done
+          done <<< "$PACKAGES"

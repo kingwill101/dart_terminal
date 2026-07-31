@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.0.6
+
+- Migrated native builds and prebuilt resolution to the declarative
+  `native_prebuilt.yaml` workflow.
+- Published `portable_pty-v0.0.6` artifacts for all supported native targets.
+- Fixed concurrent SIGCHLD handler replacement by publishing handler state as
+  one immutable atomic snapshot, preserving consistent signal chaining.
+- Preserved requested static linking for non-iOS builds when source fallback is
+  required.
+
 ## 0.0.5
 
 - Added shared hook metadata for portable_pty platform labels, library names,

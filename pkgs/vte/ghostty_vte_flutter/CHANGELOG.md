@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.4
+
+- Updated `ghostty_vte` to `^0.1.4` and `portable_pty` to `^0.0.6`.
+- No API changes.
+
 ## 0.1.3
 
 - Improved mobile terminal text selection with touch handles, drag-to-extend

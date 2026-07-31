@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.6
+
+- Updated the portable PTY dependency to `^0.0.6`.
+- No API changes.
+
 ## 0.0.5
 
 - Bumped `portable_pty` dependency to `^0.0.5`.

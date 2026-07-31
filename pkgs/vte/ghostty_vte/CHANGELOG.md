@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.4
+
+- Migrated native builds and prebuilt resolution to the declarative
+  `native_prebuilt.yaml` workflow.
+- Added reproducible Android source builds with the Ghostty libc-link patch.
+- Updated the Ghostty build matrix to Zig 0.16 and published refreshed native
+  artifacts.
+
 ## 0.1.3
 
 - Added iOS device and simulator prebuilt target support for `libghostty-vt`
