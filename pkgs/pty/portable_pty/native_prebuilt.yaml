@@ -3,7 +3,7 @@
 
 schema: 1
 package: portable_pty
-asset_name: src/pty.dart
+asset_name: portable_pty_bindings_generated.dart
 library_stem: portable_pty_rs
 link_mode: dynamic_library
 
