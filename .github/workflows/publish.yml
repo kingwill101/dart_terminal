@@ -1,10 +1,9 @@
 name: Publish Dart packages
 
 on:
-  push:
-    tags:
-      - 'portable_pty-v*'
-      - 'ghostty_vte-v*'
+  # Publish only after the matching native artifact release exists.
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       tag:
@@ -17,7 +16,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: publish-${{ github.event.inputs.tag || github.ref_name }}
+  group: publish-${{ github.event.inputs.tag || github.event.release.tag_name || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -42,7 +41,7 @@ jobs:
         id: metadata
         shell: bash
         env:
-          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.event.release.tag_name || github.ref_name }}
         run: |
           set -euo pipefail
 
