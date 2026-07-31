@@ -21,6 +21,7 @@ variables:
   cmake_build_directory: "{{ work }}/build-{{ target.label }}"
   cmake_target: zig_build_lib_vt
   ghostty_zig_build_flags: "-Dtarget={{ target.zig_target }};-Dsimd=false"
+  ghostty_libc_patch_url: "https://raw.githubusercontent.com/kingwill101/dart_terminal/b3b2115/pkgs/vte/ghostty_vte/patches/ghostty-libvt-link-libc.patch"
 
 build:
   options:
@@ -73,11 +74,32 @@ build:
     - target: {os: windows, architecture: arm64}
       steps: *ghostty_windows_steps
     - target: {os: android, architecture: arm64}
-      steps: *ghostty_steps
+      steps: &ghostty_android_steps
+        - id: patch_libc
+          type: command
+          working_directory: "{{ source.path }}"
+          commands:
+            - [curl, --fail, --location, --output, "{{ work }}/ghostty-libvt-link-libc.patch", "{{ variables.ghostty_libc_patch_url }}"]
+            - [sh, -c, "if git apply --check \"$1\"; then git apply \"$1\"; elif git apply --reverse --check \"$1\"; then :; else exit 1; fi", sh, "{{ work }}/ghostty-libvt-link-libc.patch"]
+        - id: configure
+          type: cmake_configure
+          source_directory: "{{ source.path }}"
+          build_directory: "{{ variables.cmake_build_directory }}"
+          definitions:
+            CMAKE_BUILD_TYPE: Release
+            GHOSTTY_ZIG_BUILD_FLAGS: "{{ variables.ghostty_zig_build_flags }}"
+        - id: build
+          type: cmake_build
+          build_directory: "{{ variables.cmake_build_directory }}"
+          targets: ["{{ variables.cmake_target }}"]
+        - id: export
+          type: export_artifact
+          artifact: ghostty-vt
+          primary: "{{ source.path }}/zig-out/{{ library.versioned_name }}"
     - target: {os: android, architecture: arm}
-      steps: *ghostty_steps
+      steps: *ghostty_android_steps
     - target: {os: android, architecture: x64}
-      steps: *ghostty_steps
+      steps: *ghostty_android_steps
     - target: {os: ios, architecture: arm64, sdk: iphoneos}
       steps: *ghostty_steps
     - target: {os: ios, architecture: arm64, sdk: iphonesimulator}

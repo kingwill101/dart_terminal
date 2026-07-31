@@ -10,7 +10,7 @@ link_mode: dynamic_library
 source:
   type: git
   repository: https://github.com/kingwill101/dart_terminal
-  revision: e573ccfcb2f3a6ff1023d9712ee4ada5fc77d0f2
+  revision: 6c662511a7de5447c762ef6055cb3fa615eaeaed
   subdirectory: pkgs/pty/portable_pty
 
 release:
@@ -20,8 +20,7 @@ release:
 
 variables:
   cargo_manifest: "{{ source.path }}/rust/Cargo.toml"
-  dynamic_library_path: "{{ source.path }}/rust/target/{{ target.rust_target }}/release/{{ library.dynamic_name }}"
-  static_library_path: "{{ source.path }}/rust/target/{{ target.rust_target }}/release/{{ library.static_name }}"
+  library_path: "{{ source.path }}/rust/target/{{ target.rust_target }}/release/{{ library.name }}"
 
 build:
   recipes:
@@ -35,7 +34,7 @@ build:
         - id: export
           type: export_artifact
           artifact: portable_pty_rs
-          primary: "{{ variables.dynamic_library_path }}"
+          primary: "{{ variables.library_path }}"
 
     - target: {os: linux, architecture: arm64}
       steps: *cargo_dynamic_steps
@@ -58,7 +57,7 @@ build:
         - id: export
           type: export_artifact
           artifact: portable_pty_rs
-          primary: "{{ variables.dynamic_library_path }}"
+          primary: "{{ variables.library_path }}"
 
     - target: {os: android, architecture: arm}
       steps: *cross_dynamic_steps
@@ -76,7 +75,7 @@ build:
           type: export_artifact
           artifact: portable_pty_rs
           kind: static_library
-          primary: "{{ variables.static_library_path }}"
+          primary: "{{ variables.library_path }}"
 
     - target: {os: ios, architecture: arm64, sdk: iphonesimulator}
       steps: *cargo_static_steps
