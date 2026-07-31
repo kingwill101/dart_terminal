@@ -1,0 +1,41 @@
+# GENERATED CODE - DO NOT MODIFY BY HAND.
+schema: 1
+release:
+  tag: 'ghostty_vte-v0.1.3'
+artifacts:
+  'linux-x64':
+    archive_sha256: '6fb7ad6c0cf8803cc1ed6064ff00e8b9c939e3318768bedf6082e998ee0f02c5'
+    payload_sha256: '4cd697e3bc04943ccda236a12a76c4491d4445d3225ab3e65505cdcc2cf7ccd3'
+  'linux-arm64':
+    archive_sha256: 'd7b5a7cdf63e945ab34991b0740269992e1a2271c222219e6174ec35724a6083'
+    payload_sha256: '174c2fda799d8425b7ae08388cf1b8587f3caef46383b7648077b23d8e99a79c'
+  'macos-arm64':
+    archive_sha256: '89c0521677c939ac176d47a97cb865bbd5b375e29fab0ae6dd626eef94ad00fa'
+    payload_sha256: 'e438dbdf980caf03e8b139dcf9364056b34ee1f513ae27c20a6f2e11e1081285'
+  'macos-x64':
+    archive_sha256: 'd6612b03b32c3c3a955e78d90d18a1e0c0d25c9bfff6b696feed9780b918fa37'
+    payload_sha256: '73ff1d51d99836eeb7cf879c3ac93c7e28f2c0d9312df324f9160bdd6db4e5e0'
+  'windows-x64':
+    archive_sha256: '81fdbffa01c58a27f12f3fb4d9a57f6f5da7c9e7a23bffc9233198f1ccd06935'
+    payload_sha256: '8943f1e9ab44c4f6d70cccf59de02bd18a18030047758c7ca3ed54aa911c395f'
+  'windows-arm64':
+    archive_sha256: '3e85a410bd8caf2c46fafabc9efa9767a5387e2cb1bc5593553006add881223a'
+    payload_sha256: 'ac1eae5665243c850b42bc93e178d2646f6598aa07de6b56d9c62a780908b6a7'
+  'android-arm64':
+    archive_sha256: '974eaa19f987c67820b80de2768dbfda8e8e1a72b764964eb7cb435d772a7364'
+    payload_sha256: 'f7ade82957a3a65f0a9a5afbf715ef102563df2fbf3f630dc7cb8fcf783a0436'
+  'android-arm':
+    archive_sha256: 'ff882aa1feeedcb2ead180d343363373bb7c1bb12dc7897377db933182d792b6'
+    payload_sha256: 'e3f611ccf1758b503568a58ef3470f95c3ce36d46ca2f2fd76495cf9b1c104a4'
+  'android-x64':
+    archive_sha256: 'bb53b1639bec7ef0341e4fdcbd475dd875d06628e27e8c672aa6498cf9591648'
+    payload_sha256: 'e761f8c7c45c112ba3eec1b8ed47510d359e298a705f0b62bee71a12a42a0d33'
+  'ios-arm64':
+    archive_sha256: 'f8e8b58f77e3c3184e3a16ce170aa4095a65cbc29a2f3d1fc2772b628b5726a9'
+    payload_sha256: '891e0e8bd5d1cf11fcb6e4c04e5c86478284e3c5c255f6b2077c9e1563933a11'
+  'ios-sim-arm64':
+    archive_sha256: 'f20a323fe22b8d2f47808183b54dc054f6d2542f7c148a31087602883b31e9f1'
+    payload_sha256: '23dc177f324ed82af0b69b7128c4876dfcac2be75e549a7ebac081f8efbb95d2'
+  'ios-sim-x64':
+    archive_sha256: '36005bf9924d11983895c62daf0a91acfd04f560311193669e0263d973987865'
+    payload_sha256: '5ec18cf91d89b060251d34596d2e8f7a8b43d63b249707ece861be6f128f4088'

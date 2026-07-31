@@ -1,0 +1,112 @@
+# ghostty_vte native_prebuilt configuration.
+# This file is the source of truth for native builds and releases.
+
+schema: 1
+package: ghostty_vte
+asset_name: ghostty_vte_bindings_generated.dart
+library_stem: ghostty-vt
+link_mode: dynamic_library
+
+source:
+  type: git
+  repository: https://github.com/ghostty-org/ghostty
+  revision: 4d605bf0d819df901a0332bbb320dc849fdd82e4
+
+release:
+  provider: github
+  repository: kingwill101/dart_terminal
+  tag: ghostty_vte-v0.1.3
+
+variables:
+  cmake_build_directory: "{{ work }}/build-{{ target.label }}"
+  cmake_target: zig_build_lib_vt
+  ghostty_zig_build_flags: "-Dtarget={{ target.zig_target }};-Dsimd=false"
+
+build:
+  options:
+    library_version: 0.1.0
+  recipes:
+    - target: {os: linux, architecture: x64}
+      steps: &ghostty_steps
+        - id: configure
+          type: cmake_configure
+          source_directory: "{{ source.path }}"
+          build_directory: "{{ variables.cmake_build_directory }}"
+          definitions:
+            CMAKE_BUILD_TYPE: Release
+            GHOSTTY_ZIG_BUILD_FLAGS: "{{ variables.ghostty_zig_build_flags }}"
+        - id: build
+          type: cmake_build
+          build_directory: "{{ variables.cmake_build_directory }}"
+          targets: ["{{ variables.cmake_target }}"]
+        - id: export
+          type: export_artifact
+          artifact: ghostty-vt
+          primary: "{{ source.path }}/zig-out/{{ library.versioned_name }}"
+
+    - target: {os: linux, architecture: arm64}
+      steps: *ghostty_steps
+    - target: {os: macos, architecture: x64}
+      steps: *ghostty_steps
+    - target: {os: macos, architecture: arm64}
+      steps: *ghostty_steps
+
+    - target: {os: windows, architecture: x64}
+      steps: &ghostty_windows_steps
+        - id: configure
+          type: cmake_configure
+          source_directory: "{{ source.path }}"
+          build_directory: "{{ variables.cmake_build_directory }}"
+          generator: Ninja
+          definitions:
+            CMAKE_BUILD_TYPE: Release
+            GHOSTTY_ZIG_BUILD_FLAGS: "{{ variables.ghostty_zig_build_flags }}"
+        - id: build
+          type: cmake_build
+          build_directory: "{{ variables.cmake_build_directory }}"
+          targets: ["{{ variables.cmake_target }}"]
+        - id: export
+          type: export_artifact
+          artifact: ghostty-vt
+          primary: "{{ source.path }}/zig-out/{{ library.versioned_name }}"
+
+    - target: {os: windows, architecture: arm64}
+      steps: *ghostty_windows_steps
+    - target: {os: android, architecture: arm64}
+      steps: *ghostty_steps
+    - target: {os: android, architecture: arm}
+      steps: *ghostty_steps
+    - target: {os: android, architecture: x64}
+      steps: *ghostty_steps
+    - target: {os: ios, architecture: arm64, sdk: iphoneos}
+      steps: *ghostty_steps
+    - target: {os: ios, architecture: arm64, sdk: iphonesimulator}
+      steps: *ghostty_steps
+    - target: {os: ios, architecture: x64, sdk: iphonesimulator}
+      steps: *ghostty_steps
+
+artifacts:
+  linux-x64:
+    archive: vte-linux-x64.tar.gz
+  linux-arm64:
+    archive: vte-linux-arm64.tar.gz
+  macos-arm64:
+    archive: vte-macos-arm64.tar.gz
+  macos-x64:
+    archive: vte-macos-x64.tar.gz
+  windows-x64:
+    archive: vte-windows-x64.tar.gz
+  windows-arm64:
+    archive: vte-windows-arm64.tar.gz
+  android-arm64:
+    archive: vte-android-arm64.tar.gz
+  android-arm:
+    archive: vte-android-arm.tar.gz
+  android-x64:
+    archive: vte-android-x64.tar.gz
+  ios-arm64:
+    archive: vte-ios-arm64.tar.gz
+  ios-sim-arm64:
+    archive: vte-ios-sim-arm64.tar.gz
+  ios-sim-x64:
+    archive: vte-ios-sim-x64.tar.gz
