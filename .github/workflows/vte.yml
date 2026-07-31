@@ -81,7 +81,7 @@ jobs:
 
       - uses: mlugg/setup-zig@v2
         with:
-          version: "0.15.2"
+          version: "0.16.0"
 
       - name: Install Android NDK
         if: contains(matrix.target, 'android')
@@ -177,7 +177,7 @@ jobs:
 
       - uses: mlugg/setup-zig@v2
         with:
-          version: "0.15.2"
+          version: "0.16.0"
 
       - name: Verify Zig
         run: zig version
@@ -246,7 +246,7 @@ jobs:
 
       - uses: mlugg/setup-zig@v2
         with:
-          version: "0.15.2"
+          version: "0.16.0"
 
       - name: Install Android NDK
         uses: nttld/setup-ndk@v1
