@@ -131,7 +131,8 @@ enum GhosttySgrAttributeTag {
   GHOSTTY_SGR_ATTR_BRIGHT_BG_8(27),
   GHOSTTY_SGR_ATTR_BRIGHT_FG_8(28),
   GHOSTTY_SGR_ATTR_BG_256(29),
-  GHOSTTY_SGR_ATTR_FG_256(30);
+  GHOSTTY_SGR_ATTR_FG_256(30),
+  GHOSTTY_SGR_ATTR_MAX_VALUE(2147483647);
 
   const GhosttySgrAttributeTag(this.value);
   final int value;
@@ -357,7 +358,8 @@ enum GhosttyRenderStateCursorVisualStyle {
   GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR(0),
   GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK(1),
   GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE(2),
-  GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW(3);
+  GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW(3),
+  GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_MAX_VALUE(2147483647);
 
   const GhosttyRenderStateCursorVisualStyle(this.value);
   final int value;
@@ -368,6 +370,7 @@ enum GhosttyRenderStateCursorVisualStyle {
         1 => GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK,
         2 => GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE,
         3 => GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW,
+        2147483647 => GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_MAX_VALUE,
         _ => throw ArgumentError(
           'Unknown value for GhosttyRenderStateCursorVisualStyle: $value',
         ),
@@ -909,25 +912,29 @@ final class _GhosttyWasmRuntime {
   void freeOpaque(int ptr) =>
       callInt('ghostty_wasm_free_opaque', <Object>[ptr]);
 
-  int allocU8Array(int len) =>
-      callInt('ghostty_wasm_alloc_u8_array', <Object>[len]);
+  int takeOpaque(int ptr) => callInt('ghostty_wasm_take_opaque', <Object>[ptr]);
+
+  int allocU8Array(int len) => callInt('ghostty_wasm_alloc', <Object>[len]);
 
   void freeU8Array(int ptr, int len) =>
-      callInt('ghostty_wasm_free_u8_array', <Object>[ptr, len]);
+      callInt('ghostty_wasm_free', <Object>[ptr, len]);
 
   int allocU16Array(int len) =>
-      callInt('ghostty_wasm_alloc_u16_array', <Object>[len]);
+      callInt('ghostty_wasm_alloc', <Object>[len * 2]);
 
   void freeU16Array(int ptr, int len) =>
-      callInt('ghostty_wasm_free_u16_array', <Object>[ptr, len]);
+      callInt('ghostty_wasm_free', <Object>[ptr, len * 2]);
 
-  int allocU8() => callInt('ghostty_wasm_alloc_u8');
+  int allocU8() => callInt('ghostty_wasm_alloc', const <Object>[1]);
 
-  void freeU8(int ptr) => callInt('ghostty_wasm_free_u8', <Object>[ptr]);
+  void freeU8(int ptr) => callInt('ghostty_wasm_free', <Object>[ptr, 1]);
 
-  int allocUsize() => callInt('ghostty_wasm_alloc_usize');
+  int allocUsize() => callInt('ghostty_wasm_alloc', const <Object>[4]);
 
-  void freeUsize(int ptr) => callInt('ghostty_wasm_free_usize', <Object>[ptr]);
+  void freeUsize(int ptr) => callInt('ghostty_wasm_free', <Object>[ptr, 4]);
+
+  void freeAllocated(int ptr, int len) =>
+      callInt('ghostty_free', <Object>[0, ptr, len]);
 }
 
 _GhosttyWasmRuntime? _runtime() => GhosttyVtWasm._runtime;
@@ -971,7 +978,7 @@ void _checkResult(int result, String operation) {
   }
 }
 
-const int _ghosttyTerminalOptionsSize = 8;
+const int _ghosttySgrAttributeSize = 72;
 const int _ghosttyFormatterScreenExtraSize = 12;
 const int _ghosttyFormatterTerminalExtraSize = 24;
 const int _ghosttyFormatterTerminalOptionsSize = 40;
@@ -996,6 +1003,7 @@ const int _ghosttyTerminalOptColorForeground = 11;
 const int _ghosttyTerminalOptColorBackground = 12;
 const int _ghosttyTerminalOptColorCursor = 13;
 const int _ghosttyTerminalOptColorPalette = 14;
+const int _ghosttyTerminalOptScrollbackMaxLines = 28;
 
 const int _ghosttyTerminalDataColorForeground = 18;
 const int _ghosttyTerminalDataColorBackground = 19;
@@ -1081,18 +1089,6 @@ String _readGhosttyString(_GhosttyWasmRuntime rt, int ptr) {
 
 void _writeBoolByte(_GhosttyWasmRuntime rt, int ptr, int offset, bool value) {
   rt.writeU8(ptr + offset, value ? 1 : 0);
-}
-
-void _writeTerminalOptions(
-  _GhosttyWasmRuntime rt,
-  int ptr, {
-  required int cols,
-  required int rows,
-  required int maxScrollback,
-}) {
-  rt.writeU16(ptr, _checkPositiveUint16(cols, 'cols'));
-  rt.writeU16(ptr + 2, _checkPositiveUint16(rows, 'rows'));
-  rt.writeU32(ptr + 4, _checkNonNegative(maxScrollback, 'maxScrollback'));
 }
 
 void _writeFormatterTerminalOptions(
@@ -1838,7 +1834,7 @@ final class VtOscParser {
       try {
         final result = rt.callInt('ghostty_osc_new', <Object>[0, out]);
         _checkResult(result, 'ghostty_osc_new');
-        _handle = rt.readPtr(out);
+        _handle = rt.takeOpaque(out);
       } finally {
         rt.freeOpaque(out);
       }
@@ -2029,11 +2025,11 @@ final class VtSgrParser {
       try {
         final result = rt.callInt('ghostty_sgr_new', <Object>[0, out]);
         _checkResult(result, 'ghostty_sgr_new');
-        _handle = rt.readPtr(out);
+        _handle = rt.takeOpaque(out);
       } finally {
         rt.freeOpaque(out);
       }
-      _attrPtr = rt.callInt('ghostty_wasm_alloc_sgr_attribute');
+      _attrPtr = rt.allocU8Array(_ghosttySgrAttributeSize);
       if (_attrPtr == 0) {
         throw GhosttyVtError(
           'ghostty_wasm_alloc_sgr_attribute',
@@ -2438,7 +2434,7 @@ final class VtSgrParser {
         _handle = 0;
       }
       if (_attrPtr != 0) {
-        rt.callInt('ghostty_wasm_free_sgr_attribute', <Object>[_attrPtr]);
+        rt.freeU8Array(_attrPtr, _ghosttySgrAttributeSize);
         _attrPtr = 0;
       }
       _wasm = null;
@@ -2462,7 +2458,7 @@ final class VtKeyEvent {
       try {
         final result = rt.callInt('ghostty_key_event_new', <Object>[0, out]);
         _checkResult(result, 'ghostty_key_event_new');
-        _handle = rt.readPtr(out);
+        _handle = rt.takeOpaque(out);
       } finally {
         rt.freeOpaque(out);
       }
@@ -2723,7 +2719,7 @@ final class VtKeyEncoder {
       try {
         final result = rt.callInt('ghostty_key_encoder_new', <Object>[0, out]);
         _checkResult(result, 'ghostty_key_encoder_new');
-        _handle = rt.readPtr(out);
+        _handle = rt.takeOpaque(out);
       } finally {
         rt.freeOpaque(out);
       }
@@ -3406,28 +3402,40 @@ final class VtTerminal {
       _maxScrollback = _checkNonNegative(maxScrollback, 'maxScrollback'),
       _wasm = _requireTerminalRuntime('VtTerminal') {
     final out = _allocOpaqueOrThrow(_wasm, 'ghostty_wasm_alloc_opaque');
-    final optionsPtr = _allocU8ArrayOrThrow(
-      _wasm,
-      _ghosttyTerminalOptionsSize,
-      'ghostty_wasm_alloc_u8_array',
-    );
-    try {
-      _writeTerminalOptions(
-        _wasm,
-        optionsPtr,
-        cols: _cols,
-        rows: _rows,
-        maxScrollback: _maxScrollback,
+    final maxScrollbackPtr = _wasm.allocUsize();
+    if (maxScrollbackPtr == 0) {
+      _wasm.freeOpaque(out);
+      throw GhosttyVtError(
+        'ghostty_wasm_alloc',
+        GhosttyResult.GHOSTTY_OUT_OF_MEMORY,
       );
+    }
+    try {
+      _wasm.writeU32(maxScrollbackPtr, _maxScrollback);
       final result = _wasm.callInt('ghostty_terminal_new', <Object>[
         0,
         out,
-        optionsPtr,
+        _cols,
+        _rows,
       ]);
       _checkResult(result, 'ghostty_terminal_new');
-      _handle = _wasm.readPtr(out);
+      _handle = _wasm.takeOpaque(out);
+      try {
+        _checkResult(
+          _wasm.callInt('ghostty_terminal_set', <Object>[
+            _handle,
+            _ghosttyTerminalOptScrollbackMaxLines,
+            maxScrollbackPtr,
+          ]),
+          'ghostty_terminal_set(scrollback max lines)',
+        );
+      } catch (_) {
+        _wasm.callInt('ghostty_terminal_free', <Object>[_handle]);
+        _handle = 0;
+        rethrow;
+      }
     } finally {
-      _wasm.freeU8Array(optionsPtr, _ghosttyTerminalOptionsSize);
+      _wasm.freeUsize(maxScrollbackPtr);
       _wasm.freeOpaque(out);
     }
   }
@@ -3955,7 +3963,7 @@ final class VtTerminalFormatter {
         optionsPtr,
       ]);
       _checkResult(result, 'ghostty_formatter_terminal_new');
-      _handle = _wasm.readPtr(out);
+      _handle = _wasm.takeOpaque(out);
     } finally {
       _wasm.freeU8Array(optionsPtr, _ghosttyFormatterTerminalOptionsSize);
       _wasm.freeOpaque(out);
@@ -4083,13 +4091,13 @@ final class VtTerminalFormatter {
       final len = _wasm.readUsize(outLen);
       if (ptr == 0 || len == 0) {
         if (ptr != 0) {
-          _wasm.freeU8Array(ptr, len);
+          _wasm.freeAllocated(ptr, len);
         }
         return Uint8List(0);
       }
 
       final bytes = Uint8List.fromList(_wasm.u8View(ptr, len));
-      _wasm.freeU8Array(ptr, len);
+      _wasm.freeAllocated(ptr, len);
       return bytes;
     } finally {
       _wasm.freeUsize(outLen);

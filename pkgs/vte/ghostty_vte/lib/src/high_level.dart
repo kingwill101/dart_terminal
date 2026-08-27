@@ -794,17 +794,7 @@ final class VtRgbColor {
   final int b;
 
   factory VtRgbColor.fromNative(bindings.GhosttyColorRgb native) {
-    final r = calloc<ffi.Uint8>();
-    final g = calloc<ffi.Uint8>();
-    final b = calloc<ffi.Uint8>();
-    try {
-      bindings.ghostty_color_rgb_get(native, r, g, b);
-      return VtRgbColor(r.value, g.value, b.value);
-    } finally {
-      calloc.free(r);
-      calloc.free(g);
-      calloc.free(b);
-    }
+    return VtRgbColor(native.r, native.g, native.b);
   }
 
   @override
@@ -3383,23 +3373,36 @@ final class VtTerminal {
     required int rows,
     required int maxScrollback,
   }) {
-    final optionsPtr = calloc<bindings.GhosttyTerminalOptions>();
     final out = calloc<bindings.GhosttyTerminal>();
+    final maxScrollbackPtr = calloc<ffi.Size>();
+    maxScrollbackPtr.value = _checkNonNegative(maxScrollback, 'maxScrollback');
     try {
-      optionsPtr.ref
-        ..cols = _checkPositiveUint16(cols, 'cols')
-        ..rows = _checkPositiveUint16(rows, 'rows')
-        ..max_scrollback = _checkNonNegative(maxScrollback, 'maxScrollback');
       final result = bindings.ghostty_terminal_new(
         ffi.nullptr,
         out,
-        optionsPtr.ref,
+        _checkPositiveUint16(cols, 'cols'),
+        _checkPositiveUint16(rows, 'rows'),
       );
       _checkResult(result, 'ghostty_terminal_new');
+      try {
+        _checkResult(
+          bindings.ghostty_terminal_set(
+            out.value,
+            bindings
+                .GhosttyTerminalOption
+                .GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_LINES,
+            maxScrollbackPtr.cast(),
+          ),
+          'ghostty_terminal_set(scrollback max lines)',
+        );
+      } catch (_) {
+        bindings.ghostty_terminal_free(out.value);
+        rethrow;
+      }
       return out.value;
     } finally {
+      calloc.free(maxScrollbackPtr);
       calloc.free(out);
-      calloc.free(optionsPtr);
     }
   }
 
@@ -3651,25 +3654,42 @@ final class VtTerminal {
   /// Returns whether [mode] is currently set on this terminal.
   bool getMode(VtMode mode) {
     _ensureOpen();
-    final out = calloc<ffi.Bool>();
+    final config = calloc<bindings.GhosttyTerminalModeConfig>();
+    config.ref.mode = mode.packed;
     try {
       _checkResult(
-        bindings.ghostty_terminal_mode_get(_handle, mode.packed, out),
-        'ghostty_terminal_mode_get',
+        bindings.ghostty_terminal_get(
+          _handle,
+          bindings.GhosttyTerminalData.GHOSTTY_TERMINAL_DATA_MODE,
+          config.cast(),
+        ),
+        'ghostty_terminal_get(mode)',
       );
-      return out.value;
+      return config.ref.value;
     } finally {
-      calloc.free(out);
+      calloc.free(config);
     }
   }
 
   /// Sets [mode] to [value] on this terminal.
   void setMode(VtMode mode, bool value) {
     _ensureOpen();
-    _checkResult(
-      bindings.ghostty_terminal_mode_set(_handle, mode.packed, value),
-      'ghostty_terminal_mode_set',
-    );
+    final config = calloc<bindings.GhosttyTerminalModeConfig>();
+    config.ref
+      ..mode = mode.packed
+      ..value = value;
+    try {
+      _checkResult(
+        bindings.ghostty_terminal_set(
+          _handle,
+          bindings.GhosttyTerminalOption.GHOSTTY_TERMINAL_OPT_MODE,
+          config.cast(),
+        ),
+        'ghostty_terminal_set(mode)',
+      );
+    } finally {
+      calloc.free(config);
+    }
   }
 
   int get kittyKeyboardFlags {
@@ -4428,8 +4448,12 @@ final class VtRenderState {
     try {
       out.ref.size = ffi.sizeOf<bindings.GhosttyRenderStateColors>();
       _checkResult(
-        bindings.ghostty_render_state_colors_get(_handle, out),
-        'ghostty_render_state_colors_get',
+        bindings.ghostty_render_state_get(
+          _handle,
+          bindings.GhosttyRenderStateData.GHOSTTY_RENDER_STATE_DATA_COLORS,
+          out.cast(),
+        ),
+        'ghostty_render_state_get(colors)',
       );
       return VtRenderColors.fromNative(out.ref);
     } finally {

@@ -2,6 +2,8 @@
 
 ## 0.2.0-wip
 
+- Updated the bundled Ghostty VTE Wasm module to `f2d5758f6` and added a CI
+  smoke test for the terminal/formatter ABI.
 - Bumped the `ghostty_vte` dependency to `^0.2.0-wip` for the new Kitty
   Graphics Protocol wrapper APIs.
 - Exposed Ghostty VT build information and selection-scoped terminal

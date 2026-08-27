@@ -10,18 +10,21 @@ link_mode: dynamic_library
 source:
   type: git
   repository: https://github.com/ghostty-org/ghostty
-  revision: 4d605bf0d819df901a0332bbb320dc849fdd82e4
+  revision: f2d5758f6305867dc36b36293c6165d8152b853e
 
 release:
   provider: github
   repository: kingwill101/dart_terminal
-  tag: ghostty_vte-v0.1.4
+  tag: ghostty_vte-v0.2.0-wip
 
 variables:
   cmake_build_directory: "{{ work }}/build-{{ target.label }}"
   cmake_target: zig_build_lib_vt
+  # Keep release artifacts on Ghostty's portable non-SIMD path. Native SIMD
+  # links the build host's libc/libm and can raise the Linux glibc floor.
   ghostty_zig_build_flags: "-Dtarget={{ target.zig_target }};-Dsimd=false"
-  ghostty_libc_patch_url: "https://raw.githubusercontent.com/kingwill101/dart_terminal/b3b2115/pkgs/vte/ghostty_vte/patches/ghostty-libvt-link-libc.patch"
+  # Non-SIMD Android still references getauxval, so link Bionic explicitly.
+  ghostty_libc_patch_url: "https://raw.githubusercontent.com/kingwill101/dart_terminal/master/pkgs/vte/ghostty_vte/patches/ghostty-libvt-link-libc.patch"
 
 build:
   options:
