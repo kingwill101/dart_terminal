@@ -10,13 +10,13 @@ link_mode: dynamic_library
 source:
   type: git
   repository: https://github.com/kingwill101/dart_terminal
-  revision: 6c662511a7de5447c762ef6055cb3fa615eaeaed
+  revision: 5d64455ce05ceebb6b92813ece0f33f02df51972
   subdirectory: pkgs/pty/portable_pty
 
 release:
   provider: github
   repository: kingwill101/dart_terminal
-  tag: portable_pty-v0.0.6
+  tag: portable_pty-v0.0.7-beta.1
 
 variables:
   cargo_manifest: "{{ source.path }}/rust/Cargo.toml"

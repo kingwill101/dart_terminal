@@ -1,7 +1,7 @@
 # GENERATED CODE - DO NOT MODIFY BY HAND.
 schema: 1
 release:
-  tag: 'portable_pty-v0.0.6'
+  tag: 'portable_pty-v0.0.7-beta.1'
 artifacts:
   'linux-x64':
     archive_sha256: 'e2dc9bacdcf51f411a7c48ad90a2caedc33ffc33d9ce59ef915b92f903c59f6d'
@@ -16,11 +16,11 @@ artifacts:
     archive_sha256: '876e5d36ff2a9ce5abcf34df38eb49899aa670491ba5a0a7aa4abfad890fa882'
     payload_sha256: '13bb51fa872d9afac0c4599b888111bb6540b26b6fe22dff619e1c7925597204'
   'windows-x64':
-    archive_sha256: '5951833b48120910f0b4bb3975d6ea53b9d7eee959dcdef3f0524a3b268651ca'
-    payload_sha256: 'f526c3f6864ade15c561545d195ff38d0540fc740c9644ee7b76f904caca041d'
+    archive_sha256: '9abc6c2b91b5ed1cc6d9970b802f71871b42e9ea0e99d30d89b1bab6b502d382'
+    payload_sha256: 'c853706a528c4ac8b4ea2315d2e18fc7ae0111be7521ccb7a47dbdc40f277324'
   'windows-arm64':
-    archive_sha256: 'b90000972bbdf317db610e619d247576a75f6a67490ae5c0b5f66606fcfad8b7'
-    payload_sha256: 'b4750a61f114970e0e26da1f0c0413af989fadfbdefd2ca8ec8a24678ff9bb0c'
+    archive_sha256: '1b440e0dc162268a982b9ae823b7674c2e2f0837bf7321ce9a189fc59daf865f'
+    payload_sha256: 'e6168cbeea798c9818c57f3e02f2af1572e975429d68a828d2500b4ae1f3ab7d'
   'android-arm64':
     archive_sha256: 'cab1c7356aa7f4a897d786e8cd640c16aadaacc76947147cd9375eb6cadc0972'
     payload_sha256: 'be4d2e82542974ed2f7c2fca69838af355a714e464d15cb47dba5d506c1b36ce'
@@ -39,4 +39,3 @@ artifacts:
   'ios-sim-x64':
     archive_sha256: '2c1afbdc7a5a4aabfcbb1af3dfe0f70e7410472e61172f1665733de58515c3ba'
     payload_sha256: '45cf8c3cdf340cc2d1560c8ba76a434d29333e5aa42920294573afb12802f4cc'
-
