@@ -14,7 +14,7 @@ Dart and Flutter packages for terminal emulation powered by
 
 | Tool | Required for | Install |
 |------|-------------|---------|
-| **Dart SDK ≥ 3.10** | Both packages | [dart.dev/get-dart](https://dart.dev/get-dart) |
+| **Dart SDK ≥ 3.13** | Both packages | [dart.dev/get-dart](https://dart.dev/get-dart) |
 | **Flutter** | `ghostty_vte_flutter` | [flutter.dev](https://flutter.dev/docs/get-started/install) |
 | **Zig** | Building `libghostty-vt` (native & wasm) | [ziglang.org/download](https://ziglang.org/download/) |
 | **Git** | If using the Ghostty submodule | Bundled with most OS toolchains |

@@ -2,6 +2,8 @@
 
 ## 0.2.0-wip
 
+- Updated to `native_prebuilt` 0.5.0, Code Assets 2.0, and Hooks 2.2, and
+  raised the minimum Dart SDK to 3.13.
 - Synced Ghostty from `4d605bf0d` (`v1.3.1-1536-g4d605bf0d`) to
   `f2d5758f6` (`v1.3.1-2333-gf2d5758f6`) and regenerated the C bindings.
 - Migrated terminal construction, mode access, render-color queries, and RGB

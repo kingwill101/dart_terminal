@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Raised the minimum Dart SDK to 3.13.
+
 ## 0.0.6
 
 - Updated the portable PTY dependency to `^0.0.6`.

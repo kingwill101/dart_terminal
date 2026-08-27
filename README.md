@@ -53,7 +53,7 @@ flutter run
 
 | Tool | Required for | Install |
 |------|-------------|---------|
-| **Dart SDK ≥ 3.10** | All packages | [dart.dev/get-dart](https://dart.dev/get-dart) |
+| **Dart SDK ≥ 3.13** | All packages | [dart.dev/get-dart](https://dart.dev/get-dart) |
 | **Flutter** | Flutter packages & examples | [flutter.dev](https://flutter.dev/docs/get-started/install) |
 | **Zig ≥ 0.15** | Building `libghostty-vt` | [ziglang.org/download](https://ziglang.org/download/) |
 | **Rust ≥ 1.92** | Building the PTY library | [rustup.rs](https://rustup.rs/) |

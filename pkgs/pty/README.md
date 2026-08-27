@@ -13,7 +13,7 @@ Cross-platform PTY session control for Dart and Flutter.
 
 | Tool | Required for | Install |
 |------|-------------|---------|
-| **Dart SDK ≥ 3.10** | Both packages | [dart.dev/get-dart](https://dart.dev/get-dart) |
+| **Dart SDK ≥ 3.13** | Both packages | [dart.dev/get-dart](https://dart.dev/get-dart) |
 | **Flutter** | `portable_pty_flutter` | [flutter.dev](https://flutter.dev/docs/get-started/install) |
 | **Rust toolchain** | Building the native PTY library | [rustup.rs](https://rustup.rs/) |
 

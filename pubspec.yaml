@@ -2,7 +2,7 @@ name: dart_terminal_workspace
 publish_to: none
 
 environment:
-  sdk: ^3.10.4
+  sdk: ^3.13.0
 
 workspace:
   - pkgs/vte/ghostty_vte
@@ -12,7 +12,3 @@ workspace:
   - pkgs/pty/portable_pty
   - pkgs/pty/portable_pty_flutter
   - pkgs/pty/portable_pty_flutter/example
-
-dependency_overrides:
-  # Flutter 3.44 pins flutter_test to meta 1.18 while hooks 2.x needs meta 1.19.
-  meta: 1.19.0

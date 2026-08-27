@@ -39,13 +39,14 @@ use a remote PTY transport for App Store-style iOS applications.
 
 ```yaml
 dependencies:
-  portable_pty: ^0.0.5
+  portable_pty: ^0.0.6
 ```
 
-The Rust native library is compiled automatically by a
-[Dart build hook](https://dart.dev/interop/c-interop#native-assets)
-using [`native_toolchain_rust`](https://pub.dev/packages/native_toolchain_rust).
-You need **Rust ≥ 1.92** installed.
+The [Dart build hook](https://dart.dev/interop/c-interop#native-assets) uses
+[`native_prebuilt`](https://pub.dev/packages/native_prebuilt) to resolve a
+published native library first. If no compatible prebuilt is available, its
+declarative `native_prebuilt.yaml` recipe builds the Rust library from source.
+You only need **Rust ≥ 1.92** for that source-build fallback.
 
 > **Tip:** If you don't want to install Rust, download a
 > [prebuilt library](#prebuilt-libraries) instead.
