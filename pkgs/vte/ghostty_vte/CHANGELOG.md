@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0-wip
+## 0.2.0-beta.1
 
 - Updated to `native_prebuilt` 0.5.0, Code Assets 2.0, and Hooks 2.2, and
   raised the minimum Dart SDK to 3.13.

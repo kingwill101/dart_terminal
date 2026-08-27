@@ -1,8 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.0.7-beta.1
 
 - Raised the minimum Dart SDK to 3.13.
+- Updated the `portable_pty` dependency to `^0.0.7-beta.1`.
 
 ## 0.0.6
 
