@@ -28,11 +28,11 @@ const Map<String, AssetHash> assetHashes = {
   ),
   'windows-x64': AssetHash(
     tarball: 'pty-windows-x64.tar.gz',
-    hash: 'c853706a528c4ac8b4ea2315d2e18fc7ae0111be7521ccb7a47dbdc40f277324',
+    hash: '55459d86efee5202dfe243addf6ebfb2048f790e71ced7dd15a89cb2975693e5',
   ),
   'windows-arm64': AssetHash(
     tarball: 'pty-windows-arm64.tar.gz',
-    hash: 'e6168cbeea798c9818c57f3e02f2af1572e975429d68a828d2500b4ae1f3ab7d',
+    hash: '717ad2c70753bc90ddc8711e4f04558314d2c06cb3c46ce1b82469265e8267d1',
   ),
   'android-arm64': AssetHash(
     tarball: 'pty-android-arm64.tar.gz',

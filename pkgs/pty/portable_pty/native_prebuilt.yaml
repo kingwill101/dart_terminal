@@ -10,7 +10,7 @@ link_mode: dynamic_library
 source:
   type: git
   repository: https://github.com/kingwill101/dart_terminal
-  revision: 5d64455ce05ceebb6b92813ece0f33f02df51972
+  revision: 112b84ef6f5178aba303d7633c04c78ac9054b0b
   subdirectory: pkgs/pty/portable_pty
 
 release:
