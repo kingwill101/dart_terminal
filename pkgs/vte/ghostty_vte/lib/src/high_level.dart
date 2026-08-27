@@ -373,13 +373,18 @@ final class GhosttyVt {
           exceptionalReturn: false,
         );
 
-    _checkResult(
-      bindings.ghostty_sys_set(
-        bindings.GhosttySysOption.GHOSTTY_SYS_OPT_DECODE_PNG,
-        callable.nativeFunction.cast(),
-      ),
-      'ghostty_sys_set(DECODE_PNG)',
-    );
+    try {
+      _checkResult(
+        bindings.ghostty_sys_set(
+          bindings.GhosttySysOption.GHOSTTY_SYS_OPT_DECODE_PNG,
+          callable.nativeFunction.cast(),
+        ),
+        'ghostty_sys_set(DECODE_PNG)',
+      );
+    } catch (_) {
+      callable.close();
+      rethrow;
+    }
 
     return callable;
   }
@@ -407,13 +412,18 @@ final class GhosttyVt {
             return false;
           }
         }, exceptionalReturn: false);
-    _checkResult(
-      bindings.ghostty_sys_set(
-        bindings.GhosttySysOption.GHOSTTY_SYS_OPT_RANDOM_SECURE,
-        callable.nativeFunction.cast(),
-      ),
-      'ghostty_sys_set(RANDOM_SECURE)',
-    );
+    try {
+      _checkResult(
+        bindings.ghostty_sys_set(
+          bindings.GhosttySysOption.GHOSTTY_SYS_OPT_RANDOM_SECURE,
+          callable.nativeFunction.cast(),
+        ),
+        'ghostty_sys_set(RANDOM_SECURE)',
+      );
+    } catch (_) {
+      callable.close();
+      rethrow;
+    }
     return callable;
   }
 
@@ -452,13 +462,18 @@ final class GhosttyVt {
           );
         });
 
-    _checkResult(
-      bindings.ghostty_sys_set(
-        bindings.GhosttySysOption.GHOSTTY_SYS_OPT_LOG,
-        callable.nativeFunction.cast(),
-      ),
-      'ghostty_sys_set(LOG)',
-    );
+    try {
+      _checkResult(
+        bindings.ghostty_sys_set(
+          bindings.GhosttySysOption.GHOSTTY_SYS_OPT_LOG,
+          callable.nativeFunction.cast(),
+        ),
+        'ghostty_sys_set(LOG)',
+      );
+    } catch (_) {
+      callable.close();
+      rethrow;
+    }
 
     return callable;
   }
@@ -1531,18 +1546,23 @@ final class VtGridRefSnapshot {
             0,
             uriLen,
           );
+          if (firstUri != bindings.GhosttyResult.GHOSTTY_OUT_OF_SPACE &&
+              firstUri != bindings.GhosttyResult.GHOSTTY_SUCCESS) {
+            _checkResult(firstUri, 'grid_ref_hyperlink_uri(size probe)');
+          }
           if (firstUri == bindings.GhosttyResult.GHOSTTY_OUT_OF_SPACE ||
               firstUri == bindings.GhosttyResult.GHOSTTY_SUCCESS) {
             final len = uriLen.value;
             if (len > 0) {
               final uriBuf = calloc<ffi.Uint8>(len);
               try {
-                bindings.ghostty_grid_ref_hyperlink_uri(
+                final result = bindings.ghostty_grid_ref_hyperlink_uri(
                   ref,
                   uriBuf,
                   len,
                   uriLen,
                 );
+                _checkResult(result, 'grid_ref_hyperlink_uri');
                 hyperlinkUri = utf8.decode(
                   uriBuf.asTypedList(uriLen.value),
                   allowMalformed: true,
@@ -1900,6 +1920,12 @@ final class VtKittyGraphicsPlacementIterator {
   final bindings.GhosttyTerminal _terminal;
   bool _closed = false;
 
+  void _ensureOpen() {
+    if (_closed) {
+      throw StateError('Kitty graphics placement iterator is closed.');
+    }
+  }
+
   /// Advances to the next placement.
   ///
   /// Returns false when there are no more placements.
@@ -1909,7 +1935,10 @@ final class VtKittyGraphicsPlacementIterator {
   }
 
   /// Cursor view for the current placement.
-  VtKittyGraphicsPlacement get current => VtKittyGraphicsPlacement._(this);
+  VtKittyGraphicsPlacement get current {
+    _ensureOpen();
+    return VtKittyGraphicsPlacement._(this);
+  }
 
   /// The image ID of the current placement.
   int get imageId => _placementUint32(
@@ -1941,6 +1970,7 @@ final class VtKittyGraphicsPlacementIterator {
 
   /// Whether this is a virtual (unicode placeholder) placement.
   bool get isVirtual {
+    _ensureOpen();
     final out = calloc<ffi.Bool>();
     try {
       _checkResult(
@@ -1964,6 +1994,7 @@ final class VtKittyGraphicsPlacementIterator {
   /// Negative values render below the terminal background, positive values
   /// above terminal text.
   int get z {
+    _ensureOpen();
     final out = calloc<ffi.Int32>();
     try {
       _checkResult(
@@ -1986,6 +2017,7 @@ final class VtKittyGraphicsPlacementIterator {
   ///
   /// Returns null if the image ID is zero or no longer in the storage.
   VtKittyGraphicsImage? get image {
+    _ensureOpen();
     final id = imageId;
     if (id == 0) return null;
     final handle = bindings.ghostty_kitty_graphics_image(_graphics, id);
@@ -1998,6 +2030,7 @@ final class VtKittyGraphicsPlacementIterator {
   /// Returns null when the placement is virtual, fully off-screen, or the
   /// referenced image no longer exists.
   VtKittyPlacementViewportPosition? viewportPos() {
+    _ensureOpen();
     final img = image;
     if (img == null || !img.isValid) return null;
 
@@ -2032,6 +2065,7 @@ final class VtKittyGraphicsPlacementIterator {
   /// size, grid occupancy, viewport position, and source-crop into one FFI
   /// call instead of four.
   VtKittyPlacementRenderInfo? renderInfo() {
+    _ensureOpen();
     final img = image;
     if (img == null || !img.isValid) return null;
 
@@ -2075,6 +2109,7 @@ final class VtKittyGraphicsPlacementIterator {
   }
 
   int _placementUint32(bindings.GhosttyKittyGraphicsPlacementData data) {
+    _ensureOpen();
     final out = calloc<ffi.Uint32>();
     try {
       _checkResult(
@@ -4958,22 +4993,61 @@ final class VtTerminal {
     value,
   );
 
-  /// Whether the temporary-file loading medium is enabled for Kitty images.
+  /// The directory allowed for temporary-file Kitty image loading.
   ///
-  /// Returns null when Kitty graphics support is disabled at compile time.
-  bool? get kittyImageMediumTempFile => _terminalBoolOpt(
-    bindings
-        .GhosttyTerminalData
-        .GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_TEMP_FILE,
-  );
+  /// Returns null when the medium or Kitty graphics support is disabled.
+  String? get kittyImageMediumTempFile {
+    _ensureOpen();
+    final out = calloc<bindings.GhosttyString>();
+    try {
+      final result = bindings.ghostty_terminal_get(
+        _handle,
+        bindings
+            .GhosttyTerminalData
+            .GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_TEMP_FILE,
+        out.cast(),
+      );
+      if (result == bindings.GhosttyResult.GHOSTTY_NO_VALUE) return null;
+      _checkResult(result, 'ghostty_terminal_get(kitty temp-file directory)');
+      final value = _copyNativeString(out.ref);
+      return value.isEmpty ? null : value;
+    } finally {
+      calloc.free(out);
+    }
+  }
 
-  /// Enables or disables the temporary-file loading medium for Kitty images.
-  set kittyImageMediumTempFile(bool value) => _terminalSetBool(
-    bindings
+  /// Restricts temporary-file Kitty image loading to [value].
+  ///
+  /// Set to null or an empty string to disable the medium.
+  set kittyImageMediumTempFile(String? value) {
+    _ensureOpen();
+    final option = bindings
         .GhosttyTerminalOption
-        .GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE,
-    value,
-  );
+        .GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE;
+    if (value == null || value.isEmpty) {
+      _checkResult(
+        bindings.ghostty_terminal_set(_handle, option, ffi.nullptr),
+        'ghostty_terminal_set(kitty temp-file directory)',
+      );
+      return;
+    }
+    final bytes = utf8.encode(value);
+    final data = calloc<ffi.Uint8>(bytes.length);
+    final string = calloc<bindings.GhosttyString>();
+    try {
+      data.asTypedList(bytes.length).setAll(0, bytes);
+      string.ref
+        ..ptr = data
+        ..len = bytes.length;
+      _checkResult(
+        bindings.ghostty_terminal_set(_handle, option, string.cast()),
+        'ghostty_terminal_set(kitty temp-file directory)',
+      );
+    } finally {
+      calloc.free(string);
+      calloc.free(data);
+    }
+  }
 
   /// Whether the shared-memory loading medium is enabled for Kitty images.
   ///
@@ -5055,9 +5129,8 @@ final class VtTerminal {
   /// allocating and freeing each buffer with the correct type for the
   /// requested data key.
   ///
-  /// Returns the number of fields successfully read.  The multi-get aborts at
-  /// the first failure, so the returned count may be less than
-  /// [queries].length.
+  /// Returns [queries].length when every field is read successfully. The
+  /// multi-get aborts and throws [GhosttyVtError] at the first failed field.
   int getMulti(
     Map<bindings.GhosttyTerminalData, ffi.Pointer<ffi.Void>> queries,
   ) {
@@ -5075,12 +5148,15 @@ final class VtTerminal {
         (values + i).value = entry.value;
         i++;
       }
-      bindings.ghostty_terminal_get_multi(
-        _handle,
-        count,
-        keys,
-        values,
-        outWritten,
+      _checkResult(
+        bindings.ghostty_terminal_get_multi(
+          _handle,
+          count,
+          keys,
+          values,
+          outWritten,
+        ),
+        'ghostty_terminal_get_multi',
       );
       return outWritten.value;
     } finally {
@@ -6205,10 +6281,11 @@ final class VtTerminalFormatter {
     final out = calloc<bindings.GhosttyFormatter>();
     final nativeOptions = calloc<bindings.GhosttyFormatterTerminalOptions>();
     // Allocate a selection struct only when a selection is provided.
-    final selPtr = options.selection != null
-        ? _resolveSelectionPtr(terminal._handle, options.selection!)
-        : ffi.nullptr;
+    ffi.Pointer<bindings.GhosttySelection> selPtr = ffi.nullptr;
     try {
+      if (options.selection != null) {
+        selPtr = _resolveSelectionPtr(terminal._handle, options.selection!);
+      }
       final screen = options.extra.screen;
       nativeOptions.ref
         ..size = ffi.sizeOf<bindings.GhosttyFormatterTerminalOptions>()

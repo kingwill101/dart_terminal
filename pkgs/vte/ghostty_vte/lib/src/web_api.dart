@@ -4523,10 +4523,10 @@ final class VtTerminal {
   set kittyImageMediumFile(bool value) {}
 
   /// Always returns null on web.
-  bool? get kittyImageMediumTempFile => null;
+  String? get kittyImageMediumTempFile => null;
 
   /// No-op on web.
-  set kittyImageMediumTempFile(bool value) {}
+  set kittyImageMediumTempFile(String? value) {}
 
   /// Always returns null on web.
   bool? get kittyImageMediumSharedMem => null;

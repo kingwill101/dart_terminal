@@ -7,13 +7,9 @@ import 'package:ghostty_vte/ghostty_vte.dart';
 import 'package:test/test.dart';
 
 void main() {
-  void skipIfNoKittyGraphics() {
-    if (!GhosttyVt.buildInfo.kittyGraphics) {
-      markTestSkipped(
-        'Kitty graphics are disabled in this libghostty-vt build.',
-      );
-    }
-  }
+  final kittyGraphicsSkip = GhosttyVt.buildInfo.kittyGraphics
+      ? false
+      : 'Kitty graphics are disabled in this libghostty-vt build.';
 
   test('safe paste for plain text', () {
     expect(GhosttyVt.isPasteSafe('echo hello'), isTrue);
@@ -1128,8 +1124,6 @@ void main() {
   });
 
   test('kitty graphics options round-trip when supported', () {
-    skipIfNoKittyGraphics();
-
     final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
     addTearDown(terminal.close);
 
@@ -1139,19 +1133,19 @@ void main() {
     terminal.kittyImageMediumFile = true;
     expect(terminal.kittyImageMediumFile, isTrue);
 
-    terminal.kittyImageMediumTempFile = true;
-    expect(terminal.kittyImageMediumTempFile, isTrue);
+    terminal.kittyImageMediumTempFile = '/tmp/ghostty-vte';
+    expect(terminal.kittyImageMediumTempFile, '/tmp/ghostty-vte');
+    terminal.kittyImageMediumTempFile = null;
+    expect(terminal.kittyImageMediumTempFile, isNull);
 
     terminal.kittyImageMediumSharedMem = false;
     expect(terminal.kittyImageMediumSharedMem, isFalse);
 
     terminal.kittyImageStorageLimit = 0;
     expect(terminal.kittyImageStorageLimit, 0);
-  });
+  }, skip: kittyGraphicsSkip);
 
   test('kitty graphics wrapper exposes image placement render data', () {
-    skipIfNoKittyGraphics();
-
     final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
     addTearDown(terminal.close);
     terminal.resize(cols: 80, rows: 24, cellWidthPx: 10, cellHeightPx: 20);
@@ -1218,7 +1212,10 @@ void main() {
     } finally {
       iterator.close();
     }
-  });
+    expect(() => iterator.current, throwsStateError);
+    expect(() => iterator.imageId, throwsStateError);
+    expect(() => iterator.renderInfo(), throwsStateError);
+  }, skip: kittyGraphicsSkip);
 
   test('installPngDecoder installs a native callback', () {
     final callable = GhosttyVt.installPngDecoder((pngData) => null);

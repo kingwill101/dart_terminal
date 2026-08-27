@@ -24,7 +24,7 @@ variables:
   # links the build host's libc/libm and can raise the Linux glibc floor.
   ghostty_zig_build_flags: "-Dtarget={{ target.zig_target }};-Dsimd=false"
   # Non-SIMD Android still references getauxval, so link Bionic explicitly.
-  ghostty_libc_patch_url: "https://raw.githubusercontent.com/kingwill101/dart_terminal/master/pkgs/vte/ghostty_vte/patches/ghostty-libvt-link-libc.patch"
+  ghostty_libc_patch_url: "https://raw.githubusercontent.com/kingwill101/dart_terminal/8c717dba6e3be89afe402c1e9b5cee7a6a8c997b/pkgs/vte/ghostty_vte/patches/ghostty-libvt-link-libc.patch"
 
 build:
   options:

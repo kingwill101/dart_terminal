@@ -18,6 +18,9 @@ on:
       - "tool/verify_vte_android_libc.sh"
       - ".github/workflows/vte.yml"
 
+permissions:
+  contents: read
+
 jobs:
   build-vte-artifacts:
     name: "build-vte-${{ matrix.os_label }}"
