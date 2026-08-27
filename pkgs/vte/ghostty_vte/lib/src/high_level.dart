@@ -598,42 +598,38 @@ void _writeStyleColorToNative(
   }
 }
 
-typedef _GhosttyAllocatorAllocNative =
-    ffi.Pointer<ffi.Void> Function(
-      ffi.Pointer<ffi.Void> ctx,
-      ffi.Size len,
-      ffi.Uint8 alignment,
-      ffi.UintPtr retAddr,
-    );
+typedef _GhosttyAllocatorAllocNative = ffi.Pointer<ffi.Void> Function(
+  ffi.Pointer<ffi.Void> ctx,
+  ffi.Size len,
+  ffi.Uint8 alignment,
+  ffi.UintPtr retAddr,
+);
 
-typedef _GhosttyAllocatorResizeNative =
-    ffi.Bool Function(
-      ffi.Pointer<ffi.Void> ctx,
-      ffi.Pointer<ffi.Void> memory,
-      ffi.Size memoryLen,
-      ffi.Uint8 alignment,
-      ffi.Size newLen,
-      ffi.UintPtr retAddr,
-    );
+typedef _GhosttyAllocatorResizeNative = ffi.Bool Function(
+  ffi.Pointer<ffi.Void> ctx,
+  ffi.Pointer<ffi.Void> memory,
+  ffi.Size memoryLen,
+  ffi.Uint8 alignment,
+  ffi.Size newLen,
+  ffi.UintPtr retAddr,
+);
 
-typedef _GhosttyAllocatorRemapNative =
-    ffi.Pointer<ffi.Void> Function(
-      ffi.Pointer<ffi.Void> ctx,
-      ffi.Pointer<ffi.Void> memory,
-      ffi.Size memoryLen,
-      ffi.Uint8 alignment,
-      ffi.Size newLen,
-      ffi.UintPtr retAddr,
-    );
+typedef _GhosttyAllocatorRemapNative = ffi.Pointer<ffi.Void> Function(
+  ffi.Pointer<ffi.Void> ctx,
+  ffi.Pointer<ffi.Void> memory,
+  ffi.Size memoryLen,
+  ffi.Uint8 alignment,
+  ffi.Size newLen,
+  ffi.UintPtr retAddr,
+);
 
-typedef _GhosttyAllocatorFreeNative =
-    ffi.Void Function(
-      ffi.Pointer<ffi.Void> ctx,
-      ffi.Pointer<ffi.Void> memory,
-      ffi.Size memoryLen,
-      ffi.Uint8 alignment,
-      ffi.UintPtr retAddr,
-    );
+typedef _GhosttyAllocatorFreeNative = ffi.Void Function(
+  ffi.Pointer<ffi.Void> ctx,
+  ffi.Pointer<ffi.Void> memory,
+  ffi.Size memoryLen,
+  ffi.Uint8 alignment,
+  ffi.UintPtr retAddr,
+);
 
 /// Native allocator bridge for advanced libghostty-vt usage.
 ///

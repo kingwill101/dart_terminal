@@ -3183,9 +3183,8 @@ class _GhosttyTerminalPainter extends CustomPainter {
             ),
             decorationColor: decorationColor,
           );
-          final graphemes = _splitTerminalCells(
-            run.text,
-          ).toList(growable: false);
+          final graphemes = _splitTerminalCells(run.text)
+              .toList(growable: false);
           if (graphemes.isNotEmpty) {
             final graphemeWidths =
                 run.graphemeCellWidths.length == graphemes.length

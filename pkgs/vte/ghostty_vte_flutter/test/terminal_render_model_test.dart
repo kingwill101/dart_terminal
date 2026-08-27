@@ -204,40 +204,37 @@ void main() {
       expect(resolvedNative.strikethrough, isTrue);
     });
 
-    test(
-      'resolves metadata background color as implicit background when style is not explicit',
-      () {
-        final style = GhosttyTerminalResolvedStyle.fromNativeStyle(
-          style: const VtStyle(
-            foreground: VtStyleColor.none(),
-            background: VtStyleColor.none(),
-            underlineColor: VtStyleColor.none(),
-            bold: false,
-            italic: false,
-            faint: false,
-            blink: false,
-            inverse: false,
-            invisible: false,
-            strikethrough: false,
-            overline: false,
-            underline: GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_NONE,
-          ),
-          palette: palette,
-          defaultForeground: defaultForeground,
-          defaultBackground: defaultBackground,
-        );
+    test('resolves metadata background color as implicit background when style is not explicit', () {
+      final style = GhosttyTerminalResolvedStyle.fromNativeStyle(
+        style: const VtStyle(
+          foreground: VtStyleColor.none(),
+          background: VtStyleColor.none(),
+          underlineColor: VtStyleColor.none(),
+          bold: false,
+          italic: false,
+          faint: false,
+          blink: false,
+          inverse: false,
+          invisible: false,
+          strikethrough: false,
+          overline: false,
+          underline: GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_NONE,
+        ),
+        palette: palette,
+        defaultForeground: defaultForeground,
+        defaultBackground: defaultBackground,
+      );
 
-        final resolved = GhosttyTerminalResolvedStyle.resolveNativeStyleColors(
-          style: style,
-          defaultForeground: defaultForeground,
-          defaultBackground: defaultBackground,
-          metadataColor: const Color(0xFF445566),
-        );
+      final resolved = GhosttyTerminalResolvedStyle.resolveNativeStyleColors(
+        style: style,
+        defaultForeground: defaultForeground,
+        defaultBackground: defaultBackground,
+        metadataColor: const Color(0xFF445566),
+      );
 
-        expect(resolved.foreground, equals(defaultForeground));
-        expect(resolved.background, equals(const Color(0xFF445566)));
-      },
-    );
+      expect(resolved.foreground, equals(defaultForeground));
+      expect(resolved.background, equals(const Color(0xFF445566)));
+    });
 
     test('does not re-apply paint-time defaults after style resolution', () {
       final style = GhosttyTerminalResolvedStyle.fromNativeStyle(
@@ -408,26 +405,23 @@ void main() {
       expect(resolved.strikethrough, isTrue);
     });
 
-    test(
-      'formatted style inverse and invisible resolve to explicit foreground/background flags',
-      () {
-        final resolved = GhosttyTerminalResolvedStyle.fromFormattedStyle(
-          style: const GhosttyTerminalStyle(
-            foreground: GhosttyTerminalColor.palette(1),
-            background: GhosttyTerminalColor.palette(2),
-            underline: GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_NONE,
-            inverse: true,
-            invisible: true,
-          ),
-          palette: palette,
-          defaultForeground: defaultForeground,
-          defaultBackground: defaultBackground,
-        );
+    test('formatted style inverse and invisible resolve to explicit foreground/background flags', () {
+      final resolved = GhosttyTerminalResolvedStyle.fromFormattedStyle(
+        style: const GhosttyTerminalStyle(
+          foreground: GhosttyTerminalColor.palette(1),
+          background: GhosttyTerminalColor.palette(2),
+          underline: GhosttySgrUnderline.GHOSTTY_SGR_UNDERLINE_NONE,
+          inverse: true,
+          invisible: true,
+        ),
+        palette: palette,
+        defaultForeground: defaultForeground,
+        defaultBackground: defaultBackground,
+      );
 
-        expect(resolved.background, equals(palette[1]));
-        expect(resolved.foreground, equals(palette[1]));
-      },
-    );
+      expect(resolved.background, equals(palette[1]));
+      expect(resolved.foreground, equals(palette[1]));
+    });
   });
 
   group('Render semantics', () {

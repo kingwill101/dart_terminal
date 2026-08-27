@@ -58,8 +58,7 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
   String _activeShellCommand = '(not started)';
   Map<String, String> _activeShellEnvironment = const <String, String>{};
   final TextEditingController _commandController = TextEditingController(
-    text:
-        'printf "\\e]2;Ghostty VT Studio\\a\\e[32mreal terminal ready\\e[0m\\n"',
+    text: 'printf "\\e]2;Ghostty VT Studio\\a\\e[32mreal terminal ready\\e[0m\\n"',
   );
   final TextEditingController _oscController = TextEditingController(
     text: '2;Ghostty VT Studio',
@@ -799,9 +798,8 @@ class _TerminalStudioPageState extends State<TerminalStudioPage>
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _recomputeInspectorState({

@@ -500,9 +500,8 @@ final class GhosttyTerminalLine {
         continue;
       }
 
-      final prefixCellCount = _splitCharacters(
-        text.substring(0, match.start),
-      ).length;
+      final prefixCellCount = _splitCharacters(text.substring(0, match.start))
+          .length;
       final linkCellCount = _splitCharacters(trimmed).length;
       final startCol = prefixCellCount;
       final endCol = startCol + linkCellCount - 1;

@@ -24,9 +24,8 @@ void main() {
       '${root.path}/.dart_tool/hooks_runner/shared/ghostty_vte',
     ]);
     expect(
-      Directory(
-        '${root.path}/.dart_tool/hooks_runner/shared/ghostty_vte',
-      ).existsSync(),
+      Directory('${root.path}/.dart_tool/hooks_runner/shared/ghostty_vte')
+          .existsSync(),
       isFalse,
     );
     expect(otherCache.existsSync(), isTrue);
