@@ -384,6 +384,39 @@ final class GhosttyVt {
     return callable;
   }
 
+  /// Overrides the process-global cryptographically secure random source.
+  ///
+  /// The callback must return exactly [length] bytes from a CSPRNG. Keep the
+  /// returned native callable alive until the override is uninstalled.
+  static ffi.NativeCallable<bindings.GhosttySysRandomSecureFnFunction>
+  installSecureRandom(Uint8List Function(int length) randomBytes) {
+    final callable =
+        ffi.NativeCallable<
+          bindings.GhosttySysRandomSecureFnFunction
+        >.isolateLocal((
+          ffi.Pointer<ffi.Void> userdata,
+          ffi.Pointer<ffi.Uint8> buffer,
+          int length,
+        ) {
+          try {
+            final bytes = randomBytes(length);
+            if (bytes.length != length) return false;
+            buffer.asTypedList(length).setAll(0, bytes);
+            return true;
+          } catch (_) {
+            return false;
+          }
+        }, exceptionalReturn: false);
+    _checkResult(
+      bindings.ghostty_sys_set(
+        bindings.GhosttySysOption.GHOSTTY_SYS_OPT_RANDOM_SECURE,
+        callable.nativeFunction.cast(),
+      ),
+      'ghostty_sys_set(RANDOM_SECURE)',
+    );
+    return callable;
+  }
+
   /// Installs the built-in stderr log callback.
   ///
   /// After calling this, all Ghostty library log messages are written to
@@ -1710,24 +1743,33 @@ final class VtKittyGraphicsImage {
     }
   }
 
-  /// Borrowed view of the raw pixel data.
+  /// Image content generation, incremented when animation/frame data changes.
+  int get generation => _imageUint64(
+    bindings.GhosttyKittyGraphicsImageData.GHOSTTY_KITTY_IMAGE_DATA_GENERATION,
+  );
+
+  /// Whether decoded pixel data is currently available.
   ///
-  /// Valid only until the next mutating terminal call.  Copy the bytes
-  /// immediately if longer lifetime is needed.
-  Uint8List get rawPixelData {
+  /// A stored image may validly be pending asynchronous PNG decoding.
+  bool get pixelDataAvailable => rawPixelDataOrNull != null;
+
+  /// Borrowed raw pixel data, or `null` while image decoding is pending.
+  ///
+  /// Valid only until the next mutating terminal call. Copy the bytes if they
+  /// need to outlive the current terminal state.
+  Uint8List? get rawPixelDataOrNull {
     final ptrOut = calloc<ffi.Pointer<ffi.Uint8>>();
     final lenOut = calloc<ffi.Size>();
     try {
-      _checkResult(
-        bindings.ghostty_kitty_graphics_image_get(
-          _handle,
-          bindings
-              .GhosttyKittyGraphicsImageData
-              .GHOSTTY_KITTY_IMAGE_DATA_DATA_PTR,
-          ptrOut.cast(),
-        ),
-        'ghostty_kitty_graphics_image_get(data_ptr)',
+      final ptrResult = bindings.ghostty_kitty_graphics_image_get(
+        _handle,
+        bindings
+            .GhosttyKittyGraphicsImageData
+            .GHOSTTY_KITTY_IMAGE_DATA_DATA_PTR,
+        ptrOut.cast(),
       );
+      if (ptrResult == bindings.GhosttyResult.GHOSTTY_NO_VALUE) return null;
+      _checkResult(ptrResult, 'ghostty_kitty_graphics_image_get(data_ptr)');
       _checkResult(
         bindings.ghostty_kitty_graphics_image_get(
           _handle,
@@ -1740,9 +1782,7 @@ final class VtKittyGraphicsImage {
       );
       final ptr = ptrOut.value;
       final len = lenOut.value;
-      if (ptr == ffi.nullptr || len == 0) {
-        return Uint8List(0);
-      }
+      if (ptr == ffi.nullptr || len == 0) return Uint8List(0);
       return ptr.asTypedList(len);
     } finally {
       calloc.free(ptrOut);
@@ -1750,8 +1790,27 @@ final class VtKittyGraphicsImage {
     }
   }
 
+  /// Borrowed view of the raw pixel data.
+  ///
+  /// Valid only until the next mutating terminal call.  Copy the bytes
+  /// immediately if longer lifetime is needed.
+  Uint8List get rawPixelData => rawPixelDataOrNull ?? Uint8List(0);
+
   int _imageUint32(bindings.GhosttyKittyGraphicsImageData data) {
     final out = calloc<ffi.Uint32>();
+    try {
+      _checkResult(
+        bindings.ghostty_kitty_graphics_image_get(_handle, data, out.cast()),
+        'ghostty_kitty_graphics_image_get',
+      );
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  int _imageUint64(bindings.GhosttyKittyGraphicsImageData data) {
+    final out = calloc<ffi.Uint64>();
     try {
       _checkResult(
         bindings.ghostty_kitty_graphics_image_get(_handle, data, out.cast()),
@@ -2897,6 +2956,98 @@ final class VtFormatterTerminalOptions {
   final VtSelection? selection;
 }
 
+/// Result of a terminal-aware paste operation.
+final class VtTerminalPasteResult {
+  const VtTerminalPasteResult({required this.written, required this.rejected});
+
+  /// Whether libghostty wrote text or emitted a paste event to the PTY.
+  final bool written;
+
+  /// Whether unsafe text was refused and should be confirmed before retrying.
+  final bool rejected;
+}
+
+/// Result of writing input only until the terminal parser reaches ground.
+final class VtWriteUntilGroundResult {
+  const VtWriteUntilGroundResult({
+    required this.consumed,
+    required this.reachedGround,
+  });
+
+  final int consumed;
+  final bool reachedGround;
+}
+
+/// A normalized clipboard write requested by the running program.
+final class VtClipboardWriteRequest {
+  const VtClipboardWriteRequest({
+    required this.location,
+    required this.contents,
+    required this.name,
+    required this.granted,
+    required this.canRemember,
+  });
+
+  final bindings.GhosttyClipboardLocation location;
+  final Map<String, Uint8List> contents;
+  final String name;
+  final bool granted;
+  final bool canRemember;
+}
+
+final class VtClipboardWriteReply {
+  const VtClipboardWriteReply(this.result, {this.remember = false});
+
+  final bindings.GhosttyClipboardWriteResult result;
+  final bool remember;
+}
+
+/// A normalized synchronous clipboard read requested by the running program.
+final class VtClipboardReadRequest {
+  const VtClipboardReadRequest({
+    required this.location,
+    required this.mimes,
+    required this.listAvailable,
+    required this.name,
+    required this.granted,
+    required this.canRemember,
+  });
+
+  final bindings.GhosttyClipboardLocation location;
+  final List<String> mimes;
+  final bool listAvailable;
+  final String name;
+  final bool granted;
+  final bool canRemember;
+}
+
+final class VtClipboardReadReply {
+  const VtClipboardReadReply(
+    this.result, {
+    this.contents = const <String, List<int>>{},
+    this.available = const <String>[],
+    this.remember = false,
+  });
+
+  final bindings.GhosttyClipboardReadResult result;
+  final Map<String, List<int>> contents;
+  final List<String> available;
+  final bool remember;
+}
+
+/// Captured unsupported terminal string sequence.
+final class VtUnknownSequence {
+  const VtUnknownSequence({
+    required this.tag,
+    required this.content,
+    required this.truncated,
+  });
+
+  final bindings.GhosttyTerminalUnknownSequenceTag tag;
+  final Uint8List content;
+  final bool truncated;
+}
+
 /// Stateful VT terminal emulator instance.
 final class VtTerminal {
   VtTerminal({required int cols, required int rows, int maxScrollback = 10_000})
@@ -2909,12 +3060,166 @@ final class VtTerminal {
         maxScrollback: maxScrollback,
       );
 
+  VtTerminal._fromHandle(this._handle)
+    : _cols = _queryUint16(
+        _handle,
+        bindings.GhosttyTerminalData.GHOSTTY_TERMINAL_DATA_COLS,
+      ),
+      _rows = _queryUint16(
+        _handle,
+        bindings.GhosttyTerminalData.GHOSTTY_TERMINAL_DATA_ROWS,
+      ),
+      _maxScrollback =
+          _queryOptionalSize(
+            _handle,
+            bindings
+                .GhosttyTerminalData
+                .GHOSTTY_TERMINAL_DATA_SCROLLBACK_MAX_LINES,
+          ) ??
+          0;
+
   final bindings.GhosttyTerminal _handle;
   final Set<VtTerminalFormatter> _formatters = <VtTerminalFormatter>{};
   bool _closed = false;
   int _cols;
   int _rows;
   final int _maxScrollback;
+
+  ffi.NativeCallable<bindings.GhosttyMimeReaderFnFunction>?
+  _pasteReaderCallable;
+  Map<String, Uint8List>? _activePasteContents;
+
+  ffi.NativeCallable<bindings.GhosttyTerminalClipboardWriteFnFunction>?
+  _clipboardWriteCallable;
+  VtClipboardWriteReply Function(VtClipboardWriteRequest request)?
+  _onClipboardWrite;
+
+  /// Handles program-originated clipboard writes synchronously.
+  VtClipboardWriteReply Function(VtClipboardWriteRequest request)?
+  get onClipboardWrite => _onClipboardWrite;
+  set onClipboardWrite(
+    VtClipboardWriteReply Function(VtClipboardWriteRequest request)? callback,
+  ) {
+    _ensureOpen();
+    _onClipboardWrite = callback;
+    _clipboardWriteCallable?.close();
+    _clipboardWriteCallable = null;
+    if (callback != null) {
+      _clipboardWriteCallable =
+          ffi.NativeCallable<
+            bindings.GhosttyTerminalClipboardWriteFnFunction
+          >.isolateLocal(_nativeClipboardWrite);
+    }
+    _setCallbackOption(
+      bindings.GhosttyTerminalOption.GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE,
+      _clipboardWriteCallable?.nativeFunction,
+    );
+  }
+
+  ffi.NativeCallable<bindings.GhosttyTerminalClipboardReadFnFunction>?
+  _clipboardReadCallable;
+  VtClipboardReadReply Function(VtClipboardReadRequest request)?
+  _onClipboardRead;
+
+  /// Handles program-originated clipboard reads synchronously.
+  ///
+  /// Installing this also enables Kitty paste events (mode 5522).
+  VtClipboardReadReply Function(VtClipboardReadRequest request)?
+  get onClipboardRead => _onClipboardRead;
+  set onClipboardRead(
+    VtClipboardReadReply Function(VtClipboardReadRequest request)? callback,
+  ) {
+    _ensureOpen();
+    _onClipboardRead = callback;
+    _clipboardReadCallable?.close();
+    _clipboardReadCallable = null;
+    if (callback != null) {
+      _clipboardReadCallable =
+          ffi.NativeCallable<
+            bindings.GhosttyTerminalClipboardReadFnFunction
+          >.isolateLocal(_nativeClipboardRead);
+    }
+    _setCallbackOption(
+      bindings.GhosttyTerminalOption.GHOSTTY_TERMINAL_OPT_CLIPBOARD_READ,
+      _clipboardReadCallable?.nativeFunction,
+    );
+  }
+
+  ffi.NativeCallable<bindings.GhosttyTerminalUnknownSequenceFnFunction>?
+  _unknownSequenceCallable;
+  void Function(VtUnknownSequence sequence)? _onUnknownSequence;
+
+  void Function(VtUnknownSequence sequence)? get onUnknownSequence =>
+      _onUnknownSequence;
+  set onUnknownSequence(void Function(VtUnknownSequence sequence)? callback) {
+    _ensureOpen();
+    _onUnknownSequence = callback;
+    _unknownSequenceCallable?.close();
+    _unknownSequenceCallable = null;
+    if (callback != null) {
+      _unknownSequenceCallable =
+          ffi.NativeCallable<
+            bindings.GhosttyTerminalUnknownSequenceFnFunction
+          >.isolateLocal(_nativeUnknownSequence);
+    }
+    _setCallbackOption(
+      bindings.GhosttyTerminalOption.GHOSTTY_TERMINAL_OPT_UNKNOWN_SEQUENCE,
+      _unknownSequenceCallable?.nativeFunction,
+    );
+  }
+
+  /// Maximum bytes retained for unsupported sequences; zero disables capture.
+  set unknownSequenceMaxBytes(int value) {
+    _terminalSetSize(
+      bindings.GhosttyTerminalOption.GHOSTTY_TERMINAL_OPT_UNKNOWN_MAX_BYTES,
+      value,
+    );
+  }
+
+  void _setCallbackOption(
+    bindings.GhosttyTerminalOption option,
+    ffi.Pointer<ffi.NativeFunction>? callback,
+  ) {
+    _checkResult(
+      bindings.ghostty_terminal_set(
+        _handle,
+        option,
+        callback?.cast() ?? ffi.nullptr,
+      ),
+      'ghostty_terminal_set(callback)',
+    );
+  }
+
+  static int _queryUint16(
+    bindings.GhosttyTerminal terminal,
+    bindings.GhosttyTerminalData data,
+  ) {
+    final out = calloc<ffi.Uint16>();
+    try {
+      _checkResult(
+        bindings.ghostty_terminal_get(terminal, data, out.cast()),
+        'ghostty_terminal_get',
+      );
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  static int? _queryOptionalSize(
+    bindings.GhosttyTerminal terminal,
+    bindings.GhosttyTerminalData data,
+  ) {
+    final out = calloc<ffi.Size>();
+    try {
+      final result = bindings.ghostty_terminal_get(terminal, data, out.cast());
+      if (result == bindings.GhosttyResult.GHOSTTY_NO_VALUE) return null;
+      _checkResult(result, 'ghostty_terminal_get');
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
 
   // --- Terminal effect callbacks ---
 
@@ -3526,6 +3831,90 @@ final class VtTerminal {
     bindings.GhosttyTerminalData.GHOSTTY_TERMINAL_DATA_CURSOR_VISIBLE,
   );
 
+  /// Whether the VT parser is at a stateless boundary.
+  bool get vtGround => _terminalBool(
+    bindings.GhosttyTerminalData.GHOSTTY_TERMINAL_DATA_VT_GROUND,
+  );
+
+  /// Whether the cursor is inside a semantic shell prompt or input area.
+  bool get cursorAtPrompt => _terminalBool(
+    bindings.GhosttyTerminalData.GHOSTTY_TERMINAL_DATA_CURSOR_AT_PROMPT,
+  );
+
+  /// Maximum retained replay-safe continuation bytes; zero disables tracking.
+  int get continuationMaxBytes => _terminalSize(
+    bindings.GhosttyTerminalData.GHOSTTY_TERMINAL_DATA_CONTINUATION_MAX_BYTES,
+  );
+
+  set continuationMaxBytes(int value) {
+    _terminalSetSize(
+      bindings
+          .GhosttyTerminalOption
+          .GHOSTTY_TERMINAL_OPT_CONTINUATION_MAX_BYTES,
+      value,
+    );
+  }
+
+  /// Maximum decoded bytes accepted for one Kitty clipboard write.
+  int get clipboardWriteMaxBytes => _terminalSize(
+    bindings
+        .GhosttyTerminalData
+        .GHOSTTY_TERMINAL_DATA_CLIPBOARD_WRITE_MAX_BYTES,
+  );
+
+  set clipboardWriteMaxBytes(int value) {
+    _terminalSetSize(
+      bindings
+          .GhosttyTerminalOption
+          .GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE_MAX_BYTES,
+      value,
+    );
+  }
+
+  /// Enables the potentially unsafe CSI 21 t title-report response.
+  set titleReportEnabled(bool value) {
+    _terminalSetBool(
+      bindings.GhosttyTerminalOption.GHOSTTY_TERMINAL_OPT_TITLE_REPORT,
+      value,
+    );
+  }
+
+  /// Sets the advertised terminfo name used by XTGETTCAP `TN` queries.
+  set terminfoName(String? value) {
+    _ensureOpen();
+    if (value == null || value.isEmpty) {
+      _checkResult(
+        bindings.ghostty_terminal_set(
+          _handle,
+          bindings.GhosttyTerminalOption.GHOSTTY_TERMINAL_OPT_TERMINFO_NAME,
+          ffi.nullptr,
+        ),
+        'ghostty_terminal_set(terminfo name)',
+      );
+      return;
+    }
+    final bytes = utf8.encode(value);
+    final data = calloc<ffi.Uint8>(bytes.length);
+    final string = calloc<bindings.GhosttyString>();
+    try {
+      data.asTypedList(bytes.length).setAll(0, bytes);
+      string.ref
+        ..ptr = data
+        ..len = bytes.length;
+      _checkResult(
+        bindings.ghostty_terminal_set(
+          _handle,
+          bindings.GhosttyTerminalOption.GHOSTTY_TERMINAL_OPT_TERMINFO_NAME,
+          string.cast(),
+        ),
+        'ghostty_terminal_set(terminfo name)',
+      );
+    } finally {
+      calloc.free(string);
+      calloc.free(data);
+    }
+  }
+
   /// The terminal title as last set by escape sequences (e.g. OSC 0 / OSC 2).
   ///
   /// Returns an empty string when no title has been set.
@@ -3686,6 +4075,27 @@ final class VtTerminal {
           config.cast(),
         ),
         'ghostty_terminal_set(mode)',
+      );
+    } finally {
+      calloc.free(config);
+    }
+  }
+
+  /// Sets both the current value and full-reset default for [mode].
+  void setModeDefault(VtMode mode, bool value) {
+    _ensureOpen();
+    final config = calloc<bindings.GhosttyTerminalModeConfig>();
+    config.ref
+      ..mode = mode.packed
+      ..value = value;
+    try {
+      _checkResult(
+        bindings.ghostty_terminal_set(
+          _handle,
+          bindings.GhosttyTerminalOption.GHOSTTY_TERMINAL_OPT_MODE_DEFAULT,
+          config.cast(),
+        ),
+        'ghostty_terminal_set(mode default)',
       );
     } finally {
       calloc.free(config);
@@ -3895,6 +4305,20 @@ final class VtTerminal {
     }
   }
 
+  void _terminalSetSize(bindings.GhosttyTerminalOption option, int value) {
+    _ensureOpen();
+    final out = calloc<ffi.Size>();
+    try {
+      out.value = _checkNonNegative(value, 'value');
+      _checkResult(
+        bindings.ghostty_terminal_set(_handle, option, out.cast()),
+        'ghostty_terminal_set',
+      );
+    } finally {
+      calloc.free(out);
+    }
+  }
+
   /// Reads a borrowed [GhosttyString] from the terminal and copies it into a
   /// Dart [String].
   ///
@@ -3934,6 +4358,399 @@ final class VtTerminal {
   /// Writes text bytes into the terminal stream.
   void write(String text, {Encoding encoding = utf8}) {
     writeBytes(encoding.encode(text));
+  }
+
+  /// Writes the shortest prefix that brings the VT parser back to ground.
+  VtWriteUntilGroundResult writeUntilGroundBytes(List<int> bytes) {
+    _ensureOpen();
+    final data = bytes.isEmpty ? ffi.nullptr : calloc<ffi.Uint8>(bytes.length);
+    final consumed = calloc<ffi.Size>();
+    try {
+      if (bytes.isNotEmpty) data.asTypedList(bytes.length).setAll(0, bytes);
+      final result = bindings.ghostty_terminal_vt_write_until_ground(
+        _handle,
+        data,
+        bytes.length,
+        consumed,
+      );
+      if (result != bindings.GhosttyResult.GHOSTTY_SUCCESS &&
+          result != bindings.GhosttyResult.GHOSTTY_NO_VALUE) {
+        _checkResult(result, 'ghostty_terminal_vt_write_until_ground');
+      }
+      return VtWriteUntilGroundResult(
+        consumed: consumed.value,
+        reachedGround: result == bindings.GhosttyResult.GHOSTTY_SUCCESS,
+      );
+    } finally {
+      calloc.free(consumed);
+      if (data != ffi.nullptr) calloc.free(data);
+    }
+  }
+
+  VtWriteUntilGroundResult writeUntilGround(
+    String text, {
+    Encoding encoding = utf8,
+  }) => writeUntilGroundBytes(encoding.encode(text));
+
+  /// Pastes MIME-typed content using the terminal's live paste modes.
+  ///
+  /// Bracketed paste and Kitty paste events are selected by libghostty from
+  /// terminal state. Unsafe plain text is returned as [VtTerminalPasteResult]
+  /// with `rejected` set; retry with [allowUnsafe] only after user consent.
+  VtTerminalPasteResult paste(
+    Map<String, List<int>> contents, {
+    bindings.GhosttyClipboardLocation location =
+        bindings.GhosttyClipboardLocation.GHOSTTY_CLIPBOARD_LOCATION_STANDARD,
+    bindings.GhosttyPasteSource source =
+        bindings.GhosttyPasteSource.GHOSTTY_PASTE_SOURCE_CLIPBOARD,
+    bool allowUnsafe = false,
+  }) {
+    _ensureOpen();
+    if (_activePasteContents != null) {
+      throw StateError('A terminal paste cannot be re-entered.');
+    }
+
+    final copied = <String, Uint8List>{
+      for (final entry in contents.entries)
+        entry.key: Uint8List.fromList(entry.value),
+    };
+    final mimes = copied.keys.toList(growable: false);
+    final nativePaste = calloc<bindings.GhosttyPaste>();
+    final nativeMimes = mimes.isEmpty
+        ? ffi.nullptr
+        : calloc<bindings.GhosttyString>(mimes.length);
+    final mimeStorage = <ffi.Pointer<ffi.Uint8>>[];
+    final written = calloc<ffi.Bool>();
+    try {
+      for (var i = 0; i < mimes.length; i++) {
+        final bytes = utf8.encode(mimes[i]);
+        final ptr = calloc<ffi.Uint8>(bytes.length);
+        ptr.asTypedList(bytes.length).setAll(0, bytes);
+        mimeStorage.add(ptr);
+        (nativeMimes + i).ref
+          ..ptr = ptr
+          ..len = bytes.length;
+      }
+      _pasteReaderCallable ??=
+          ffi.NativeCallable<bindings.GhosttyMimeReaderFnFunction>.isolateLocal(
+            _nativeReadPaste,
+            exceptionalReturn: false,
+          );
+      nativePaste.ref
+        ..size = ffi.sizeOf<bindings.GhosttyPaste>()
+        ..locationAsInt = location.value
+        ..sourceAsInt = source.value
+        ..mimes = nativeMimes
+        ..mimes_len = mimes.length
+        ..reader.read = _pasteReaderCallable!.nativeFunction
+        ..reader.userdata = ffi.nullptr
+        ..allow_unsafe = allowUnsafe;
+      _activePasteContents = copied;
+      final result = bindings.ghostty_terminal_paste(
+        _handle,
+        nativePaste,
+        written,
+      );
+      if (result == bindings.GhosttyResult.GHOSTTY_REJECTED) {
+        return const VtTerminalPasteResult(written: false, rejected: true);
+      }
+      _checkResult(result, 'ghostty_terminal_paste');
+      return VtTerminalPasteResult(written: written.value, rejected: false);
+    } finally {
+      _activePasteContents = null;
+      calloc.free(written);
+      for (final ptr in mimeStorage) {
+        calloc.free(ptr);
+      }
+      if (nativeMimes != ffi.nullptr) calloc.free(nativeMimes);
+      calloc.free(nativePaste);
+    }
+  }
+
+  /// Convenience terminal-aware UTF-8 text paste.
+  VtTerminalPasteResult pasteText(
+    String text, {
+    String mime = 'text/plain',
+    bindings.GhosttyClipboardLocation location =
+        bindings.GhosttyClipboardLocation.GHOSTTY_CLIPBOARD_LOCATION_STANDARD,
+    bindings.GhosttyPasteSource source =
+        bindings.GhosttyPasteSource.GHOSTTY_PASTE_SOURCE_CLIPBOARD,
+    bool allowUnsafe = false,
+  }) => paste(
+    <String, List<int>>{mime: utf8.encode(text)},
+    location: location,
+    source: source,
+    allowUnsafe: allowUnsafe,
+  );
+
+  bool _nativeReadPaste(
+    ffi.Pointer<ffi.Void> userdata,
+    bindings.GhosttyString mime,
+    bindings.GhosttyWriter writer,
+  ) {
+    final contents = _activePasteContents;
+    if (contents == null) return false;
+    final name = utf8.decode(
+      mime.ptr.asTypedList(mime.len),
+      allowMalformed: true,
+    );
+    final data = contents[name];
+    if (data == null) return false;
+    if (data.isEmpty) return true;
+    final nativeData = calloc<ffi.Uint8>(data.length);
+    try {
+      nativeData.asTypedList(data.length).setAll(0, data);
+      final write = writer.write
+          .asFunction<bindings.DartGhosttyWriterFnFunction>();
+      return write(writer.userdata, nativeData, data.length);
+    } finally {
+      calloc.free(nativeData);
+    }
+  }
+
+  static String _copyNativeString(bindings.GhosttyString value) {
+    if (value.len == 0 || value.ptr == ffi.nullptr) return '';
+    return utf8.decode(value.ptr.asTypedList(value.len), allowMalformed: true);
+  }
+
+  void _nativeClipboardWrite(
+    bindings.GhosttyTerminal terminal,
+    ffi.Pointer<ffi.Void> userdata,
+    ffi.Pointer<bindings.GhosttyClipboardWrite> write,
+  ) {
+    final callback = _onClipboardWrite;
+    if (callback == null) return;
+    final contents = <String, Uint8List>{};
+    for (var i = 0; i < write.ref.contents_len; i++) {
+      final content = (write.ref.contents + i).ref;
+      contents[_copyNativeString(content.mime)] = Uint8List.fromList(
+        content.data.len == 0
+            ? const <int>[]
+            : content.data.ptr.asTypedList(content.data.len),
+      );
+    }
+    final request = VtClipboardWriteRequest(
+      location: write.ref.location,
+      contents: Map<String, Uint8List>.unmodifiable(contents),
+      name: _copyNativeString(write.ref.name),
+      granted: write.ref.granted,
+      canRemember: write.ref.can_remember,
+    );
+    late final VtClipboardWriteReply response;
+    try {
+      response = callback(request);
+    } catch (_) {
+      response = const VtClipboardWriteReply(
+        bindings
+            .GhosttyClipboardWriteResult
+            .GHOSTTY_CLIPBOARD_WRITE_RESULT_DENIED,
+      );
+    }
+    final nativeReply = calloc<bindings.GhosttyClipboardWriteReply>();
+    try {
+      nativeReply.ref
+        ..size = ffi.sizeOf<bindings.GhosttyClipboardWriteReply>()
+        ..resultAsInt = response.result.value
+        ..remember = response.remember;
+      write.ref.reply
+          .asFunction<bindings.DartGhosttyClipboardWriteReplyFnFunction>()(
+        write,
+        nativeReply,
+      );
+    } finally {
+      calloc.free(nativeReply);
+    }
+  }
+
+  void _nativeClipboardRead(
+    bindings.GhosttyTerminal terminal,
+    ffi.Pointer<ffi.Void> userdata,
+    ffi.Pointer<bindings.GhosttyClipboardRead> read,
+  ) {
+    final callback = _onClipboardRead;
+    if (callback == null) return;
+    final mimes = <String>[
+      for (var i = 0; i < read.ref.mimes_len; i++)
+        _copyNativeString((read.ref.mimes + i).ref),
+    ];
+    final request = VtClipboardReadRequest(
+      location: read.ref.location,
+      mimes: List<String>.unmodifiable(mimes),
+      listAvailable: read.ref.list,
+      name: _copyNativeString(read.ref.name),
+      granted: read.ref.granted,
+      canRemember: read.ref.can_remember,
+    );
+    late final VtClipboardReadReply response;
+    try {
+      response = callback(request);
+    } catch (_) {
+      response = const VtClipboardReadReply(
+        bindings
+            .GhosttyClipboardReadResult
+            .GHOSTTY_CLIPBOARD_READ_RESULT_DENIED,
+      );
+    }
+
+    final nativeReply = calloc<bindings.GhosttyClipboardReadReply>();
+    final nativeContents = response.contents.isEmpty
+        ? ffi.nullptr
+        : calloc<bindings.GhosttyClipboardContent>(response.contents.length);
+    final nativeAvailable = response.available.isEmpty
+        ? ffi.nullptr
+        : calloc<bindings.GhosttyString>(response.available.length);
+    final storage = <ffi.Pointer<ffi.Uint8>>[];
+    try {
+      var index = 0;
+      for (final entry in response.contents.entries) {
+        final mimeBytes = utf8.encode(entry.key);
+        final dataBytes = Uint8List.fromList(entry.value);
+        final mimePtr = calloc<ffi.Uint8>(mimeBytes.length);
+        final dataPtr = dataBytes.isEmpty
+            ? ffi.nullptr
+            : calloc<ffi.Uint8>(dataBytes.length);
+        mimePtr.asTypedList(mimeBytes.length).setAll(0, mimeBytes);
+        if (dataPtr != ffi.nullptr) {
+          dataPtr.asTypedList(dataBytes.length).setAll(0, dataBytes);
+        }
+        storage.add(mimePtr);
+        if (dataPtr != ffi.nullptr) storage.add(dataPtr);
+        (nativeContents + index).ref
+          ..mime.ptr = mimePtr
+          ..mime.len = mimeBytes.length
+          ..data.ptr = dataPtr
+          ..data.len = dataBytes.length;
+        index++;
+      }
+      for (var i = 0; i < response.available.length; i++) {
+        final bytes = utf8.encode(response.available[i]);
+        final ptr = calloc<ffi.Uint8>(bytes.length);
+        ptr.asTypedList(bytes.length).setAll(0, bytes);
+        storage.add(ptr);
+        (nativeAvailable + i).ref
+          ..ptr = ptr
+          ..len = bytes.length;
+      }
+      nativeReply.ref
+        ..size = ffi.sizeOf<bindings.GhosttyClipboardReadReply>()
+        ..resultAsInt = response.result.value
+        ..contents = nativeContents
+        ..contents_len = response.contents.length
+        ..available = nativeAvailable
+        ..available_len = response.available.length
+        ..remember = response.remember;
+      read.ref.reply
+          .asFunction<bindings.DartGhosttyClipboardReadReplyFnFunction>()(
+        read,
+        nativeReply,
+      );
+    } finally {
+      for (final ptr in storage) {
+        calloc.free(ptr);
+      }
+      if (nativeAvailable != ffi.nullptr) calloc.free(nativeAvailable);
+      if (nativeContents != ffi.nullptr) calloc.free(nativeContents);
+      calloc.free(nativeReply);
+    }
+  }
+
+  void _nativeUnknownSequence(
+    bindings.GhosttyTerminal terminal,
+    ffi.Pointer<ffi.Void> userdata,
+    ffi.Pointer<bindings.GhosttyTerminalUnknownSequence> sequence,
+  ) {
+    final callback = _onUnknownSequence;
+    if (callback == null) return;
+    final value = sequence.ref.value.apc;
+    try {
+      callback(
+        VtUnknownSequence(
+          tag: sequence.ref.tag,
+          content: Uint8List.fromList(
+            value.content.len == 0
+                ? const <int>[]
+                : value.content.ptr.asTypedList(value.content.len),
+          ),
+          truncated: value.truncated,
+        ),
+      );
+    } catch (_) {
+      // User callbacks must not throw across the native ABI boundary.
+    }
+  }
+
+  /// Copies the replay-safe unfinished VT/UTF-8 suffix.
+  Uint8List continuationBytes() {
+    _ensureOpen();
+    final written = calloc<ffi.Size>();
+    try {
+      final probe = bindings.ghostty_terminal_continuation_buf(
+        _handle,
+        ffi.nullptr,
+        0,
+        written,
+      );
+      if (probe != bindings.GhosttyResult.GHOSTTY_OUT_OF_SPACE &&
+          probe != bindings.GhosttyResult.GHOSTTY_SUCCESS) {
+        _checkResult(probe, 'ghostty_terminal_continuation_buf(size probe)');
+      }
+      final required = written.value;
+      if (required == 0) return Uint8List(0);
+      final buffer = calloc<ffi.Uint8>(required);
+      try {
+        _checkResult(
+          bindings.ghostty_terminal_continuation_buf(
+            _handle,
+            buffer,
+            required,
+            written,
+          ),
+          'ghostty_terminal_continuation_buf',
+        );
+        return Uint8List.fromList(buffer.asTypedList(written.value));
+      } finally {
+        calloc.free(buffer);
+      }
+    } finally {
+      calloc.free(written);
+    }
+  }
+
+  /// Encodes the complete terminal state into Ghostty's snapshot format.
+  Uint8List snapshotBytes() {
+    _ensureOpen();
+    final written = calloc<ffi.Size>();
+    try {
+      final probe = bindings.ghostty_snapshot_encode_buf(
+        _handle,
+        ffi.nullptr,
+        0,
+        written,
+      );
+      if (probe != bindings.GhosttyResult.GHOSTTY_OUT_OF_SPACE &&
+          probe != bindings.GhosttyResult.GHOSTTY_SUCCESS) {
+        _checkResult(probe, 'ghostty_snapshot_encode_buf(size probe)');
+      }
+      final required = written.value;
+      if (required == 0) return Uint8List(0);
+      final buffer = calloc<ffi.Uint8>(required);
+      try {
+        _checkResult(
+          bindings.ghostty_snapshot_encode_buf(
+            _handle,
+            buffer,
+            required,
+            written,
+          ),
+          'ghostty_snapshot_encode_buf',
+        );
+        return Uint8List.fromList(buffer.asTypedList(written.value));
+      } finally {
+        calloc.free(buffer);
+      }
+    } finally {
+      calloc.free(written);
+    }
   }
 
   /// Performs a full terminal reset while preserving dimensions.
@@ -4324,7 +5141,285 @@ final class VtTerminal {
       _xtversionResponseLen = 0;
     }
 
+    _pasteReaderCallable?.close();
+    _pasteReaderCallable = null;
+    _activePasteContents = null;
+
+    _clipboardWriteCallable?.close();
+    _clipboardWriteCallable = null;
+    _onClipboardWrite = null;
+    _clipboardReadCallable?.close();
+    _clipboardReadCallable = null;
+    _onClipboardRead = null;
+    _unknownSequenceCallable?.close();
+    _unknownSequenceCallable = null;
+    _onUnknownSequence = null;
+
     bindings.ghostty_terminal_free(_handle);
+    _closed = true;
+  }
+}
+
+/// Progress from one incrementally restored snapshot history page.
+final class VtSnapshotProgress {
+  const VtSnapshotProgress({
+    required this.screen,
+    required this.rows,
+    required this.remaining,
+  });
+
+  final bindings.GhosttyTerminalScreen screen;
+  final int rows;
+  final int remaining;
+}
+
+/// One-shot and incremental decoder for Ghostty terminal snapshots.
+final class VtSnapshotDecoder {
+  factory VtSnapshotDecoder(List<int> bytes) {
+    final source = bytes.isEmpty
+        ? ffi.nullptr
+        : calloc<ffi.Uint8>(bytes.length);
+    if (bytes.isNotEmpty) source.asTypedList(bytes.length).setAll(0, bytes);
+    final out = calloc<bindings.GhosttySnapshotDecoder>();
+    try {
+      _checkResult(
+        bindings.ghostty_snapshot_decoder_new_buf(
+          ffi.nullptr,
+          out,
+          source,
+          bytes.length,
+        ),
+        'ghostty_snapshot_decoder_new_buf',
+      );
+      return VtSnapshotDecoder._(source, out.value);
+    } catch (_) {
+      if (source != ffi.nullptr) calloc.free(source);
+      rethrow;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  VtSnapshotDecoder._(this._source, this._handle);
+
+  final ffi.Pointer<ffi.Uint8> _source;
+  final bindings.GhosttySnapshotDecoder _handle;
+  bool _closed = false;
+  bool _started = false;
+  VtTerminal? _terminal;
+
+  void _ensureOpen() {
+    if (_closed) throw StateError('VtSnapshotDecoder is already closed.');
+  }
+
+  set maxContinuationBytes(int value) {
+    _setSizeOption(
+      bindings
+          .GhosttySnapshotDecoderOption
+          .GHOSTTY_SNAPSHOT_DECODER_OPT_MAX_CONTINUATION_BYTES,
+      value,
+    );
+  }
+
+  set retainContinuation(bool value) {
+    _ensureOpen();
+    final native = calloc<ffi.Bool>()..value = value;
+    try {
+      _checkResult(
+        bindings.ghostty_snapshot_decoder_set(
+          _handle,
+          bindings
+              .GhosttySnapshotDecoderOption
+              .GHOSTTY_SNAPSHOT_DECODER_OPT_RETAIN_CONTINUATION,
+          native.cast(),
+        ),
+        'ghostty_snapshot_decoder_set(retain continuation)',
+      );
+    } finally {
+      calloc.free(native);
+    }
+  }
+
+  void _setSizeOption(bindings.GhosttySnapshotDecoderOption option, int value) {
+    _ensureOpen();
+    final native = calloc<ffi.Size>()
+      ..value = _checkNonNegative(value, 'value');
+    try {
+      _checkResult(
+        bindings.ghostty_snapshot_decoder_set(_handle, option, native.cast()),
+        'ghostty_snapshot_decoder_set',
+      );
+    } finally {
+      calloc.free(native);
+    }
+  }
+
+  int get maxContinuationBytes => _getSize(
+    bindings
+        .GhosttySnapshotDecoderData
+        .GHOSTTY_SNAPSHOT_DECODER_DATA_MAX_CONTINUATION_BYTES,
+  )!;
+
+  bool get retainsContinuation => _getBool(
+    bindings
+        .GhosttySnapshotDecoderData
+        .GHOSTTY_SNAPSHOT_DECODER_DATA_RETAIN_CONTINUATION,
+  )!;
+
+  int? get sourceOffset => _getSize(
+    bindings
+        .GhosttySnapshotDecoderData
+        .GHOSTTY_SNAPSHOT_DECODER_DATA_SOURCE_OFFSET,
+  );
+
+  int? get primaryHistoryRows => _getUint64(
+    bindings
+        .GhosttySnapshotDecoderData
+        .GHOSTTY_SNAPSHOT_DECODER_DATA_HISTORY_ROWS_PRIMARY,
+  );
+
+  int? get alternateHistoryRows => _getUint64(
+    bindings
+        .GhosttySnapshotDecoderData
+        .GHOSTTY_SNAPSHOT_DECODER_DATA_HISTORY_ROWS_ALTERNATE,
+  );
+
+  int? _getSize(bindings.GhosttySnapshotDecoderData data) {
+    final out = calloc<ffi.Size>();
+    try {
+      final result = bindings.ghostty_snapshot_decoder_get(
+        _handle,
+        data,
+        out.cast(),
+      );
+      if (result == bindings.GhosttyResult.GHOSTTY_NO_VALUE) return null;
+      _checkResult(result, 'ghostty_snapshot_decoder_get');
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  int? _getUint64(bindings.GhosttySnapshotDecoderData data) {
+    final out = calloc<ffi.Uint64>();
+    try {
+      final result = bindings.ghostty_snapshot_decoder_get(
+        _handle,
+        data,
+        out.cast(),
+      );
+      if (result == bindings.GhosttyResult.GHOSTTY_NO_VALUE) return null;
+      _checkResult(result, 'ghostty_snapshot_decoder_get');
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  bool? _getBool(bindings.GhosttySnapshotDecoderData data) {
+    final out = calloc<ffi.Bool>();
+    try {
+      final result = bindings.ghostty_snapshot_decoder_get(
+        _handle,
+        data,
+        out.cast(),
+      );
+      if (result == bindings.GhosttyResult.GHOSTTY_NO_VALUE) return null;
+      _checkResult(result, 'ghostty_snapshot_decoder_get');
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  /// Decodes the active renderable state and returns before older history.
+  VtTerminal ready() =>
+      _createTerminal(bindings.ghostty_snapshot_decoder_ready);
+
+  /// Decodes and validates the complete snapshot in one operation.
+  VtTerminal decode() =>
+      _createTerminal(bindings.ghostty_snapshot_decoder_decode);
+
+  VtTerminal _createTerminal(
+    bindings.GhosttyResult Function(
+      bindings.GhosttySnapshotDecoder,
+      ffi.Pointer<bindings.GhosttyTerminal>,
+    )
+    operation,
+  ) {
+    _ensureOpen();
+    if (_started) throw StateError('Snapshot decoding has already started.');
+    final out = calloc<bindings.GhosttyTerminal>();
+    try {
+      _checkResult(operation(_handle, out), 'ghostty_snapshot_decoder');
+      _started = true;
+      return _terminal = VtTerminal._fromHandle(out.value);
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  /// Restores one history page, or returns `null` after FINISH validates.
+  VtSnapshotProgress? next() {
+    _ensureOpen();
+    if (_terminal == null) {
+      throw StateError('Call ready() before incremental history decoding.');
+    }
+    final result = bindings.ghostty_snapshot_decoder_next(_handle);
+    if (result == bindings.GhosttyResult.GHOSTTY_NO_VALUE) return null;
+    _checkResult(result, 'ghostty_snapshot_decoder_next');
+
+    final screen = calloc<ffi.UnsignedInt>();
+    final rows = calloc<ffi.Size>();
+    final remaining = calloc<ffi.Uint32>();
+    final keys = calloc<ffi.UnsignedInt>(3);
+    final values = calloc<ffi.Pointer<ffi.Void>>(3);
+    final written = calloc<ffi.Size>();
+    try {
+      keys[0] = bindings
+          .GhosttySnapshotDecoderData
+          .GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_SCREEN
+          .value;
+      keys[1] = bindings
+          .GhosttySnapshotDecoderData
+          .GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_ROWS
+          .value;
+      keys[2] = bindings
+          .GhosttySnapshotDecoderData
+          .GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_REMAINING
+          .value;
+      values[0] = screen.cast();
+      values[1] = rows.cast();
+      values[2] = remaining.cast();
+      _checkResult(
+        bindings.ghostty_snapshot_decoder_get_multi(
+          _handle,
+          3,
+          keys,
+          values,
+          written,
+        ),
+        'ghostty_snapshot_decoder_get_multi',
+      );
+      return VtSnapshotProgress(
+        screen: bindings.GhosttyTerminalScreen.fromValue(screen.value),
+        rows: rows.value,
+        remaining: remaining.value,
+      );
+    } finally {
+      calloc.free(written);
+      calloc.free(values);
+      calloc.free(keys);
+      calloc.free(remaining);
+      calloc.free(rows);
+      calloc.free(screen);
+    }
+  }
+
+  void close() {
+    if (_closed) return;
+    bindings.ghostty_snapshot_decoder_free(_handle);
+    if (_source != ffi.nullptr) calloc.free(_source);
     _closed = true;
   }
 }
@@ -4362,6 +5457,15 @@ final class VtRenderState {
     _checkResult(
       bindings.ghostty_render_state_update(_handle, _terminal._handle),
       'ghostty_render_state_update',
+    );
+  }
+
+  /// Marks the completed frame and every row clean.
+  void clean() {
+    _ensureOpen();
+    _checkResult(
+      bindings.ghostty_render_state_clean(_handle),
+      'ghostty_render_state_clean',
     );
   }
 
@@ -4533,17 +5637,35 @@ final class VtRenderState {
         )
       : null;
 
-  /// A lightweight cursor snapshot for this render state.
-  VtRenderCursorSnapshot get cursorSnapshot => VtRenderCursorSnapshot(
-    visualStyle: cursorVisualStyle,
-    visible: cursorVisible,
-    blinking: cursorBlinking,
-    passwordInput: cursorPasswordInput,
-    hasViewportPosition: cursorHasViewportPosition,
-    viewportX: cursorViewportX,
-    viewportY: cursorViewportY,
-    onWideTail: cursorOnWideTail,
-  );
+  /// All cursor state fetched atomically through Ghostty's sized struct API.
+  VtRenderCursorSnapshot get cursorSnapshot {
+    _ensureOpen();
+    final out = calloc<bindings.GhosttyRenderStateCursor>();
+    try {
+      out.ref.size = ffi.sizeOf<bindings.GhosttyRenderStateCursor>();
+      _checkResult(
+        bindings.ghostty_render_state_get(
+          _handle,
+          bindings.GhosttyRenderStateData.GHOSTTY_RENDER_STATE_DATA_CURSOR,
+          out.cast(),
+        ),
+        'ghostty_render_state_get(cursor)',
+      );
+      final hasPosition = out.ref.viewport_has_value;
+      return VtRenderCursorSnapshot(
+        visualStyle: out.ref.visual_style,
+        visible: out.ref.visible,
+        blinking: out.ref.blinking,
+        passwordInput: out.ref.password_input,
+        hasViewportPosition: hasPosition,
+        viewportX: hasPosition ? out.ref.viewport_x : null,
+        viewportY: hasPosition ? out.ref.viewport_y : null,
+        onWideTail: hasPosition ? out.ref.wide_tail : null,
+      );
+    } finally {
+      calloc.free(out);
+    }
+  }
 
   int _renderStateUint16(bindings.GhosttyRenderStateData data) {
     final out = calloc<ffi.Uint16>();
@@ -4602,6 +5724,43 @@ final class VtRenderState {
       if (iteratorHandle != ffi.nullptr) {
         bindings.ghostty_render_state_row_iterator_free(iteratorHandle);
       }
+      calloc.free(iterator);
+    }
+  }
+
+  /// Visits only rows Ghostty says require redraw, with viewport coordinates.
+  void visitDirtyRows(void Function(int y, VtRenderRowCursor row) visitor) {
+    _ensureOpen();
+    final iterator = calloc<bindings.GhosttyRenderStateRowIterator>();
+    final y = calloc<ffi.Uint16>();
+    try {
+      _checkResult(
+        bindings.ghostty_render_state_row_iterator_new(ffi.nullptr, iterator),
+        'ghostty_render_state_row_iterator_new',
+      );
+      final iteratorHandle = iterator.value;
+      _checkResult(
+        bindings.ghostty_render_state_get(
+          _handle,
+          bindings
+              .GhosttyRenderStateData
+              .GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR,
+          iterator.cast(),
+        ),
+        'ghostty_render_state_get',
+      );
+      while (bindings.ghostty_render_state_row_iterator_next_dirty(
+        iteratorHandle,
+        y,
+      )) {
+        visitor(y.value, VtRenderRowCursor._(iteratorHandle));
+      }
+    } finally {
+      final iteratorHandle = iterator.value;
+      if (iteratorHandle != ffi.nullptr) {
+        bindings.ghostty_render_state_row_iterator_free(iteratorHandle);
+      }
+      calloc.free(y);
       calloc.free(iterator);
     }
   }
@@ -5196,6 +6355,49 @@ final class VtTerminalFormatter {
     throw StateError(
       'VtTerminalFormatter output changed while formatting. Retry the call.',
     );
+  }
+
+  /// Streams formatted output to [write] as Ghostty produces it.
+  ///
+  /// Each chunk is copied because the native buffer is borrowed only during
+  /// the callback. A callback exception aborts formatting and is rethrown.
+  void formatTo(void Function(Uint8List chunk) write) {
+    _ensureOpen();
+    _terminal._ensureOpen();
+    Object? callbackError;
+    StackTrace? callbackStack;
+    bool nativeWrite(
+      ffi.Pointer<ffi.Void> userdata,
+      ffi.Pointer<ffi.Uint8> data,
+      int len,
+    ) {
+      try {
+        write(Uint8List.fromList(data.asTypedList(len)));
+        return true;
+      } catch (error, stack) {
+        callbackError = error;
+        callbackStack = stack;
+        return false;
+      }
+    }
+
+    final callable =
+        ffi.NativeCallable<bindings.GhosttyWriterFnFunction>.isolateLocal(
+          nativeWrite,
+          exceptionalReturn: false,
+        );
+    final writer = ffi.Struct.create<bindings.GhosttyWriter>()
+      ..write = callable.nativeFunction
+      ..userdata = ffi.nullptr;
+    try {
+      final result = bindings.ghostty_formatter_format(_handle, writer);
+      if (callbackError != null) {
+        Error.throwWithStackTrace(callbackError!, callbackStack!);
+      }
+      _checkResult(result, 'ghostty_formatter_format');
+    } finally {
+      callable.close();
+    }
   }
 
   /// Formats the terminal using `ghostty_formatter_format_alloc`.

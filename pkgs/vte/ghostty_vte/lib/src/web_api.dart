@@ -11,7 +11,10 @@ enum GhosttyResult {
   GHOSTTY_OUT_OF_MEMORY(-1),
   GHOSTTY_INVALID_VALUE(-2),
   GHOSTTY_OUT_OF_SPACE(-3),
-  GHOSTTY_NO_VALUE(-4);
+  GHOSTTY_NO_VALUE(-4),
+  GHOSTTY_IO_ERROR(-5),
+  GHOSTTY_LIMIT_EXCEEDED(-6),
+  GHOSTTY_REJECTED(-7);
 
   const GhosttyResult(this.value);
   final int value;
@@ -22,6 +25,9 @@ enum GhosttyResult {
     -2 => GHOSTTY_INVALID_VALUE,
     -3 => GHOSTTY_OUT_OF_SPACE,
     -4 => GHOSTTY_NO_VALUE,
+    -5 => GHOSTTY_IO_ERROR,
+    -6 => GHOSTTY_LIMIT_EXCEEDED,
+    -7 => GHOSTTY_REJECTED,
     _ => throw ArgumentError('Unknown value for GhosttyResult: $value'),
   };
 }
@@ -69,7 +75,11 @@ enum GhosttyOscCommandType {
   GHOSTTY_OSC_COMMAND_CONEMU_OUTPUT_ENVIRONMENT_VARIABLE(19),
   GHOSTTY_OSC_COMMAND_CONEMU_XTERM_EMULATION(20),
   GHOSTTY_OSC_COMMAND_CONEMU_COMMENT(21),
-  GHOSTTY_OSC_COMMAND_KITTY_TEXT_SIZING(22);
+  GHOSTTY_OSC_COMMAND_KITTY_TEXT_SIZING(22),
+  GHOSTTY_OSC_COMMAND_KITTY_CLIPBOARD_PROTOCOL(23),
+  GHOSTTY_OSC_COMMAND_KITTY_DND_PROTOCOL(24),
+  GHOSTTY_OSC_COMMAND_CONTEXT_SIGNAL(25),
+  GHOSTTY_OSC_COMMAND_KITTY_DESKTOP_NOTIFICATION(26);
 
   const GhosttyOscCommandType(this.value);
   final int value;
@@ -182,6 +192,86 @@ enum GhosttyFocusEvent {
     1 => GHOSTTY_FOCUS_LOST,
     _ => throw ArgumentError('Unknown value for GhosttyFocusEvent: $value'),
   };
+}
+
+enum GhosttyClipboardLocation {
+  GHOSTTY_CLIPBOARD_LOCATION_STANDARD(0),
+  GHOSTTY_CLIPBOARD_LOCATION_SELECTION(1),
+  GHOSTTY_CLIPBOARD_LOCATION_PRIMARY(2),
+  GHOSTTY_CLIPBOARD_LOCATION_MAX_VALUE(2147483647);
+
+  const GhosttyClipboardLocation(this.value);
+  final int value;
+
+  static GhosttyClipboardLocation fromValue(int value) =>
+      GhosttyClipboardLocation.values.firstWhere((item) => item.value == value);
+}
+
+enum GhosttyPasteSource {
+  GHOSTTY_PASTE_SOURCE_CLIPBOARD(0),
+  GHOSTTY_PASTE_SOURCE_TEXT(1),
+  GHOSTTY_PASTE_SOURCE_MAX_VALUE(2147483647);
+
+  const GhosttyPasteSource(this.value);
+  final int value;
+}
+
+enum GhosttyClipboardWriteResult {
+  GHOSTTY_CLIPBOARD_WRITE_RESULT_SUCCESS(0),
+  GHOSTTY_CLIPBOARD_WRITE_RESULT_DENIED(1),
+  GHOSTTY_CLIPBOARD_WRITE_RESULT_UNSUPPORTED(2),
+  GHOSTTY_CLIPBOARD_WRITE_RESULT_BUSY(3),
+  GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA(4),
+  GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR(5),
+  GHOSTTY_CLIPBOARD_WRITE_RESULT_MAX_VALUE(2147483647);
+
+  const GhosttyClipboardWriteResult(this.value);
+  final int value;
+}
+
+enum GhosttyClipboardReadResult {
+  GHOSTTY_CLIPBOARD_READ_RESULT_SUCCESS(0),
+  GHOSTTY_CLIPBOARD_READ_RESULT_DENIED(1),
+  GHOSTTY_CLIPBOARD_READ_RESULT_UNSUPPORTED(2),
+  GHOSTTY_CLIPBOARD_READ_RESULT_BUSY(3),
+  GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR(4),
+  GHOSTTY_CLIPBOARD_READ_RESULT_MAX_VALUE(2147483647);
+
+  const GhosttyClipboardReadResult(this.value);
+  final int value;
+}
+
+enum GhosttyTerminalUnknownSequenceTag {
+  GHOSTTY_TERMINAL_UNKNOWN_SEQUENCE_APC(0),
+  GHOSTTY_TERMINAL_UNKNOWN_SEQUENCE_MAX_VALUE(2147483647);
+
+  const GhosttyTerminalUnknownSequenceTag(this.value);
+  final int value;
+}
+
+enum GhosttySnapshotDecoderOption {
+  GHOSTTY_SNAPSHOT_DECODER_OPT_MAX_CONTINUATION_BYTES(0),
+  GHOSTTY_SNAPSHOT_DECODER_OPT_RETAIN_CONTINUATION(1),
+  GHOSTTY_SNAPSHOT_DECODER_OPT_MAX_VALUE(2147483647);
+
+  const GhosttySnapshotDecoderOption(this.value);
+  final int value;
+}
+
+enum GhosttySnapshotDecoderData {
+  GHOSTTY_SNAPSHOT_DECODER_DATA_INVALID(0),
+  GHOSTTY_SNAPSHOT_DECODER_DATA_MAX_CONTINUATION_BYTES(1),
+  GHOSTTY_SNAPSHOT_DECODER_DATA_SOURCE_OFFSET(2),
+  GHOSTTY_SNAPSHOT_DECODER_DATA_HISTORY_ROWS_PRIMARY(3),
+  GHOSTTY_SNAPSHOT_DECODER_DATA_HISTORY_ROWS_ALTERNATE(4),
+  GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_SCREEN(5),
+  GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_ROWS(6),
+  GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_REMAINING(7),
+  GHOSTTY_SNAPSHOT_DECODER_DATA_RETAIN_CONTINUATION(8),
+  GHOSTTY_SNAPSHOT_DECODER_DATA_MAX_VALUE(2147483647);
+
+  const GhosttySnapshotDecoderData(this.value);
+  final int value;
 }
 
 /// DECRPM report state values.
@@ -702,7 +792,9 @@ enum GhosttyKittyGraphicsImageData {
   GHOSTTY_KITTY_IMAGE_DATA_FORMAT(5),
   GHOSTTY_KITTY_IMAGE_DATA_COMPRESSION(6),
   GHOSTTY_KITTY_IMAGE_DATA_DATA_PTR(7),
-  GHOSTTY_KITTY_IMAGE_DATA_DATA_LEN(8);
+  GHOSTTY_KITTY_IMAGE_DATA_DATA_LEN(8),
+  GHOSTTY_KITTY_IMAGE_DATA_GENERATION(9),
+  GHOSTTY_KITTY_IMAGE_DATA_MAX_VALUE(2147483647);
 
   const GhosttyKittyGraphicsImageData(this.value);
   final int value;
@@ -723,7 +815,9 @@ enum GhosttySysLogLevel {
 enum GhosttySysOption {
   GHOSTTY_SYS_OPT_USERDATA(0),
   GHOSTTY_SYS_OPT_DECODE_PNG(1),
-  GHOSTTY_SYS_OPT_LOG(2);
+  GHOSTTY_SYS_OPT_LOG(2),
+  GHOSTTY_SYS_OPT_RANDOM_SECURE(3),
+  GHOSTTY_SYS_OPT_MAX_VALUE(2147483647);
 
   const GhosttySysOption(this.value);
   final int value;
@@ -862,6 +956,8 @@ final class _GhosttyWasmRuntime {
 
   int readUsize(int ptr) => _data.getUint32(ptr, Endian.little);
 
+  int readU64(int ptr) => _data.getUint64(ptr, Endian.little);
+
   int readI32(int ptr) => _data.getInt32(ptr, Endian.little);
 
   void writeU8(int ptr, int value) {
@@ -983,6 +1079,7 @@ const int _ghosttyFormatterScreenExtraSize = 12;
 const int _ghosttyFormatterTerminalExtraSize = 24;
 const int _ghosttyFormatterTerminalOptionsSize = 40;
 const int _ghosttyTerminalScrollViewportSize = 24;
+const int _ghosttyTerminalModeConfigSize = 4;
 const int _ghosttyStringSize = 8;
 const int _ghosttyColorRgbSize = 3;
 const int _ghosttyColorPaletteLength = 256;
@@ -1004,6 +1101,13 @@ const int _ghosttyTerminalOptColorBackground = 12;
 const int _ghosttyTerminalOptColorCursor = 13;
 const int _ghosttyTerminalOptColorPalette = 14;
 const int _ghosttyTerminalOptScrollbackMaxLines = 28;
+const int _ghosttyTerminalOptContinuationMaxBytes = 31;
+const int _ghosttyTerminalOptTitleReport = 32;
+const int _ghosttyTerminalOptModeDefault = 33;
+const int _ghosttyTerminalOptMode = 34;
+const int _ghosttyTerminalOptUnknownMaxBytes = 36;
+const int _ghosttyTerminalOptTerminfoName = 37;
+const int _ghosttyTerminalOptClipboardWriteMaxBytes = 39;
 
 const int _ghosttyTerminalDataColorForeground = 18;
 const int _ghosttyTerminalDataColorBackground = 19;
@@ -1013,6 +1117,11 @@ const int _ghosttyTerminalDataColorForegroundDefault = 22;
 const int _ghosttyTerminalDataColorBackgroundDefault = 23;
 const int _ghosttyTerminalDataColorCursorDefault = 24;
 const int _ghosttyTerminalDataColorPaletteDefault = 25;
+const int _ghosttyTerminalDataContinuationMaxBytes = 36;
+const int _ghosttyTerminalDataMode = 37;
+const int _ghosttyTerminalDataVtGround = 38;
+const int _ghosttyTerminalDataCursorAtPrompt = 39;
+const int _ghosttyTerminalDataClipboardWriteMaxBytes = 40;
 
 int _checkPositiveUint16(int value, String name) {
   if (value < 1 || value > 0xFFFF) {
@@ -1527,6 +1636,9 @@ final class VtKittyGraphicsImage {
   int get height => _unsupported();
   GhosttyKittyImageFormat get format => _unsupported();
   GhosttyKittyImageCompression get compression => _unsupported();
+  int get generation => _unsupported();
+  bool get pixelDataAvailable => false;
+  Uint8List? get rawPixelDataOrNull => null;
   Uint8List get rawPixelData => _unsupported();
 
   Never _unsupported() =>
@@ -1708,6 +1820,41 @@ final class VtRenderSnapshot {
   final VtRenderColors colors;
   final VtRenderCursorSnapshot cursor;
   final List<VtRenderRowSnapshot> rowsData;
+}
+
+/// Web API-parity stub for a live render row cursor.
+final class VtRenderRowCursor {
+  const VtRenderRowCursor._();
+
+  bool get dirty => _unsupportedTerminalApi('VtRenderRowCursor.dirty');
+  set dirty(bool value) {
+    _unsupportedTerminalApi('VtRenderRowCursor.dirty');
+  }
+
+  VtRowSnapshot get raw => _unsupportedTerminalApi('VtRenderRowCursor.raw');
+
+  VtRenderRowCellsCursor createCellsCursor() =>
+      _unsupportedTerminalApi('VtRenderRowCursor.createCellsCursor');
+
+  void visitCells(void Function(VtRenderRowCellsCursor cells) visitor) {
+    _unsupportedTerminalApi('VtRenderRowCursor.visitCells');
+  }
+}
+
+/// Web API-parity stub for a live render cell cursor.
+final class VtRenderRowCellsCursor {
+  const VtRenderRowCellsCursor._();
+
+  bool moveNext() => _unsupportedTerminalApi('VtRenderRowCellsCursor.moveNext');
+  void select(int x) {
+    _unsupportedTerminalApi('VtRenderRowCellsCursor.select');
+  }
+
+  VtRenderCellSnapshot get current =>
+      _unsupportedTerminalApi('VtRenderRowCellsCursor.current');
+  VtRenderCellSnapshot cellAt(int x) =>
+      _unsupportedTerminalApi('VtRenderRowCellsCursor.cellAt');
+  void close() {}
 }
 
 final class VtSizeReportSize {
@@ -3250,6 +3397,83 @@ final class VtFormatterTerminalOptions {
   final VtSelection? selection;
 }
 
+final class VtTerminalPasteResult {
+  const VtTerminalPasteResult({required this.written, required this.rejected});
+  final bool written;
+  final bool rejected;
+}
+
+final class VtWriteUntilGroundResult {
+  const VtWriteUntilGroundResult({
+    required this.consumed,
+    required this.reachedGround,
+  });
+  final int consumed;
+  final bool reachedGround;
+}
+
+final class VtClipboardWriteRequest {
+  const VtClipboardWriteRequest({
+    required this.location,
+    required this.contents,
+    required this.name,
+    required this.granted,
+    required this.canRemember,
+  });
+  final GhosttyClipboardLocation location;
+  final Map<String, Uint8List> contents;
+  final String name;
+  final bool granted;
+  final bool canRemember;
+}
+
+final class VtClipboardWriteReply {
+  const VtClipboardWriteReply(this.result, {this.remember = false});
+  final GhosttyClipboardWriteResult result;
+  final bool remember;
+}
+
+final class VtClipboardReadRequest {
+  const VtClipboardReadRequest({
+    required this.location,
+    required this.mimes,
+    required this.listAvailable,
+    required this.name,
+    required this.granted,
+    required this.canRemember,
+  });
+  final GhosttyClipboardLocation location;
+  final List<String> mimes;
+  final bool listAvailable;
+  final String name;
+  final bool granted;
+  final bool canRemember;
+}
+
+final class VtClipboardReadReply {
+  const VtClipboardReadReply(
+    this.result, {
+    this.contents = const <String, List<int>>{},
+    this.available = const <String>[],
+    this.remember = false,
+  });
+  final GhosttyClipboardReadResult result;
+  final Map<String, List<int>> contents;
+  final List<String> available;
+  final bool remember;
+}
+
+final class VtUnknownSequence {
+  const VtUnknownSequence({
+    required this.tag,
+    required this.content,
+    required this.truncated,
+  });
+  final GhosttyTerminalUnknownSequenceTag tag;
+  final Uint8List content;
+  final bool truncated;
+}
+
 final class VtAllocator {
   VtAllocator._();
 
@@ -3282,6 +3506,27 @@ final class VtRenderState {
     _ensureOpen();
     _terminal._ensureOpen();
     _unsupportedTerminalApi('VtRenderState.update');
+  }
+
+  void clean() {
+    _ensureOpen();
+    _terminal._ensureOpen();
+    _unsupportedTerminalApi('VtRenderState.clean');
+  }
+
+  VtRenderCursorSnapshot get cursorSnapshot {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtRenderState.cursorSnapshot');
+  }
+
+  void visitRows(void Function(VtRenderRowCursor row) visitor) {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtRenderState.visitRows');
+  }
+
+  void visitDirtyRows(void Function(int y, VtRenderRowCursor row) visitor) {
+    _ensureOpen();
+    _unsupportedTerminalApi('VtRenderState.visitDirtyRows');
   }
 
   VtRenderSnapshot snapshot() {
@@ -3440,13 +3685,22 @@ final class VtTerminal {
     }
   }
 
+  VtTerminal._fromHandle(this._wasm, this._handle)
+    : _cols = 0,
+      _rows = 0,
+      _maxScrollback = 0 {
+    _cols = _terminalUint16(1);
+    _rows = _terminalUint16(2);
+    _maxScrollback = _terminalOptionalSize(35) ?? 0;
+  }
+
   final _GhosttyWasmRuntime _wasm;
   final Set<VtTerminalFormatter> _formatters = <VtTerminalFormatter>{};
   int _handle = 0;
   bool _closed = false;
   int _cols;
   int _rows;
-  final int _maxScrollback;
+  int _maxScrollback;
 
   /// Not yet supported on the web platform.
   // ignore: use_setters_to_change_properties
@@ -3527,6 +3781,36 @@ final class VtTerminal {
   String Function()? get onXtversion =>
       _unsupportedTerminalApi('VtTerminal.onXtversion');
 
+  set onClipboardWrite(
+    VtClipboardWriteReply Function(VtClipboardWriteRequest request)? callback,
+  ) {
+    _unsupportedTerminalApi('VtTerminal.onClipboardWrite');
+  }
+
+  VtClipboardWriteReply Function(VtClipboardWriteRequest request)?
+  get onClipboardWrite =>
+      _unsupportedTerminalApi('VtTerminal.onClipboardWrite');
+
+  set onClipboardRead(
+    VtClipboardReadReply Function(VtClipboardReadRequest request)? callback,
+  ) {
+    _unsupportedTerminalApi('VtTerminal.onClipboardRead');
+  }
+
+  VtClipboardReadReply Function(VtClipboardReadRequest request)?
+  get onClipboardRead => _unsupportedTerminalApi('VtTerminal.onClipboardRead');
+
+  set onUnknownSequence(void Function(VtUnknownSequence sequence)? callback) {
+    _unsupportedTerminalApi('VtTerminal.onUnknownSequence');
+  }
+
+  void Function(VtUnknownSequence sequence)? get onUnknownSequence =>
+      _unsupportedTerminalApi('VtTerminal.onUnknownSequence');
+
+  set unknownSequenceMaxBytes(int value) {
+    _terminalSetSize(_ghosttyTerminalOptUnknownMaxBytes, value);
+  }
+
   void _ensureOpen() {
     if (_closed) {
       throw StateError('VtTerminal is already closed.');
@@ -3577,6 +3861,71 @@ final class VtTerminal {
     _unsupportedTerminalApi('VtTerminal.cursorVisible');
   }
 
+  bool get vtGround => _terminalBool(_ghosttyTerminalDataVtGround);
+
+  bool get cursorAtPrompt => _terminalBool(_ghosttyTerminalDataCursorAtPrompt);
+
+  int get continuationMaxBytes =>
+      _terminalSize(_ghosttyTerminalDataContinuationMaxBytes);
+
+  set continuationMaxBytes(int value) {
+    _terminalSetSize(_ghosttyTerminalOptContinuationMaxBytes, value);
+  }
+
+  int get clipboardWriteMaxBytes =>
+      _terminalSize(_ghosttyTerminalDataClipboardWriteMaxBytes);
+
+  set clipboardWriteMaxBytes(int value) {
+    _terminalSetSize(_ghosttyTerminalOptClipboardWriteMaxBytes, value);
+  }
+
+  set titleReportEnabled(bool value) {
+    _terminalSetBool(_ghosttyTerminalOptTitleReport, value);
+  }
+
+  set terminfoName(String? value) {
+    _ensureOpen();
+    if (value == null || value.isEmpty) {
+      _checkResult(
+        _wasm.callInt('ghostty_terminal_set', <Object>[
+          _handle,
+          _ghosttyTerminalOptTerminfoName,
+          0,
+        ]),
+        'ghostty_terminal_set(terminfo name)',
+      );
+      return;
+    }
+    final bytes = utf8.encode(value);
+    final data = _allocU8ArrayOrThrow(
+      _wasm,
+      bytes.length,
+      'ghostty_wasm_alloc',
+    );
+    final string = _allocU8ArrayOrThrow(
+      _wasm,
+      _ghosttyStringSize,
+      'ghostty_wasm_alloc',
+    );
+    try {
+      _wasm.u8View(data, bytes.length).setAll(0, bytes);
+      _wasm
+        ..writeU32(string, data)
+        ..writeU32(string + 4, bytes.length);
+      _checkResult(
+        _wasm.callInt('ghostty_terminal_set', <Object>[
+          _handle,
+          _ghosttyTerminalOptTerminfoName,
+          string,
+        ]),
+        'ghostty_terminal_set(terminfo name)',
+      );
+    } finally {
+      _wasm.freeU8Array(string, _ghosttyStringSize);
+      _wasm.freeU8Array(data, bytes.length);
+    }
+  }
+
   String get title {
     _ensureOpen();
     _unsupportedTerminalApi('VtTerminal.title');
@@ -3587,13 +3936,59 @@ final class VtTerminal {
     _unsupportedTerminalApi('VtTerminal.pwd');
   }
 
-  /// Web currently does not expose direct terminal mode queries.
-  ///
-  /// Return `false` so higher-level widgets can safely disable optional
-  /// mode-dependent behavior such as mouse tracking.
   bool getMode(VtMode mode) {
     _ensureOpen();
-    return false;
+    final config = _allocU8ArrayOrThrow(
+      _wasm,
+      _ghosttyTerminalModeConfigSize,
+      'ghostty_wasm_alloc',
+    );
+    try {
+      _wasm.writeU16(config, mode.packed);
+      _checkResult(
+        _wasm.callInt('ghostty_terminal_get', <Object>[
+          _handle,
+          _ghosttyTerminalDataMode,
+          config,
+        ]),
+        'ghostty_terminal_get(mode)',
+      );
+      return _wasm.readU8(config + 2) != 0;
+    } finally {
+      _wasm.freeU8Array(config, _ghosttyTerminalModeConfigSize);
+    }
+  }
+
+  void setMode(VtMode mode, bool value) {
+    _setModeOption(_ghosttyTerminalOptMode, mode, value);
+  }
+
+  void setModeDefault(VtMode mode, bool value) {
+    _setModeOption(_ghosttyTerminalOptModeDefault, mode, value);
+  }
+
+  void _setModeOption(int option, VtMode mode, bool value) {
+    _ensureOpen();
+    final config = _allocU8ArrayOrThrow(
+      _wasm,
+      _ghosttyTerminalModeConfigSize,
+      'ghostty_wasm_alloc',
+    );
+    try {
+      _wasm
+        ..writeU16(config, mode.packed)
+        ..writeU8(config + 2, value ? 1 : 0);
+      _checkResult(
+        _wasm.callInt('ghostty_terminal_set', <Object>[
+          _handle,
+          option,
+          config,
+        ]),
+        'ghostty_terminal_set(mode)',
+      );
+    } finally {
+      _wasm.freeU8Array(config, _ghosttyTerminalModeConfigSize);
+    }
   }
 
   bool get mouseTracking {
@@ -3738,6 +4133,115 @@ final class VtTerminal {
     }
   }
 
+  int _terminalUint16(int data) {
+    final out = _allocU8ArrayOrThrow(_wasm, 2, 'ghostty_wasm_alloc');
+    try {
+      _checkResult(
+        _wasm.callInt('ghostty_terminal_get', <Object>[_handle, data, out]),
+        'ghostty_terminal_get',
+      );
+      return _wasm.readU16(out);
+    } finally {
+      _wasm.freeU8Array(out, 2);
+    }
+  }
+
+  int? _terminalOptionalSize(int data) {
+    final out = _wasm.allocUsize();
+    if (out == 0) {
+      throw GhosttyVtError(
+        'ghostty_wasm_alloc',
+        GhosttyResult.GHOSTTY_OUT_OF_MEMORY,
+      );
+    }
+    try {
+      final result = _wasm.callInt('ghostty_terminal_get', <Object>[
+        _handle,
+        data,
+        out,
+      ]);
+      if (result == GhosttyResult.GHOSTTY_NO_VALUE.value) return null;
+      _checkResult(result, 'ghostty_terminal_get');
+      return _wasm.readUsize(out);
+    } finally {
+      _wasm.freeUsize(out);
+    }
+  }
+
+  bool _terminalBool(int data) {
+    _ensureOpen();
+    final out = _allocU8ArrayOrThrow(_wasm, 1, 'ghostty_wasm_alloc');
+    try {
+      _checkResult(
+        _wasm.callInt('ghostty_terminal_get', <Object>[_handle, data, out]),
+        'ghostty_terminal_get',
+      );
+      return _wasm.readU8(out) != 0;
+    } finally {
+      _wasm.freeU8Array(out, 1);
+    }
+  }
+
+  int _terminalSize(int data) {
+    _ensureOpen();
+    final out = _wasm.allocUsize();
+    if (out == 0) {
+      throw GhosttyVtError(
+        'ghostty_wasm_alloc',
+        GhosttyResult.GHOSTTY_OUT_OF_MEMORY,
+      );
+    }
+    try {
+      _checkResult(
+        _wasm.callInt('ghostty_terminal_get', <Object>[_handle, data, out]),
+        'ghostty_terminal_get',
+      );
+      return _wasm.readUsize(out);
+    } finally {
+      _wasm.freeUsize(out);
+    }
+  }
+
+  void _terminalSetSize(int option, int value) {
+    _ensureOpen();
+    final out = _wasm.allocUsize();
+    if (out == 0) {
+      throw GhosttyVtError(
+        'ghostty_wasm_alloc',
+        GhosttyResult.GHOSTTY_OUT_OF_MEMORY,
+      );
+    }
+    try {
+      _wasm.writeU32(out, _checkNonNegative(value, 'value'));
+      _checkResult(
+        _wasm.callInt('ghostty_terminal_set', <Object>[_handle, option, out]),
+        'ghostty_terminal_set',
+      );
+    } finally {
+      _wasm.freeUsize(out);
+    }
+  }
+
+  void _terminalSetBool(int option, bool value) {
+    _ensureOpen();
+    final out = _wasm.allocU8();
+    if (out == 0) {
+      throw GhosttyVtError(
+        'ghostty_wasm_alloc',
+        GhosttyResult.GHOSTTY_OUT_OF_MEMORY,
+      );
+    }
+    try {
+      _wasm.writeU8(out, value ? 1 : 0);
+      _checkResult(
+        _wasm.callInt('ghostty_terminal_set', <Object>[_handle, option, out]),
+        'ghostty_terminal_set',
+      );
+    } finally {
+      _wasm.freeU8(out);
+    }
+  }
+
   void _terminalSetRgb(int option, VtRgbColor? value) {
     _ensureOpen();
     if (value == null) {
@@ -3809,6 +4313,121 @@ final class VtTerminal {
 
   void write(String text, {Encoding encoding = utf8}) {
     writeBytes(encoding.encode(text));
+  }
+
+  VtWriteUntilGroundResult writeUntilGroundBytes(List<int> bytes) {
+    _ensureOpen();
+    final data = bytes.isEmpty
+        ? 0
+        : _allocU8ArrayOrThrow(_wasm, bytes.length, 'ghostty_wasm_alloc');
+    final consumed = _wasm.allocUsize();
+    if (consumed == 0) {
+      if (data != 0) _wasm.freeU8Array(data, bytes.length);
+      throw GhosttyVtError(
+        'ghostty_wasm_alloc',
+        GhosttyResult.GHOSTTY_OUT_OF_MEMORY,
+      );
+    }
+    try {
+      if (data != 0) _wasm.u8View(data, bytes.length).setAll(0, bytes);
+      final result = _wasm.callInt(
+        'ghostty_terminal_vt_write_until_ground',
+        <Object>[_handle, data, bytes.length, consumed],
+      );
+      if (result != GhosttyResult.GHOSTTY_SUCCESS.value &&
+          result != GhosttyResult.GHOSTTY_NO_VALUE.value) {
+        _checkResult(result, 'ghostty_terminal_vt_write_until_ground');
+      }
+      return VtWriteUntilGroundResult(
+        consumed: _wasm.readUsize(consumed),
+        reachedGround: result == GhosttyResult.GHOSTTY_SUCCESS.value,
+      );
+    } finally {
+      _wasm.freeUsize(consumed);
+      if (data != 0) _wasm.freeU8Array(data, bytes.length);
+    }
+  }
+
+  VtWriteUntilGroundResult writeUntilGround(
+    String text, {
+    Encoding encoding = utf8,
+  }) => writeUntilGroundBytes(encoding.encode(text));
+
+  VtTerminalPasteResult paste(
+    Map<String, List<int>> contents, {
+    GhosttyClipboardLocation location =
+        GhosttyClipboardLocation.GHOSTTY_CLIPBOARD_LOCATION_STANDARD,
+    GhosttyPasteSource source =
+        GhosttyPasteSource.GHOSTTY_PASTE_SOURCE_CLIPBOARD,
+    bool allowUnsafe = false,
+  }) => _unsupportedTerminalApi(
+    'VtTerminal.paste requires a Wasm host callback bridge',
+  );
+
+  VtTerminalPasteResult pasteText(
+    String text, {
+    String mime = 'text/plain',
+    GhosttyClipboardLocation location =
+        GhosttyClipboardLocation.GHOSTTY_CLIPBOARD_LOCATION_STANDARD,
+    GhosttyPasteSource source =
+        GhosttyPasteSource.GHOSTTY_PASTE_SOURCE_CLIPBOARD,
+    bool allowUnsafe = false,
+  }) => paste(
+    <String, List<int>>{mime: utf8.encode(text)},
+    location: location,
+    source: source,
+    allowUnsafe: allowUnsafe,
+  );
+
+  Uint8List continuationBytes() => _copyBufferApi(
+    'ghostty_terminal_continuation_buf',
+    (buffer, capacity, written) => <Object>[_handle, buffer, capacity, written],
+  );
+
+  Uint8List snapshotBytes() => _copyBufferApi(
+    'ghostty_snapshot_encode_buf',
+    (buffer, capacity, written) => <Object>[_handle, buffer, capacity, written],
+  );
+
+  Uint8List _copyBufferApi(
+    String operation,
+    List<Object> Function(int buffer, int capacity, int written) arguments,
+  ) {
+    _ensureOpen();
+    final written = _wasm.allocUsize();
+    if (written == 0) {
+      throw GhosttyVtError(
+        'ghostty_wasm_alloc',
+        GhosttyResult.GHOSTTY_OUT_OF_MEMORY,
+      );
+    }
+    try {
+      final probe = _wasm.callInt(operation, arguments(0, 0, written));
+      if (probe != GhosttyResult.GHOSTTY_OUT_OF_SPACE.value &&
+          probe != GhosttyResult.GHOSTTY_SUCCESS.value) {
+        _checkResult(probe, '$operation(size probe)');
+      }
+      final required = _wasm.readUsize(written);
+      if (required == 0) return Uint8List(0);
+      final buffer = _allocU8ArrayOrThrow(
+        _wasm,
+        required,
+        'ghostty_wasm_alloc',
+      );
+      try {
+        _checkResult(
+          _wasm.callInt(operation, arguments(buffer, required, written)),
+          operation,
+        );
+        return Uint8List.fromList(
+          _wasm.u8View(buffer, _wasm.readUsize(written)),
+        );
+      } finally {
+        _wasm.freeU8Array(buffer, required);
+      }
+    } finally {
+      _wasm.freeUsize(written);
+    }
   }
 
   void reset() {
@@ -3944,6 +4563,201 @@ final class VtTerminal {
   }
 }
 
+final class VtSnapshotProgress {
+  const VtSnapshotProgress({
+    required this.screen,
+    required this.rows,
+    required this.remaining,
+  });
+  final GhosttyTerminalScreen screen;
+  final int rows;
+  final int remaining;
+}
+
+final class VtSnapshotDecoder {
+  VtSnapshotDecoder(List<int> bytes)
+    : _wasm = _requireTerminalRuntime('VtSnapshotDecoder'),
+      _sourceLength = bytes.length {
+    _source = bytes.isEmpty
+        ? 0
+        : _allocU8ArrayOrThrow(_wasm, bytes.length, 'ghostty_wasm_alloc');
+    if (_source != 0) _wasm.u8View(_source, bytes.length).setAll(0, bytes);
+    final out = _allocOpaqueOrThrow(_wasm, 'ghostty_wasm_alloc_opaque');
+    try {
+      _checkResult(
+        _wasm.callInt('ghostty_snapshot_decoder_new_buf', <Object>[
+          0,
+          out,
+          _source,
+          bytes.length,
+        ]),
+        'ghostty_snapshot_decoder_new_buf',
+      );
+      _handle = _wasm.takeOpaque(out);
+    } catch (_) {
+      if (_source != 0) _wasm.freeU8Array(_source, _sourceLength);
+      _source = 0;
+      rethrow;
+    } finally {
+      _wasm.freeOpaque(out);
+    }
+  }
+
+  final _GhosttyWasmRuntime _wasm;
+  final int _sourceLength;
+  late int _source;
+  int _handle = 0;
+  bool _closed = false;
+  bool _started = false;
+  VtTerminal? _terminal;
+
+  void _ensureOpen() {
+    if (_closed) throw StateError('VtSnapshotDecoder is already closed.');
+  }
+
+  set maxContinuationBytes(int value) => _setOption(
+    GhosttySnapshotDecoderOption
+        .GHOSTTY_SNAPSHOT_DECODER_OPT_MAX_CONTINUATION_BYTES,
+    value,
+    size: 4,
+  );
+
+  set retainContinuation(bool value) => _setOption(
+    GhosttySnapshotDecoderOption
+        .GHOSTTY_SNAPSHOT_DECODER_OPT_RETAIN_CONTINUATION,
+    value ? 1 : 0,
+    size: 1,
+  );
+
+  void _setOption(
+    GhosttySnapshotDecoderOption option,
+    int value, {
+    required int size,
+  }) {
+    _ensureOpen();
+    final ptr = _allocU8ArrayOrThrow(_wasm, size, 'ghostty_wasm_alloc');
+    try {
+      if (size == 1) {
+        _wasm.writeU8(ptr, value);
+      } else {
+        _wasm.writeU32(ptr, _checkNonNegative(value, 'value'));
+      }
+      _checkResult(
+        _wasm.callInt('ghostty_snapshot_decoder_set', <Object>[
+          _handle,
+          option.value,
+          ptr,
+        ]),
+        'ghostty_snapshot_decoder_set',
+      );
+    } finally {
+      _wasm.freeU8Array(ptr, size);
+    }
+  }
+
+  int get maxContinuationBytes => _getU32(
+    GhosttySnapshotDecoderData
+        .GHOSTTY_SNAPSHOT_DECODER_DATA_MAX_CONTINUATION_BYTES,
+  )!;
+
+  bool get retainsContinuation =>
+      _getU8(
+        GhosttySnapshotDecoderData
+            .GHOSTTY_SNAPSHOT_DECODER_DATA_RETAIN_CONTINUATION,
+      ) ==
+      1;
+
+  int? get sourceOffset => _getU32(
+    GhosttySnapshotDecoderData.GHOSTTY_SNAPSHOT_DECODER_DATA_SOURCE_OFFSET,
+  );
+
+  int? get primaryHistoryRows => _getU64(
+    GhosttySnapshotDecoderData
+        .GHOSTTY_SNAPSHOT_DECODER_DATA_HISTORY_ROWS_PRIMARY,
+  );
+
+  int? get alternateHistoryRows => _getU64(
+    GhosttySnapshotDecoderData
+        .GHOSTTY_SNAPSHOT_DECODER_DATA_HISTORY_ROWS_ALTERNATE,
+  );
+
+  int? _getU8(GhosttySnapshotDecoderData data) => _getNumber(data, 1);
+  int? _getU32(GhosttySnapshotDecoderData data) => _getNumber(data, 4);
+  int? _getU64(GhosttySnapshotDecoderData data) => _getNumber(data, 8);
+
+  int? _getNumber(GhosttySnapshotDecoderData data, int size) {
+    _ensureOpen();
+    final ptr = _allocU8ArrayOrThrow(_wasm, size, 'ghostty_wasm_alloc');
+    try {
+      final result = _wasm.callInt('ghostty_snapshot_decoder_get', <Object>[
+        _handle,
+        data.value,
+        ptr,
+      ]);
+      if (result == GhosttyResult.GHOSTTY_NO_VALUE.value) return null;
+      _checkResult(result, 'ghostty_snapshot_decoder_get');
+      return switch (size) {
+        1 => _wasm.readU8(ptr),
+        4 => _wasm.readUsize(ptr),
+        8 => _wasm.readU64(ptr),
+        _ => throw StateError('Unsupported integer size $size'),
+      };
+    } finally {
+      _wasm.freeU8Array(ptr, size);
+    }
+  }
+
+  VtTerminal ready() => _createTerminal('ghostty_snapshot_decoder_ready');
+  VtTerminal decode() => _createTerminal('ghostty_snapshot_decoder_decode');
+
+  VtTerminal _createTerminal(String operation) {
+    _ensureOpen();
+    if (_started) throw StateError('Snapshot decoding has already started.');
+    final out = _allocOpaqueOrThrow(_wasm, 'ghostty_wasm_alloc_opaque');
+    try {
+      _checkResult(_wasm.callInt(operation, <Object>[_handle, out]), operation);
+      _started = true;
+      return _terminal = VtTerminal._fromHandle(_wasm, _wasm.takeOpaque(out));
+    } finally {
+      _wasm.freeOpaque(out);
+    }
+  }
+
+  VtSnapshotProgress? next() {
+    _ensureOpen();
+    if (_terminal == null) {
+      throw StateError('Call ready() before incremental history decoding.');
+    }
+    final result = _wasm.callInt('ghostty_snapshot_decoder_next', <Object>[
+      _handle,
+    ]);
+    if (result == GhosttyResult.GHOSTTY_NO_VALUE.value) return null;
+    _checkResult(result, 'ghostty_snapshot_decoder_next');
+    final screen = _getU32(
+      GhosttySnapshotDecoderData.GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_SCREEN,
+    )!;
+    return VtSnapshotProgress(
+      screen: GhosttyTerminalScreen.fromValue(screen),
+      rows: _getU32(
+        GhosttySnapshotDecoderData.GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_ROWS,
+      )!,
+      remaining: _getU32(
+        GhosttySnapshotDecoderData
+            .GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_REMAINING,
+      )!,
+    );
+  }
+
+  void close() {
+    if (_closed) return;
+    _wasm.callInt('ghostty_snapshot_decoder_free', <Object>[_handle]);
+    if (_source != 0) _wasm.freeU8Array(_source, _sourceLength);
+    _handle = 0;
+    _source = 0;
+    _closed = true;
+  }
+}
+
 final class VtTerminalFormatter {
   VtTerminalFormatter._(VtTerminal terminal, VtFormatterTerminalOptions options)
     : _terminal = terminal,
@@ -4058,6 +4872,12 @@ final class VtTerminalFormatter {
     throw StateError(
       'VtTerminalFormatter output changed while formatting. Retry the call.',
     );
+  }
+
+  /// Delivers formatted output through the portable buffer-backed web path.
+  void formatTo(void Function(Uint8List chunk) write) {
+    final bytes = formatBytes();
+    if (bytes.isNotEmpty) write(bytes);
   }
 
   Uint8List formatBytesAllocated() {
@@ -4433,6 +5253,12 @@ final class GhosttyVt {
     throw UnsupportedError(
       'PNG decoder installation is not supported on web. '
       'Install a PNG decoder at the JavaScript/wasm layer instead.',
+    );
+  }
+
+  static Never installSecureRandom(Uint8List Function(int length) randomBytes) {
+    throw UnsupportedError(
+      'Secure-random callback installation requires a Wasm host bridge.',
     );
   }
 

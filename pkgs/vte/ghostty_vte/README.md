@@ -12,7 +12,7 @@ on the **web** via WebAssembly.
 
 | Feature | API | Description |
 |---------|-----|-------------|
-| **Paste safety** | `GhosttyVt.isPasteSafe()` | Detect dangerous control sequences in pasted text |
+| **Terminal-aware paste** | `VtTerminal.pasteText()` | Bracketed paste, Kitty events, MIME data, and unsafe-text consent |
 | **OSC parsing** | `VtOscParser` | Streaming parser for Operating System Command sequences |
 | **SGR parsing** | `VtSgrParser` | Parse Select Graphic Rendition attributes (colors, bold, etc.) |
 | **Terminal state** | `VtTerminal` | Full terminal emulator with cursor tracking, modes, scrollback, and effect callbacks |
@@ -115,7 +115,7 @@ final terminal = GhosttyVt.newTerminal(
 );
 ```
 
-### Writing data
+### Writing terminal output
 
 ```dart
 // Write a UTF-8 string (automatically encoded)
@@ -127,6 +127,45 @@ terminal.writeBytes([0x1b, 0x5b, 0x31, 0x6d]);  // ESC [ 1 m (bold)
 // Full reset
 terminal.reset();
 ```
+
+### Pasting user input
+
+Use `pasteText` or `paste` for user-initiated input. Unlike `write`, these
+methods inspect the terminal's live bracketed-paste and Kitty clipboard modes,
+select MIME data, and refuse unsafe plain text until the user confirms it.
+
+```dart
+terminal.onWritePty = pty.write;
+
+var result = terminal.pasteText(clipboardText);
+if (result.rejected && await confirmUnsafePaste()) {
+  result = terminal.pasteText(clipboardText, allowUnsafe: true);
+}
+```
+
+`GhosttyVt.isPasteSafe` and `encodePaste` remain available for diagnostics and
+low-level integrations, but they are not substitutes for terminal-aware paste.
+Install `onClipboardRead` and `onClipboardWrite` to mediate OSC 52 and Kitty
+clipboard requests. Callbacks are synchronous because Ghostty pauses the VT
+stream until the request is answered.
+
+### Parser continuation and snapshots
+
+```dart
+terminal.continuationMaxBytes = 1024 * 1024;
+final continuation = terminal.continuationBytes();
+final boundary = terminal.writeUntilGroundBytes(ptyChunk);
+
+final bytes = terminal.snapshotBytes();
+final decoder = VtSnapshotDecoder(bytes)
+  ..retainContinuation = true;
+final restored = decoder.decode(); // one-shot
+decoder.close();
+```
+
+For progressive restoration, call `decoder.ready()` and then `decoder.next()`
+until it returns `null`. Each non-null `VtSnapshotProgress` identifies the
+screen, rows restored, and pages remaining.
 
 ### Resizing
 
@@ -298,6 +337,12 @@ final snapshot = formatter.formatBytes();
 print(snapshot);
 ```
 
+For streaming destinations, avoid materializing the complete output:
+
+```dart
+formatter.formatTo((chunk) => sink.add(chunk));
+```
+
 ### Allocated output
 
 The high-level allocated-output helpers use a Dart-owned allocator internally so
@@ -326,14 +371,22 @@ print(renderState.cols);    // 80
 print(renderState.rows);    // 24
 print(renderState.dirty);   // dirty state enum
 
-// Iterate visible rows and cells for custom rendering
-// (See ghostty_vte_flutter for a full rendering implementation)
+// Redraw only effective dirty rows, then acknowledge a complete frame.
+renderState.visitDirtyRows((y, row) {
+  row.visitCells((cells) {
+    while (cells.moveNext()) {
+      final cell = cells.current; // raw cell, resolved style, graphemes
+      paintCell(y, cell);
+    }
+  });
+});
+renderState.clean();
 
 renderState.close();
 terminal.close();
 ```
 
-## Paste safety
+## Low-level paste safety
 
 ```dart
 GhosttyVt.isPasteSafe('echo hello');       // true
@@ -499,11 +552,14 @@ Future<void> main() async {
 > [`ghostty_vte_flutter`](https://pub.dev/packages/ghostty_vte_flutter) which
 > handles wasm loading from Flutter assets automatically.
 >
-> The high-level VT terminal APIs now work on web. The remaining web-only gap is
-> the raw allocator bridge (`VtAllocator.pointer`, `copyBytesAndFree`, and
-> `freePointer`). `formatBytesAllocated()` and `formatTextAllocated()` work on
-> web by using Ghostty's default wasm allocator and freeing the returned buffer
-> with the wasm convenience helpers.
+> Buffer-backed terminal APIs work on web, including snapshot encode/decode,
+> continuation export, write-until-ground, mode configuration, and formatter
+> output. `formatBytesAllocated()` and `formatTextAllocated()` use Ghostty's
+> default Wasm allocator. Dart callbacks cannot currently be installed as Wasm
+> function pointers, so effect callbacks (PTY, clipboard, unknown sequences,
+> PNG decode, and secure random), terminal-aware paste, and the live render
+> iterator remain native-only. The raw `VtAllocator` pointer bridge is also not
+> exposed on web.
 
 ## Related packages
 

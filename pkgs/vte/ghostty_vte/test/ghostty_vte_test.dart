@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:ffi' as ffi;
 import 'dart:typed_data';
 
@@ -1176,6 +1177,9 @@ void main() {
       image.compression,
       GhosttyKittyImageCompression.GHOSTTY_KITTY_IMAGE_COMPRESSION_NONE,
     );
+    expect(image.generation, greaterThan(0));
+    expect(image.pixelDataAvailable, isTrue);
+    expect(image.rawPixelDataOrNull, isNotNull);
     expect(image.rawPixelData, hasLength(6));
 
     final iterator = graphics.iteratePlacements();
@@ -1227,5 +1231,233 @@ void main() {
     });
 
     expect(callable.nativeFunction.address, isNot(0));
+  });
+
+  test('terminal-aware paste follows safety and bracketed paste state', () {
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+    addTearDown(terminal.close);
+    final pty = BytesBuilder(copy: false);
+    terminal.onWritePty = pty.add;
+
+    final plain = terminal.pasteText('hello');
+    expect(plain.written, isTrue);
+    expect(plain.rejected, isFalse);
+    expect(pty.takeBytes(), utf8.encode('hello'));
+
+    final rejected = terminal.pasteText('echo hi\n');
+    expect(rejected.written, isFalse);
+    expect(rejected.rejected, isTrue);
+
+    terminal.write('\x1b[?2004h');
+    final bracketed = terminal.pasteText('line one\nline two');
+    expect(bracketed.written, isTrue);
+    expect(
+      utf8.decode(pty.takeBytes()),
+      '\x1b[200~line one\nline two\x1b[201~',
+    );
+  });
+
+  test('continuation tracking and write-until-ground preserve VT state', () {
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24)
+      ..continuationMaxBytes = 1024;
+    addTearDown(terminal.close);
+
+    terminal.write('\x1b[31');
+    expect(terminal.vtGround, isFalse);
+    expect(terminal.continuationBytes(), utf8.encode('\x1b[31'));
+
+    final result = terminal.writeUntilGround('mignored');
+    expect(result.reachedGround, isTrue);
+    expect(result.consumed, 1);
+    expect(terminal.vtGround, isTrue);
+    expect(terminal.continuationBytes(), isEmpty);
+  });
+
+  test('terminal snapshots round-trip terminal content', () {
+    final source = GhosttyVt.newTerminal(
+      cols: 20,
+      rows: 4,
+      maxScrollback: 20_000,
+    );
+    addTearDown(source.close);
+    source.write('Hello\r\nWorld');
+
+    final snapshot = source.snapshotBytes();
+    expect(snapshot, isNotEmpty);
+
+    final decoder = VtSnapshotDecoder(snapshot);
+    addTearDown(decoder.close);
+    final restored = decoder.decode();
+    addTearDown(restored.close);
+    final formatter = restored.createFormatter();
+    addTearDown(formatter.close);
+
+    expect(formatter.formatText(), 'Hello\nWorld');
+    expect(decoder.sourceOffset, snapshot.length);
+    expect(decoder.primaryHistoryRows, isNotNull);
+  });
+
+  test('formatter streams output through writer callback', () {
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+    addTearDown(terminal.close);
+    terminal.write('streamed');
+    final formatter = terminal.createFormatter();
+    addTearDown(formatter.close);
+    final output = BytesBuilder(copy: false);
+
+    formatter.formatTo(output.add);
+
+    expect(utf8.decode(output.takeBytes()), 'streamed');
+  });
+
+  test('render state visits dirty rows and clean consumes frame dirtiness', () {
+    final terminal = GhosttyVt.newTerminal(cols: 8, rows: 4);
+    final renderState = terminal.createRenderState();
+    addTearDown(renderState.close);
+    addTearDown(terminal.close);
+    terminal.write('AB');
+    renderState.update();
+
+    final dirtyRows = <int>[];
+    renderState.visitDirtyRows((y, row) {
+      dirtyRows.add(y);
+      expect(row.raw, isA<VtRowSnapshot>());
+    });
+    expect(dirtyRows, isNotEmpty);
+
+    renderState.clean();
+    expect(
+      renderState.dirty,
+      GhosttyRenderStateDirty.GHOSTTY_RENDER_STATE_DIRTY_FALSE,
+    );
+    renderState.visitDirtyRows((_, _) => fail('clean rows were revisited'));
+  });
+
+  test('mode defaults survive a full terminal reset', () {
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+    addTearDown(terminal.close);
+
+    terminal.setModeDefault(VtModes.cursorKeys, true);
+    terminal.setMode(VtModes.cursorKeys, false);
+    expect(terminal.getMode(VtModes.cursorKeys), isFalse);
+    terminal.reset();
+    expect(terminal.getMode(VtModes.cursorKeys), isTrue);
+  });
+
+  test('unknown APC capture reports bytes and truncation state', () {
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+    addTearDown(terminal.close);
+    VtUnknownSequence? captured;
+    terminal
+      ..unknownSequenceMaxBytes = 64
+      ..onUnknownSequence = (sequence) => captured = sequence;
+
+    terminal.write('\x1b_unrecognized payload\x1b\\');
+
+    expect(captured, isNotNull);
+    expect(
+      captured!.tag,
+      GhosttyTerminalUnknownSequenceTag.GHOSTTY_TERMINAL_UNKNOWN_SEQUENCE_APC,
+    );
+    expect(utf8.decode(captured!.content), 'unrecognized payload');
+    expect(captured!.truncated, isFalse);
+  });
+
+  test('secure random override installs and fills requested bytes', () {
+    var requested = 0;
+    final callable = GhosttyVt.installSecureRandom((length) {
+      requested = length;
+      return Uint8List.fromList(List<int>.filled(length, 0xA5));
+    });
+    addTearDown(() {
+      GhosttyVt.sysSet(
+        GhosttySysOption.GHOSTTY_SYS_OPT_RANDOM_SECURE,
+        ffi.nullptr,
+      );
+      callable.close();
+    });
+
+    expect(callable.nativeFunction.address, isNot(0));
+    expect(requested, 0);
+  });
+
+  test('clipboard write callback receives normalized OSC 52 content', () {
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+    addTearDown(terminal.close);
+    VtClipboardWriteRequest? request;
+    terminal.onClipboardWrite = (value) {
+      request = value;
+      return const VtClipboardWriteReply(
+        GhosttyClipboardWriteResult.GHOSTTY_CLIPBOARD_WRITE_RESULT_SUCCESS,
+      );
+    };
+
+    terminal.write('\x1b]52;c;aGVsbG8=\x07');
+
+    expect(request, isNotNull);
+    expect(
+      request!.location,
+      GhosttyClipboardLocation.GHOSTTY_CLIPBOARD_LOCATION_STANDARD,
+    );
+    expect(utf8.decode(request!.contents['text/plain']!), 'hello');
+  });
+
+  test('clipboard read callback answers an OSC 52 query', () {
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+    addTearDown(terminal.close);
+    final pty = BytesBuilder(copy: false);
+    terminal
+      ..onWritePty = pty.add
+      ..onClipboardRead = (request) {
+        expect(request.mimes, contains('text/plain'));
+        return const VtClipboardReadReply(
+          GhosttyClipboardReadResult.GHOSTTY_CLIPBOARD_READ_RESULT_SUCCESS,
+          contents: <String, List<int>>{
+            'text/plain': <int>[104, 101, 108, 108, 111],
+          },
+        );
+      };
+
+    terminal.write('\x1b]52;c;?\x07');
+
+    expect(utf8.decode(pty.takeBytes()), contains('aGVsbG8='));
+  });
+
+  test('incremental snapshot decoder restores history pages', () {
+    final source = GhosttyVt.newTerminal(cols: 20, rows: 4);
+    addTearDown(source.close);
+    final padding = List<String>.filled(60, 'x').join();
+    for (var i = 0; i < 3000; i++) {
+      source.write('line $i $padding\r\n');
+    }
+    final decoder = VtSnapshotDecoder(source.snapshotBytes());
+    addTearDown(decoder.close);
+    final restored = decoder.ready();
+    addTearDown(restored.close);
+
+    var pages = 0;
+    VtSnapshotProgress? progress;
+    while ((progress = decoder.next()) != null) {
+      expect(progress!.rows, greaterThanOrEqualTo(0));
+      pages++;
+    }
+
+    expect(pages, greaterThan(0));
+    expect(decoder.sourceOffset, greaterThan(0));
+  });
+
+  test('semantic prompt and title-report terminal data are exposed', () {
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+    addTearDown(terminal.close);
+    final pty = BytesBuilder(copy: false);
+    terminal
+      ..onWritePty = pty.add
+      ..titleReportEnabled = true
+      ..terminfoName = 'xterm-256color';
+
+    terminal.write('\x1b]133;A\x07');
+    expect(terminal.cursorAtPrompt, isTrue);
+    terminal.write('\x1b]2;my title\x07\x1b[21t');
+    expect(utf8.decode(pty.takeBytes()), contains('my title'));
   });
 }
