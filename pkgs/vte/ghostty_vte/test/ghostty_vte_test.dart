@@ -1443,6 +1443,19 @@ void main() {
     expect(decoder.sourceOffset, greaterThan(0));
   });
 
+  test('incremental snapshot decoder rejects a closed restored terminal', () {
+    final source = GhosttyVt.newTerminal(cols: 20, rows: 4);
+    addTearDown(source.close);
+    source.write('snapshot content');
+    final decoder = VtSnapshotDecoder(source.snapshotBytes());
+    addTearDown(decoder.close);
+    final restored = decoder.ready()..close();
+
+    expect(decoder.next, throwsStateError);
+    // Closing remains idempotent for cleanup after the rejected continuation.
+    restored.close();
+  });
+
   test('semantic prompt and title-report terminal data are exposed', () {
     final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
     addTearDown(terminal.close);

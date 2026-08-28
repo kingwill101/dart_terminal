@@ -5434,9 +5434,13 @@ final class VtSnapshotDecoder {
   /// Restores one history page, or returns `null` after FINISH validates.
   VtSnapshotProgress? next() {
     _ensureOpen();
-    if (_terminal == null) {
+    final terminal = _terminal;
+    if (terminal == null) {
       throw StateError('Call ready() before incremental history decoding.');
     }
+    // The decoder borrows the restored terminal until FINISH or decoder
+    // disposal. Never enter native code after that terminal has been freed.
+    terminal._ensureOpen();
     final result = bindings.ghostty_snapshot_decoder_next(_handle);
     if (result == bindings.GhosttyResult.GHOSTTY_NO_VALUE) return null;
     _checkResult(result, 'ghostty_snapshot_decoder_next');

@@ -956,7 +956,18 @@ final class _GhosttyWasmRuntime {
 
   int readUsize(int ptr) => _data.getUint32(ptr, Endian.little);
 
-  int readU64(int ptr) => _data.getUint64(ptr, Endian.little);
+  int readU64(int ptr) {
+    // ByteData.getUint64 is unavailable in dart2js. Combining 32-bit halves
+    // avoids that API while remaining exact for JavaScript's safe-int range.
+    final low = _data.getUint32(ptr, Endian.little);
+    final high = _data.getUint32(ptr + 4, Endian.little);
+    if (high > 0x1FFFFF) {
+      throw UnsupportedError(
+        'Unsigned 64-bit value exceeds the exact web integer range.',
+      );
+    }
+    return high * 0x100000000 + low;
+  }
 
   int readI32(int ptr) => _data.getInt32(ptr, Endian.little);
 
@@ -1117,6 +1128,14 @@ const int _ghosttyTerminalDataColorForegroundDefault = 22;
 const int _ghosttyTerminalDataColorBackgroundDefault = 23;
 const int _ghosttyTerminalDataColorCursorDefault = 24;
 const int _ghosttyTerminalDataColorPaletteDefault = 25;
+const int _ghosttyTerminalDataCols = 1;
+const int _ghosttyTerminalDataRows = 2;
+const int _ghosttyTerminalDataCursorX = 3;
+const int _ghosttyTerminalDataCursorY = 4;
+const int _ghosttyTerminalDataCursorPendingWrap = 5;
+const int _ghosttyTerminalDataActiveScreen = 6;
+const int _ghosttyTerminalDataCursorVisible = 7;
+const int _ghosttyTerminalDataScrollbackMaxLines = 35;
 const int _ghosttyTerminalDataContinuationMaxBytes = 36;
 const int _ghosttyTerminalDataMode = 37;
 const int _ghosttyTerminalDataVtGround = 38;
@@ -1394,6 +1413,23 @@ final class VtModes {
   static const graphemeCluster = VtMode(2027);
   static const colorSchemeReport = VtMode(2031);
   static const inBandResize = VtMode(2048);
+}
+
+/// Aggregated mouse-reporting state derived from terminal modes.
+final class VtMouseProtocolState {
+  const VtMouseProtocolState({
+    required this.enabled,
+    required this.trackingMode,
+    required this.format,
+    required this.focusEvents,
+    required this.altScroll,
+  });
+
+  final bool enabled;
+  final GhosttyMouseTrackingMode? trackingMode;
+  final GhosttyMouseFormat? format;
+  final bool focusEvents;
+  final bool altScroll;
 }
 
 final class VtPoint {
@@ -3392,8 +3428,8 @@ final class VtFormatterTerminalOptions {
 
   /// Optional selection to restrict output to a specific region.
   ///
-  /// Currently ignored on the web (wasm) target — the full screen is
-  /// always formatted.  Set to null (the default) for no restriction.
+  /// The web (Wasm) target throws [UnsupportedError] when this is non-null
+  /// because selection pointers cannot yet be marshalled into Wasm memory.
   final VtSelection? selection;
 }
 
@@ -3689,9 +3725,10 @@ final class VtTerminal {
     : _cols = 0,
       _rows = 0,
       _maxScrollback = 0 {
-    _cols = _terminalUint16(1);
-    _rows = _terminalUint16(2);
-    _maxScrollback = _terminalOptionalSize(35) ?? 0;
+    _cols = _terminalUint16(_ghosttyTerminalDataCols);
+    _rows = _terminalUint16(_ghosttyTerminalDataRows);
+    _maxScrollback =
+        _terminalOptionalSize(_ghosttyTerminalDataScrollbackMaxLines) ?? 0;
   }
 
   final _GhosttyWasmRuntime _wasm;
@@ -3836,29 +3873,70 @@ final class VtTerminal {
     return _maxScrollback;
   }
 
-  int get cursorX {
-    _ensureOpen();
-    _unsupportedTerminalApi('VtTerminal.cursorX');
-  }
+  /// The current cursor position within the active screen.
+  ({int x, int y}) get cursorPosition => (x: cursorX, y: cursorY);
 
-  int get cursorY {
-    _ensureOpen();
-    _unsupportedTerminalApi('VtTerminal.cursorY');
-  }
+  int get cursorX => _terminalUint16(_ghosttyTerminalDataCursorX);
 
-  bool get cursorPendingWrap {
-    _ensureOpen();
-    _unsupportedTerminalApi('VtTerminal.cursorPendingWrap');
-  }
+  int get cursorY => _terminalUint16(_ghosttyTerminalDataCursorY);
 
-  GhosttyTerminalScreen get activeScreen {
-    _ensureOpen();
-    _unsupportedTerminalApi('VtTerminal.activeScreen');
-  }
+  bool get cursorPendingWrap =>
+      _terminalBool(_ghosttyTerminalDataCursorPendingWrap);
 
-  bool get cursorVisible {
-    _ensureOpen();
-    _unsupportedTerminalApi('VtTerminal.cursorVisible');
+  GhosttyTerminalScreen get activeScreen => GhosttyTerminalScreen.fromValue(
+    _terminalUint32(_ghosttyTerminalDataActiveScreen),
+  );
+
+  bool get isPrimaryScreen =>
+      activeScreen == GhosttyTerminalScreen.GHOSTTY_TERMINAL_SCREEN_PRIMARY;
+
+  bool get isAlternateScreen =>
+      activeScreen == GhosttyTerminalScreen.GHOSTTY_TERMINAL_SCREEN_ALTERNATE;
+
+  bool get cursorVisible => _terminalBool(_ghosttyTerminalDataCursorVisible);
+
+  VtMouseProtocolState get mouseProtocolState {
+    final enabled =
+        getMode(VtModes.x10Mouse) ||
+        getMode(VtModes.normalMouse) ||
+        getMode(VtModes.buttonMouse) ||
+        getMode(VtModes.anyMouse);
+
+    final GhosttyMouseTrackingMode? trackingMode;
+    if (getMode(VtModes.anyMouse)) {
+      trackingMode = GhosttyMouseTrackingMode.GHOSTTY_MOUSE_TRACKING_ANY;
+    } else if (getMode(VtModes.buttonMouse)) {
+      trackingMode = GhosttyMouseTrackingMode.GHOSTTY_MOUSE_TRACKING_BUTTON;
+    } else if (getMode(VtModes.normalMouse)) {
+      trackingMode = GhosttyMouseTrackingMode.GHOSTTY_MOUSE_TRACKING_NORMAL;
+    } else if (getMode(VtModes.x10Mouse)) {
+      trackingMode = GhosttyMouseTrackingMode.GHOSTTY_MOUSE_TRACKING_X10;
+    } else {
+      trackingMode = null;
+    }
+
+    final GhosttyMouseFormat? format;
+    if (!enabled) {
+      format = null;
+    } else if (getMode(VtModes.sgrPixelsMouse)) {
+      format = GhosttyMouseFormat.GHOSTTY_MOUSE_FORMAT_SGR_PIXELS;
+    } else if (getMode(VtModes.sgrMouse)) {
+      format = GhosttyMouseFormat.GHOSTTY_MOUSE_FORMAT_SGR;
+    } else if (getMode(VtModes.urxvtMouse)) {
+      format = GhosttyMouseFormat.GHOSTTY_MOUSE_FORMAT_URXVT;
+    } else if (getMode(VtModes.utf8Mouse)) {
+      format = GhosttyMouseFormat.GHOSTTY_MOUSE_FORMAT_UTF8;
+    } else {
+      format = GhosttyMouseFormat.GHOSTTY_MOUSE_FORMAT_X10;
+    }
+
+    return VtMouseProtocolState(
+      enabled: enabled,
+      trackingMode: trackingMode,
+      format: format,
+      focusEvents: getMode(VtModes.focusEvent),
+      altScroll: getMode(VtModes.altScroll),
+    );
   }
 
   bool get vtGround => _terminalBool(_ghosttyTerminalDataVtGround);
@@ -4143,6 +4221,19 @@ final class VtTerminal {
       return _wasm.readU16(out);
     } finally {
       _wasm.freeU8Array(out, 2);
+    }
+  }
+
+  int _terminalUint32(int data) {
+    final out = _allocU8ArrayOrThrow(_wasm, 4, 'ghostty_wasm_alloc');
+    try {
+      _checkResult(
+        _wasm.callInt('ghostty_terminal_get', <Object>[_handle, data, out]),
+        'ghostty_terminal_get',
+      );
+      return _wasm.readUsize(out);
+    } finally {
+      _wasm.freeU8Array(out, 4);
     }
   }
 
@@ -4497,6 +4588,11 @@ final class VtTerminal {
     VtFormatterTerminalOptions options = const VtFormatterTerminalOptions(),
   ]) {
     _ensureOpen();
+    if (options.selection != null) {
+      throw UnsupportedError(
+        'Selection-restricted terminal formatting is not supported on web.',
+      );
+    }
     final formatter = VtTerminalFormatter._(this, options);
     _formatters.add(formatter);
     return formatter;
@@ -4725,9 +4821,11 @@ final class VtSnapshotDecoder {
 
   VtSnapshotProgress? next() {
     _ensureOpen();
-    if (_terminal == null) {
+    final terminal = _terminal;
+    if (terminal == null) {
       throw StateError('Call ready() before incremental history decoding.');
     }
+    terminal._ensureOpen();
     final result = _wasm.callInt('ghostty_snapshot_decoder_next', <Object>[
       _handle,
     ]);
@@ -5233,14 +5331,13 @@ final class GhosttyVt {
     return rt.readCString(ptr);
   }
 
-  /// Installs a process-global system option.
+  /// Not supported on the web target — throws [UnsupportedError].
   ///
-  /// Currently a no-op on the web target: system callbacks (such as a
-  /// PNG decoder) cannot be installed into the wasm module from Dart.
-  /// This method exists solely for API parity with the native target.
-  static void sysSet(GhosttySysOption option, Object? value) {
-    // Wasm callback installation is not yet supported.
-    // ignore: no-op on web
+  /// System callbacks cannot be installed into the wasm module from Dart.
+  static Never sysSet(GhosttySysOption option, Object? value) {
+    throw UnsupportedError(
+      'System option installation is not supported on web.',
+    );
   }
 
   /// Not supported on the web target — throws [UnsupportedError].

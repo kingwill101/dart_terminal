@@ -197,11 +197,8 @@ class GhosttyTerminalController extends ChangeNotifier
     }
   }
 
-  /// Formats the terminal output restricted to [selection].
-  ///
-  /// Uses [VtFormatterTerminalOptions.selection] to emit only the cells
-  /// covered by [selection].  The [emit], [unwrap], [trim], and [extra]
-  /// parameters mirror those of [formatTerminal].
+  /// Not supported on web because the Wasm formatter cannot marshal a
+  /// [VtSelection].
   String formatTerminalForSelection({
     required VtSelection selection,
     GhosttyFormatterFormat emit =
@@ -210,21 +207,9 @@ class GhosttyTerminalController extends ChangeNotifier
     bool trim = true,
     VtFormatterTerminalExtra extra = const VtFormatterTerminalExtra(),
   }) {
-    final terminal = _ensureTerminal();
-    final formatter = terminal.createFormatter(
-      VtFormatterTerminalOptions(
-        emit: emit,
-        unwrap: unwrap,
-        trim: trim,
-        extra: extra,
-        selection: selection,
-      ),
+    throw UnsupportedError(
+      'Selection-restricted terminal formatting is not supported on web.',
     );
-    try {
-      return formatter.formatText();
-    } finally {
-      formatter.close();
-    }
   }
 
   /// Marks the transport session as started and records launch metadata.
