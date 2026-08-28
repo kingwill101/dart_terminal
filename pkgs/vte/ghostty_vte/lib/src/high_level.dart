@@ -4961,9 +4961,10 @@ final class VtTerminal {
       );
       return;
     }
+    final checkedValue = _checkNonNegative(value, 'kittyImageStorageLimit');
     final out = calloc<ffi.Uint64>();
     try {
-      out.value = value;
+      out.value = checkedValue;
       bindings.ghostty_terminal_set(
         _handle,
         bindings
@@ -5075,9 +5076,10 @@ final class VtTerminal {
       );
       return;
     }
+    final checkedValue = _checkNonNegative(value, 'apcMaxBytes');
     final out = calloc<ffi.Size>();
     try {
-      out.value = value;
+      out.value = checkedValue;
       bindings.ghostty_terminal_set(
         _handle,
         bindings.GhosttyTerminalOption.GHOSTTY_TERMINAL_OPT_APC_MAX_BYTES,
@@ -5101,9 +5103,10 @@ final class VtTerminal {
       );
       return;
     }
+    final checkedValue = _checkNonNegative(value, 'apcMaxBytesKitty');
     final out = calloc<ffi.Size>();
     try {
-      out.value = value;
+      out.value = checkedValue;
       bindings.ghostty_terminal_set(
         _handle,
         bindings.GhosttyTerminalOption.GHOSTTY_TERMINAL_OPT_APC_MAX_BYTES_KITTY,

@@ -1145,6 +1145,18 @@ void main() {
     expect(terminal.kittyImageStorageLimit, 0);
   }, skip: kittyGraphicsSkip);
 
+  test('terminal rejects negative native memory limits', () {
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+    addTearDown(terminal.close);
+
+    expect(
+      () => terminal.kittyImageStorageLimit = -1,
+      throwsA(isA<RangeError>()),
+    );
+    expect(() => terminal.apcMaxBytes = -1, throwsA(isA<RangeError>()));
+    expect(() => terminal.apcMaxBytesKitty = -1, throwsA(isA<RangeError>()));
+  });
+
   test('kitty graphics wrapper exposes image placement render data', () {
     final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
     addTearDown(terminal.close);
