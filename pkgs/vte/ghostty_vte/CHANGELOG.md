@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0-beta.2
+
+- Added incremental snapshot decoding with history restoration and safe
+  terminal ownership across native and web runtimes.
+- Added APIs for continuation state, unknown APC capture, secure randomness,
+  clipboard access, and richer render and mouse state.
+- Hardened web API parity, terminal option validation, and native memory
+  lifetime handling.
+- Enforced and verified 16 KB ELF `LOAD` alignment for Android prebuilts.
+- Updated the verified prebuilt release metadata and checksums to the beta.2
+  artifacts for every supported target.
+
 ## 0.2.0-beta.1
 
 - Updated to `native_prebuilt` 0.5.0, Code Assets 2.0, and Hooks 2.2, and
