@@ -7,6 +7,7 @@ on:
       - "pkgs/vte/**"
       - "pubspec.yaml"
       - "tool/apply_ghostty_vte_source_patches.sh"
+      - "tool/verify_android_16kb_page_size.sh"
       - "tool/verify_vte_android_libc.sh"
       - ".github/workflows/vte.yml"
   pull_request:
@@ -15,6 +16,7 @@ on:
       - "pkgs/vte/**"
       - "pubspec.yaml"
       - "tool/apply_ghostty_vte_source_patches.sh"
+      - "tool/verify_android_16kb_page_size.sh"
       - "tool/verify_vte_android_libc.sh"
       - ".github/workflows/vte.yml"
 
@@ -137,6 +139,10 @@ jobs:
       - name: Verify Android libghostty-vt links libc
         if: contains(matrix.target, 'android')
         run: ./tool/verify_vte_android_libc.sh "${{ steps.locate_vte.outputs.path }}"
+
+      - name: Verify Android VTE supports 16 KB pages
+        if: contains(matrix.target, 'android')
+        run: ./tool/verify_android_16kb_page_size.sh "${{ steps.locate_vte.outputs.path }}"
 
       - name: Package VTE artifact
         run: |

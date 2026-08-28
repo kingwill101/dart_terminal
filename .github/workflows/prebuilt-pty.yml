@@ -123,6 +123,12 @@ jobs:
         with:
           ndk-version: r27c
 
+      - name: Install binary inspection tools
+        if: startsWith(matrix.os_label, 'android-')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binutils
+
       - name: Build PTY native library
         working-directory: pkgs/pty/portable_pty/rust
         run: |
@@ -134,6 +140,12 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         shell: bash
+
+      - name: Verify Android PTY supports 16 KB pages
+        if: startsWith(matrix.os_label, 'android-')
+        run: >-
+          ./tool/verify_android_16kb_page_size.sh
+          "pkgs/pty/portable_pty/rust/target/${{ matrix.rust_target }}/release/${{ matrix.artifact }}"
 
       - name: Package artifact
         run: |

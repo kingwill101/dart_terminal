@@ -54,8 +54,14 @@ build:
           working_directory: "{{ source.path }}/rust"
           commands:
             - [cross, build, --manifest-path, "{{ variables.cargo_manifest }}", --release, --target, "{{ target.rust_target }}"]
+        - id: verify_page_size
+          type: command
+          needs: [build]
+          commands:
+            - [sh, -ceu, "found=0; for alignment in $(readelf -lW \"$1\" | awk '$1 == \"LOAD\" {print $NF}'); do found=1; if [ $((alignment)) -lt 16384 ]; then echo \"LOAD alignment $alignment is below 0x4000\" >&2; exit 1; fi; done; [ \"$found\" -eq 1 ]", sh, "{{ variables.library_path }}"]
         - id: export
           type: export_artifact
+          needs: [verify_page_size]
           artifact: portable_pty_rs
           primary: "{{ variables.library_path }}"
 

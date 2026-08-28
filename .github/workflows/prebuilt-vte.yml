@@ -179,6 +179,10 @@ jobs:
         if: contains(matrix.target, 'android')
         run: ./tool/verify_vte_android_libc.sh "${{ steps.locate.outputs.path }}"
 
+      - name: Verify Android VTE supports 16 KB pages
+        if: contains(matrix.target, 'android')
+        run: ./tool/verify_android_16kb_page_size.sh "${{ steps.locate.outputs.path }}"
+
       - name: Package artifact
         run: |
           mkdir -p staging

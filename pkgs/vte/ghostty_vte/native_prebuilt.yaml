@@ -20,6 +20,7 @@ release:
 variables:
   cmake_build_directory: "{{ work }}/build-{{ target.label }}"
   cmake_target: zig_build_lib_vt
+  library_path: "{{ source.path }}/zig-out/{{ library.versioned_name }}"
   # Keep release artifacts on Ghostty's portable non-SIMD path. Native SIMD
   # links the build host's libc/libm and can raise the Linux glibc floor.
   ghostty_zig_build_flags: "-Dtarget={{ target.zig_target }};-Dsimd=false"
@@ -46,7 +47,7 @@ build:
         - id: export
           type: export_artifact
           artifact: ghostty-vt
-          primary: "{{ source.path }}/zig-out/{{ library.versioned_name }}"
+          primary: "{{ variables.library_path }}"
 
     - target: {os: linux, architecture: arm64}
       steps: *ghostty_steps
@@ -72,7 +73,7 @@ build:
         - id: export
           type: export_artifact
           artifact: ghostty-vt
-          primary: "{{ source.path }}/zig-out/{{ library.versioned_name }}"
+          primary: "{{ variables.library_path }}"
 
     - target: {os: windows, architecture: arm64}
       steps: *ghostty_windows_steps
@@ -95,10 +96,16 @@ build:
           type: cmake_build
           build_directory: "{{ variables.cmake_build_directory }}"
           targets: ["{{ variables.cmake_target }}"]
+        - id: verify_page_size
+          type: command
+          needs: [build]
+          commands:
+            - [sh, -ceu, "found=0; for alignment in $(readelf -lW \"$1\" | awk '$1 == \"LOAD\" {print $NF}'); do found=1; if [ $((alignment)) -lt 16384 ]; then echo \"LOAD alignment $alignment is below 0x4000\" >&2; exit 1; fi; done; [ \"$found\" -eq 1 ]", sh, "{{ variables.library_path }}"]
         - id: export
           type: export_artifact
+          needs: [verify_page_size]
           artifact: ghostty-vt
-          primary: "{{ source.path }}/zig-out/{{ library.versioned_name }}"
+          primary: "{{ variables.library_path }}"
     - target: {os: android, architecture: arm}
       steps: *ghostty_android_steps
     - target: {os: android, architecture: x64}
