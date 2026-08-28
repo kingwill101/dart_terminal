@@ -6,7 +6,7 @@
 // dart format off
 
 /// The GitHub release tag from which prebuilt binaries are downloaded.
-const String releaseTag = 'portable_pty-v0.0.7-beta.1';
+const String releaseTag = 'portable_pty-v0.0.7-beta.2';
 
 /// Maps platform labels to artifact info and SHA256 hashes.
 const Map<String, AssetHash> assetHashes = {
@@ -28,23 +28,23 @@ const Map<String, AssetHash> assetHashes = {
   ),
   'windows-x64': AssetHash(
     tarball: 'pty-windows-x64.tar.gz',
-    hash: '55459d86efee5202dfe243addf6ebfb2048f790e71ced7dd15a89cb2975693e5',
+    hash: '45c9128734d422a397938924a3242df48a2a13459a79169c049d3a96d178d066',
   ),
   'windows-arm64': AssetHash(
     tarball: 'pty-windows-arm64.tar.gz',
-    hash: '717ad2c70753bc90ddc8711e4f04558314d2c06cb3c46ce1b82469265e8267d1',
+    hash: 'b09b2d1cfa320471678e5641350924dad4100a3798d6e557b7d279055a9ffe3a',
   ),
   'android-arm64': AssetHash(
     tarball: 'pty-android-arm64.tar.gz',
-    hash: 'be4d2e82542974ed2f7c2fca69838af355a714e464d15cb47dba5d506c1b36ce',
+    hash: '51cc345ce8060223c0bf178611061ff5716d14d9f0a6c0c1ccf7a98021ea8d92',
   ),
   'android-arm': AssetHash(
     tarball: 'pty-android-arm.tar.gz',
-    hash: '36725416503158ecbf5851f180334068e50016097620a0408c426d61a37590ee',
+    hash: '3aef38b36476a8ce4b5344594ea7de536409fa9337dcc3a4658175b076c44fd7',
   ),
   'android-x64': AssetHash(
     tarball: 'pty-android-x64.tar.gz',
-    hash: '83255613e2ce22f2df2f2127ae2b9c5bcace2d4199bf37c333e633de1c9fb7fa',
+    hash: 'd99feec672718ead325dc6da7fce5ca3df8cacc0c1e3fd608b19b9be925c4a5b',
   ),
   'ios-arm64': AssetHash(
     tarball: 'pty-ios-arm64.tar.gz',

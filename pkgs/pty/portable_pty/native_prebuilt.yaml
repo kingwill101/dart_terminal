@@ -16,7 +16,7 @@ source:
 release:
   provider: github
   repository: kingwill101/dart_terminal
-  tag: portable_pty-v0.0.7-beta.1
+  tag: portable_pty-v0.0.7-beta.2
 
 variables:
   cargo_manifest: "{{ source.path }}/rust/Cargo.toml"
