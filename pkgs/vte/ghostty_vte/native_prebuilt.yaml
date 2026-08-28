@@ -15,7 +15,7 @@ source:
 release:
   provider: github
   repository: kingwill101/dart_terminal
-  tag: ghostty_vte-v0.2.0-beta.1
+  tag: ghostty_vte-v0.2.0-beta.2
 
 variables:
   cmake_build_directory: "{{ work }}/build-{{ target.label }}"

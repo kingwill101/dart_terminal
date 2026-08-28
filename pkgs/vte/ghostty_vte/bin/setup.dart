@@ -1,7 +1,7 @@
 /// Downloads the prebuilt ghostty_vte native library for the host platform.
 ///
 /// Usage:
-///   dart run ghostty_vte:setup [--tag ghostty_vte-v0.2.0-beta.1] [--platform linux-x64]
+///   dart run ghostty_vte:setup [--tag ghostty_vte-v0.2.0-beta.2] [--platform linux-x64]
 ///
 /// The library is placed in `.prebuilt/<platform>/` at the project root,
 /// where the build hook will find it automatically.
