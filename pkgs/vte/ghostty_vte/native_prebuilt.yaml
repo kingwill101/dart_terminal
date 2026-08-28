@@ -100,7 +100,7 @@ build:
           type: command
           needs: [build]
           commands:
-            - [sh, -ceu, "found=0; for alignment in $(readelf -lW \"$1\" | awk '$1 == \"LOAD\" {print $NF}'); do found=1; if [ $((alignment)) -lt 16384 ]; then echo \"LOAD alignment $alignment is below 0x4000\" >&2; exit 1; fi; done; [ \"$found\" -eq 1 ]", sh, "{{ variables.library_path }}"]
+            - [sh, -ceu, "tool=$(command -v readelf || command -v llvm-readelf || true); [ -n \"$tool\" ] || { echo \"readelf or llvm-readelf is required\" >&2; exit 1; }; if ! headers=$(\"$tool\" -lW \"$1\"); then echo \"failed to inspect ELF program headers\" >&2; exit 1; fi; found=0; for alignment in $(printf '%s\\n' \"$headers\" | awk '$1 == \"LOAD\" {print $NF}'); do found=1; if [ $((alignment)) -lt 16384 ]; then echo \"LOAD alignment $alignment is below 0x4000\" >&2; exit 1; fi; done; [ \"$found\" -eq 1 ] || { echo \"no ELF LOAD segments found\" >&2; exit 1; }", sh, "{{ variables.library_path }}"]
         - id: export
           type: export_artifact
           needs: [verify_page_size]

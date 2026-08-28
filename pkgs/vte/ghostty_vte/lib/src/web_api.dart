@@ -3325,8 +3325,8 @@ Never _unsupportedTerminalApi(String member) {
 /// Used with [VtFormatterTerminalOptions.selection] to restrict formatter
 /// output to a specific region.
 ///
-/// Selection is accepted in the API on the web target but is currently
-/// ignored — the formatter always emits the full screen.
+/// The web (Wasm) target throws [UnsupportedError] when this is supplied to a
+/// formatter because selection pointers cannot yet be marshalled into Wasm.
 final class VtSelection {
   const VtSelection({
     required this.start,
