@@ -500,9 +500,8 @@ final class GhosttyTerminalLine {
         continue;
       }
 
-      final prefixCellCount = _splitCharacters(
-        text.substring(0, match.start),
-      ).length;
+      final prefixCellCount = _splitCharacters(text.substring(0, match.start))
+          .length;
       final linkCellCount = _splitCharacters(trimmed).length;
       final startCol = prefixCellCount;
       final endCol = startCol + linkCellCount - 1;
@@ -1276,6 +1275,8 @@ final class _GhosttyTerminalSnapshotParser {
           _style = GhosttyTerminalStyle(hyperlink: _style.hyperlink);
           break;
         case GhosttySgrAttributeTag.GHOSTTY_SGR_ATTR_UNKNOWN:
+          break;
+        case GhosttySgrAttributeTag.GHOSTTY_SGR_ATTR_MAX_VALUE:
           break;
       }
     }

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.7-beta.1
+
+- Updated to `native_prebuilt` 0.5.0, Code Assets 2.0, and Hooks 2.2.
+- Kept Rust source fallback on the declarative `native_prebuilt.yaml` recipes,
+  with no `native_toolchain_rust` package dependency.
+- Raised the minimum Dart SDK to 3.13.
+
 ## 0.0.6
 
 - Migrated native builds and prebuilt resolution to the declarative

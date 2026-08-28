@@ -10,18 +10,22 @@ link_mode: dynamic_library
 source:
   type: git
   repository: https://github.com/ghostty-org/ghostty
-  revision: 4d605bf0d819df901a0332bbb320dc849fdd82e4
+  revision: f2d5758f6305867dc36b36293c6165d8152b853e
 
 release:
   provider: github
   repository: kingwill101/dart_terminal
-  tag: ghostty_vte-v0.1.4
+  tag: ghostty_vte-v0.2.0-beta.1
 
 variables:
   cmake_build_directory: "{{ work }}/build-{{ target.label }}"
   cmake_target: zig_build_lib_vt
+  library_path: "{{ source.path }}/zig-out/{{ library.versioned_name }}"
+  # Keep release artifacts on Ghostty's portable non-SIMD path. Native SIMD
+  # links the build host's libc/libm and can raise the Linux glibc floor.
   ghostty_zig_build_flags: "-Dtarget={{ target.zig_target }};-Dsimd=false"
-  ghostty_libc_patch_url: "https://raw.githubusercontent.com/kingwill101/dart_terminal/b3b2115/pkgs/vte/ghostty_vte/patches/ghostty-libvt-link-libc.patch"
+  # Non-SIMD Android still references getauxval, so link Bionic explicitly.
+  ghostty_libc_patch_url: "https://raw.githubusercontent.com/kingwill101/dart_terminal/8c717dba6e3be89afe402c1e9b5cee7a6a8c997b/pkgs/vte/ghostty_vte/patches/ghostty-libvt-link-libc.patch"
 
 build:
   options:
@@ -43,7 +47,7 @@ build:
         - id: export
           type: export_artifact
           artifact: ghostty-vt
-          primary: "{{ source.path }}/zig-out/{{ library.versioned_name }}"
+          primary: "{{ variables.library_path }}"
 
     - target: {os: linux, architecture: arm64}
       steps: *ghostty_steps
@@ -69,7 +73,7 @@ build:
         - id: export
           type: export_artifact
           artifact: ghostty-vt
-          primary: "{{ source.path }}/zig-out/{{ library.versioned_name }}"
+          primary: "{{ variables.library_path }}"
 
     - target: {os: windows, architecture: arm64}
       steps: *ghostty_windows_steps
@@ -92,10 +96,16 @@ build:
           type: cmake_build
           build_directory: "{{ variables.cmake_build_directory }}"
           targets: ["{{ variables.cmake_target }}"]
+        - id: verify_page_size
+          type: command
+          needs: [build]
+          commands:
+            - [sh, -ceu, "tool=$(command -v readelf || command -v llvm-readelf || true); [ -n \"$tool\" ] || { echo \"readelf or llvm-readelf is required\" >&2; exit 1; }; if ! headers=$(\"$tool\" -lW \"$1\"); then echo \"failed to inspect ELF program headers\" >&2; exit 1; fi; found=0; for alignment in $(printf '%s\\n' \"$headers\" | awk '$1 == \"LOAD\" {print $NF}'); do found=1; if [ $((alignment)) -lt 16384 ]; then echo \"LOAD alignment $alignment is below 0x4000\" >&2; exit 1; fi; done; [ \"$found\" -eq 1 ] || { echo \"no ELF LOAD segments found\" >&2; exit 1; }", sh, "{{ variables.library_path }}"]
         - id: export
           type: export_artifact
+          needs: [verify_page_size]
           artifact: ghostty-vt
-          primary: "{{ source.path }}/zig-out/{{ library.versioned_name }}"
+          primary: "{{ variables.library_path }}"
     - target: {os: android, architecture: arm}
       steps: *ghostty_android_steps
     - target: {os: android, architecture: x64}

@@ -2,7 +2,7 @@ name: portable_pty_flutter_example
 publish_to: none
 
 environment:
-  sdk: ^3.10.4
+  sdk: ^3.13.0
   flutter: ">=1.17.0"
 resolution: workspace
 

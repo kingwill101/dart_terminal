@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 import 'package:ghostty_vte/ghostty_vte.dart';
+
 import 'terminal_snapshot.dart';
 
 /// Resolved cell style derived from Ghostty render-state data.

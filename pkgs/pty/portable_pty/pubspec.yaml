@@ -4,7 +4,7 @@ description: >-
   Spawns shell subprocesses on Linux, macOS, Windows, and Android, links native
   assets into supported iOS builds, and connects through WebSocket or
   WebTransport to a remote PTY server on web.
-version: 0.0.6
+version: 0.0.7-beta.1
 
 repository: https://github.com/kingwill101/dart_terminal/tree/master/pkgs/pty/portable_pty
 homepage: https://github.com/kingwill101/dart_terminal
@@ -18,7 +18,7 @@ topics:
   - process
 
 environment:
-  sdk: ^3.10.4
+  sdk: ^3.13.0
 
 executables:
   setup: setup
@@ -26,13 +26,13 @@ executables:
 resolution: workspace
 
 dependencies:
-  code_assets: ^1.0.0
+  code_assets: ^2.0.0
   ffi: ^2.2.0
-  hooks: ^2.1.0
-  native_prebuilt: ^0.3.2
+  hooks: ^2.2.0
+  native_prebuilt: ^0.5.0
   web: ^1.1.1
 
 dev_dependencies:
   ffigen: ^20.1.1
   flutter_lints: ^6.0.0
-  test: ^1.25.8
+  test: ^1.31.1

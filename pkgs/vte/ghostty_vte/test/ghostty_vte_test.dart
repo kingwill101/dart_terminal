@@ -1,9 +1,16 @@
+import 'dart:convert';
+import 'dart:ffi' as ffi;
 import 'dart:typed_data';
 
+import 'package:ffi/ffi.dart';
 import 'package:ghostty_vte/ghostty_vte.dart';
 import 'package:test/test.dart';
 
 void main() {
+  final kittyGraphicsSkip = GhosttyVt.buildInfo.kittyGraphics
+      ? false
+      : 'Kitty graphics are disabled in this libghostty-vt build.';
+
   test('safe paste for plain text', () {
     expect(GhosttyVt.isPasteSafe('echo hello'), isTrue);
   });
@@ -1093,5 +1100,386 @@ void main() {
 
     expect(terminal.widthPx, 80 * 10);
     expect(terminal.heightPx, 24 * 20);
+  });
+
+  test('terminal getMulti batches scalar fields', () {
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+    addTearDown(terminal.close);
+
+    final cols = calloc<ffi.Uint16>();
+    final rows = calloc<ffi.Uint16>();
+    try {
+      final written = terminal.getMulti({
+        GhosttyTerminalData.GHOSTTY_TERMINAL_DATA_COLS: cols.cast(),
+        GhosttyTerminalData.GHOSTTY_TERMINAL_DATA_ROWS: rows.cast(),
+      });
+
+      expect(written, 2);
+      expect(cols.value, 80);
+      expect(rows.value, 24);
+    } finally {
+      calloc.free(cols);
+      calloc.free(rows);
+    }
+  });
+
+  test('kitty graphics options round-trip when supported', () {
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+    addTearDown(terminal.close);
+
+    terminal.kittyImageStorageLimit = 1024 * 1024;
+    expect(terminal.kittyImageStorageLimit, 1024 * 1024);
+
+    terminal.kittyImageMediumFile = true;
+    expect(terminal.kittyImageMediumFile, isTrue);
+
+    terminal.kittyImageMediumTempFile = '/tmp/ghostty-vte';
+    expect(terminal.kittyImageMediumTempFile, '/tmp/ghostty-vte');
+    terminal.kittyImageMediumTempFile = null;
+    expect(terminal.kittyImageMediumTempFile, isNull);
+
+    terminal.kittyImageMediumSharedMem = false;
+    expect(terminal.kittyImageMediumSharedMem, isFalse);
+
+    terminal.kittyImageStorageLimit = 0;
+    expect(terminal.kittyImageStorageLimit, 0);
+  }, skip: kittyGraphicsSkip);
+
+  test('terminal rejects negative native memory limits', () {
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+    addTearDown(terminal.close);
+
+    expect(
+      () => terminal.kittyImageStorageLimit = -1,
+      throwsA(isA<RangeError>()),
+    );
+    expect(() => terminal.apcMaxBytes = -1, throwsA(isA<RangeError>()));
+    expect(() => terminal.apcMaxBytesKitty = -1, throwsA(isA<RangeError>()));
+  });
+
+  test('kitty graphics wrapper exposes image placement render data', () {
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+    addTearDown(terminal.close);
+    terminal.resize(cols: 80, rows: 24, cellWidthPx: 10, cellHeightPx: 20);
+    terminal.kittyImageStorageLimit = 1024 * 1024;
+
+    terminal.write(
+      '\x1b_Ga=T,t=d,f=24,i=1,p=1,s=1,v=2,c=10,r=1;////////\x1b\\',
+    );
+
+    final graphics = terminal.kittyGraphics;
+    expect(graphics, isNotNull);
+
+    final image = graphics!.imageById(1);
+    expect(image, isNotNull);
+    expect(image!.id, 1);
+    expect(image.width, 1);
+    expect(image.height, 2);
+    expect(
+      image.format,
+      GhosttyKittyImageFormat.GHOSTTY_KITTY_IMAGE_FORMAT_RGB,
+    );
+    expect(
+      image.compression,
+      GhosttyKittyImageCompression.GHOSTTY_KITTY_IMAGE_COMPRESSION_NONE,
+    );
+    expect(image.generation, greaterThan(0));
+    expect(image.pixelDataAvailable, isTrue);
+    expect(image.rawPixelDataOrNull, isNotNull);
+    expect(image.rawPixelData, hasLength(6));
+
+    final iterator = graphics.iteratePlacements();
+    try {
+      expect(iterator.moveNext(), isTrue);
+
+      final placement = iterator.current;
+      expect(placement.imageId, 1);
+      expect(placement.placementId, 1);
+      expect(placement.isVirtual, isFalse);
+      expect(placement.columns, 10);
+      expect(placement.rows, 1);
+      expect(placement.z, 0);
+      expect(placement.image!.id, 1);
+
+      final pos = placement.viewportPos();
+      expect(pos, isNotNull);
+      expect(pos!.col, 0);
+      expect(pos.row, 0);
+
+      final renderInfo = placement.renderInfo();
+      expect(renderInfo, isNotNull);
+      expect(renderInfo!.viewportVisible, isTrue);
+      expect(renderInfo.pixelWidth, 100);
+      expect(renderInfo.pixelHeight, 20);
+      expect(renderInfo.gridCols, 10);
+      expect(renderInfo.gridRows, 1);
+      expect(renderInfo.viewportCol, 0);
+      expect(renderInfo.viewportRow, 0);
+      expect(renderInfo.sourceX, 0);
+      expect(renderInfo.sourceY, 0);
+      expect(renderInfo.sourceWidth, 1);
+      expect(renderInfo.sourceHeight, 2);
+
+      expect(iterator.moveNext(), isFalse);
+    } finally {
+      iterator.close();
+    }
+    expect(() => iterator.current, throwsStateError);
+    expect(() => iterator.imageId, throwsStateError);
+    expect(() => iterator.renderInfo(), throwsStateError);
+  }, skip: kittyGraphicsSkip);
+
+  test('installPngDecoder installs a native callback', () {
+    final callable = GhosttyVt.installPngDecoder((pngData) => null);
+    addTearDown(() {
+      GhosttyVt.sysSet(
+        GhosttySysOption.GHOSTTY_SYS_OPT_DECODE_PNG,
+        ffi.nullptr,
+      );
+      callable.close();
+    });
+
+    expect(callable.nativeFunction.address, isNot(0));
+  });
+
+  test('terminal-aware paste follows safety and bracketed paste state', () {
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+    addTearDown(terminal.close);
+    final pty = BytesBuilder(copy: false);
+    terminal.onWritePty = pty.add;
+
+    final plain = terminal.pasteText('hello');
+    expect(plain.written, isTrue);
+    expect(plain.rejected, isFalse);
+    expect(pty.takeBytes(), utf8.encode('hello'));
+
+    final rejected = terminal.pasteText('echo hi\n');
+    expect(rejected.written, isFalse);
+    expect(rejected.rejected, isTrue);
+
+    terminal.write('\x1b[?2004h');
+    final bracketed = terminal.pasteText('line one\nline two');
+    expect(bracketed.written, isTrue);
+    expect(
+      utf8.decode(pty.takeBytes()),
+      '\x1b[200~line one\nline two\x1b[201~',
+    );
+  });
+
+  test('continuation tracking and write-until-ground preserve VT state', () {
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24)
+      ..continuationMaxBytes = 1024;
+    addTearDown(terminal.close);
+
+    terminal.write('\x1b[31');
+    expect(terminal.vtGround, isFalse);
+    expect(terminal.continuationBytes(), utf8.encode('\x1b[31'));
+
+    final result = terminal.writeUntilGround('mignored');
+    expect(result.reachedGround, isTrue);
+    expect(result.consumed, 1);
+    expect(terminal.vtGround, isTrue);
+    expect(terminal.continuationBytes(), isEmpty);
+  });
+
+  test('terminal snapshots round-trip terminal content', () {
+    final source = GhosttyVt.newTerminal(
+      cols: 20,
+      rows: 4,
+      maxScrollback: 20_000,
+    );
+    addTearDown(source.close);
+    source.write('Hello\r\nWorld');
+
+    final snapshot = source.snapshotBytes();
+    expect(snapshot, isNotEmpty);
+
+    final decoder = VtSnapshotDecoder(snapshot);
+    addTearDown(decoder.close);
+    final restored = decoder.decode();
+    addTearDown(restored.close);
+    final formatter = restored.createFormatter();
+    addTearDown(formatter.close);
+
+    expect(formatter.formatText(), 'Hello\nWorld');
+    expect(decoder.sourceOffset, snapshot.length);
+    expect(decoder.primaryHistoryRows, isNotNull);
+  });
+
+  test('formatter streams output through writer callback', () {
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+    addTearDown(terminal.close);
+    terminal.write('streamed');
+    final formatter = terminal.createFormatter();
+    addTearDown(formatter.close);
+    final output = BytesBuilder(copy: false);
+
+    formatter.formatTo(output.add);
+
+    expect(utf8.decode(output.takeBytes()), 'streamed');
+  });
+
+  test('render state visits dirty rows and clean consumes frame dirtiness', () {
+    final terminal = GhosttyVt.newTerminal(cols: 8, rows: 4);
+    final renderState = terminal.createRenderState();
+    addTearDown(renderState.close);
+    addTearDown(terminal.close);
+    terminal.write('AB');
+    renderState.update();
+
+    final dirtyRows = <int>[];
+    renderState.visitDirtyRows((y, row) {
+      dirtyRows.add(y);
+      expect(row.raw, isA<VtRowSnapshot>());
+    });
+    expect(dirtyRows, isNotEmpty);
+
+    renderState.clean();
+    expect(
+      renderState.dirty,
+      GhosttyRenderStateDirty.GHOSTTY_RENDER_STATE_DIRTY_FALSE,
+    );
+    renderState.visitDirtyRows((_, _) => fail('clean rows were revisited'));
+  });
+
+  test('mode defaults survive a full terminal reset', () {
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+    addTearDown(terminal.close);
+
+    terminal.setModeDefault(VtModes.cursorKeys, true);
+    terminal.setMode(VtModes.cursorKeys, false);
+    expect(terminal.getMode(VtModes.cursorKeys), isFalse);
+    terminal.reset();
+    expect(terminal.getMode(VtModes.cursorKeys), isTrue);
+  });
+
+  test('unknown APC capture reports bytes and truncation state', () {
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+    addTearDown(terminal.close);
+    VtUnknownSequence? captured;
+    terminal
+      ..unknownSequenceMaxBytes = 64
+      ..onUnknownSequence = (sequence) => captured = sequence;
+
+    terminal.write('\x1b_unrecognized payload\x1b\\');
+
+    expect(captured, isNotNull);
+    expect(
+      captured!.tag,
+      GhosttyTerminalUnknownSequenceTag.GHOSTTY_TERMINAL_UNKNOWN_SEQUENCE_APC,
+    );
+    expect(utf8.decode(captured!.content), 'unrecognized payload');
+    expect(captured!.truncated, isFalse);
+  });
+
+  test('secure random override installs and fills requested bytes', () {
+    var requested = 0;
+    final callable = GhosttyVt.installSecureRandom((length) {
+      requested = length;
+      return Uint8List.fromList(List<int>.filled(length, 0xA5));
+    });
+    addTearDown(() {
+      GhosttyVt.sysSet(
+        GhosttySysOption.GHOSTTY_SYS_OPT_RANDOM_SECURE,
+        ffi.nullptr,
+      );
+      callable.close();
+    });
+
+    expect(callable.nativeFunction.address, isNot(0));
+    expect(requested, 0);
+  });
+
+  test('clipboard write callback receives normalized OSC 52 content', () {
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+    addTearDown(terminal.close);
+    VtClipboardWriteRequest? request;
+    terminal.onClipboardWrite = (value) {
+      request = value;
+      return const VtClipboardWriteReply(
+        GhosttyClipboardWriteResult.GHOSTTY_CLIPBOARD_WRITE_RESULT_SUCCESS,
+      );
+    };
+
+    terminal.write('\x1b]52;c;aGVsbG8=\x07');
+
+    expect(request, isNotNull);
+    expect(
+      request!.location,
+      GhosttyClipboardLocation.GHOSTTY_CLIPBOARD_LOCATION_STANDARD,
+    );
+    expect(utf8.decode(request!.contents['text/plain']!), 'hello');
+  });
+
+  test('clipboard read callback answers an OSC 52 query', () {
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+    addTearDown(terminal.close);
+    final pty = BytesBuilder(copy: false);
+    terminal
+      ..onWritePty = pty.add
+      ..onClipboardRead = (request) {
+        expect(request.mimes, contains('text/plain'));
+        return const VtClipboardReadReply(
+          GhosttyClipboardReadResult.GHOSTTY_CLIPBOARD_READ_RESULT_SUCCESS,
+          contents: <String, List<int>>{
+            'text/plain': <int>[104, 101, 108, 108, 111],
+          },
+        );
+      };
+
+    terminal.write('\x1b]52;c;?\x07');
+
+    expect(utf8.decode(pty.takeBytes()), contains('aGVsbG8='));
+  });
+
+  test('incremental snapshot decoder restores history pages', () {
+    final source = GhosttyVt.newTerminal(cols: 20, rows: 4);
+    addTearDown(source.close);
+    final padding = List<String>.filled(60, 'x').join();
+    for (var i = 0; i < 3000; i++) {
+      source.write('line $i $padding\r\n');
+    }
+    final decoder = VtSnapshotDecoder(source.snapshotBytes());
+    addTearDown(decoder.close);
+    final restored = decoder.ready();
+    addTearDown(restored.close);
+
+    var pages = 0;
+    VtSnapshotProgress? progress;
+    while ((progress = decoder.next()) != null) {
+      expect(progress!.rows, greaterThanOrEqualTo(0));
+      pages++;
+    }
+
+    expect(pages, greaterThan(0));
+    expect(decoder.sourceOffset, greaterThan(0));
+  });
+
+  test('incremental snapshot decoder rejects a closed restored terminal', () {
+    final source = GhosttyVt.newTerminal(cols: 20, rows: 4);
+    addTearDown(source.close);
+    source.write('snapshot content');
+    final decoder = VtSnapshotDecoder(source.snapshotBytes());
+    addTearDown(decoder.close);
+    final restored = decoder.ready()..close();
+
+    expect(decoder.next, throwsStateError);
+    // Closing remains idempotent for cleanup after the rejected continuation.
+    restored.close();
+  });
+
+  test('semantic prompt and title-report terminal data are exposed', () {
+    final terminal = GhosttyVt.newTerminal(cols: 80, rows: 24);
+    addTearDown(terminal.close);
+    final pty = BytesBuilder(copy: false);
+    terminal
+      ..onWritePty = pty.add
+      ..titleReportEnabled = true
+      ..terminfoName = 'xterm-256color';
+
+    terminal.write('\x1b]133;A\x07');
+    expect(terminal.cursorAtPrompt, isTrue);
+    terminal.write('\x1b]2;my title\x07\x1b[21t');
+    expect(utf8.decode(pty.takeBytes()), contains('my title'));
   });
 }

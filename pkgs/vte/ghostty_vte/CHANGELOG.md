@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.0-beta.1
+
+- Updated to `native_prebuilt` 0.5.0, Code Assets 2.0, and Hooks 2.2, and
+  raised the minimum Dart SDK to 3.13.
+- Synced Ghostty from `4d605bf0d` (`v1.3.1-1536-g4d605bf0d`) to
+  `f2d5758f6` (`v1.3.1-2333-gf2d5758f6`) and regenerated the C bindings.
+- Migrated terminal construction, mode access, render-color queries, and RGB
+  access to the latest libghostty-vt ABI.
+- Migrated the web runtime to Ghostty's general Wasm allocator, opaque-handle
+  transfer API, and allocator-matched output cleanup.
+- Added high-level Kitty Graphics Protocol wrappers for image storage,
+  image lookup, placement iteration, placement viewport positions, placement
+  render info, image metadata, and borrowed raw pixel data.
+- Added `GhosttyVt.installPngDecoder()` for registering a Dart PNG decoder
+  callback with libghostty-vt.
+- Added terminal controls for Kitty image storage limits, Kitty image loading
+  media, APC buffer limits, and batch terminal data reads via `getMulti()`.
+- Exposed OSC 8 hyperlink URIs through grid-reference snapshots.
+
 ## 0.1.4
 
 - Migrated native builds and prebuilt resolution to the declarative

@@ -88,6 +88,12 @@ class GhosttyTerminalController extends ChangeNotifier
   @override
   int get rows => _rows;
 
+  /// Build information for the compiled Ghostty VT library.
+  ///
+  /// Includes SIMD availability, Kitty graphics support, tmux control-mode
+  /// support, optimization level, and version information.
+  VtBuildInfo get buildInfo => GhosttyVt.buildInfo;
+
   /// Live VT terminal state backing this controller.
   VtTerminal get terminal => _ensureTerminal();
 
@@ -189,6 +195,21 @@ class GhosttyTerminalController extends ChangeNotifier
     } finally {
       formatter.close();
     }
+  }
+
+  /// Not supported on web because the Wasm formatter cannot marshal a
+  /// [VtSelection].
+  String formatTerminalForSelection({
+    required VtSelection selection,
+    GhosttyFormatterFormat emit =
+        GhosttyFormatterFormat.GHOSTTY_FORMATTER_FORMAT_PLAIN,
+    bool unwrap = false,
+    bool trim = true,
+    VtFormatterTerminalExtra extra = const VtFormatterTerminalExtra(),
+  }) {
+    throw UnsupportedError(
+      'Selection-restricted terminal formatting is not supported on web.',
+    );
   }
 
   /// Marks the transport session as started and records launch metadata.

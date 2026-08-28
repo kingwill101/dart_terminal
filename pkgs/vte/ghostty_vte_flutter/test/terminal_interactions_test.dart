@@ -138,5 +138,32 @@ void main() {
 
       expect(openedUri, 'https://example.com');
     });
+
+    test('hyperlink policy permits only HTTP and HTTPS URLs', () {
+      expect(
+        ghosttyTerminalIsAllowedHyperlink('https://example.com/path'),
+        isTrue,
+      );
+      expect(
+        ghosttyTerminalIsAllowedHyperlink('http://localhost:8080'),
+        isTrue,
+      );
+      expect(ghosttyTerminalIsAllowedHyperlink('file:///etc/passwd'), isFalse);
+      expect(ghosttyTerminalIsAllowedHyperlink('custom://open-me'), isFalse);
+      expect(ghosttyTerminalIsAllowedHyperlink('not a uri'), isFalse);
+    });
+
+    test('hyperlink opener rejects unsafe schemes before callbacks', () async {
+      var callbackInvoked = false;
+
+      await ghosttyTerminalOpenHyperlink(
+        'file:///etc/passwd',
+        onOpenHyperlink: (_) async {
+          callbackInvoked = true;
+        },
+      );
+
+      expect(callbackInvoked, isFalse);
+    });
   });
 }

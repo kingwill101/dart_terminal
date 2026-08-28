@@ -9,6 +9,62 @@
 // ignore_for_file: type=lint, unused_import
 import 'dart:ffi' as ffi;
 
+/// Return the versioned libghostty-vt C type manifest for the current target.
+///
+/// The manifest defines all the public types available in the linked
+/// build. The types contain their layouts, enum values, union fields, and more.
+///
+/// Language bindings, such as WebAssembly hosts, should obtain offsets,
+/// sizes, alignments, array shapes, enum constants, and tagged-union arms from
+/// this manifest rather than hardcoding them. Consumers should reject unknown
+/// schema versions and verify the descriptors they require at initialization.
+///
+/// Packed type descriptors define fields using `lsb` and `width`. `lsb` is
+/// relative to bit zero of the containing numerical value; for nested packed
+/// layouts it is relative to the immediate containing field. Tagged packed
+/// unions select an inline arm layout using the named tag field. These layouts
+/// describe the current linked build and are not a cross-version stability
+/// promise.
+///
+/// The formal format is defined by the
+/// <a href="types.schema.json">libghostty-vt ABI manifest JSON Schema</a>.
+///
+/// Example (abbreviated):
+/// @code{.json}
+/// {
+/// "schema": 1,
+/// "abi": {
+/// "target": "wasm32", "os": "freestanding", "environment": "none",
+/// "pointer_size": 4, "usize_size": 4, "max_alignment": 16,
+/// "endian": "little"
+/// },
+/// "types": {
+/// "GhosttyRenderStateData": {
+/// "kind": "enum", "size": 4, "align": 4,
+/// "underlying": "i32", "prefix": "GHOSTTY_RENDER_STATE_DATA_",
+/// "values": { "INVALID": 0, "DIRTY": 3, "MAX_VALUE": 2147483647 }
+/// },
+/// "GhosttyStyleColor": {
+/// "kind": "struct", "size": 16, "align": 8,
+/// "fields": {
+/// "tag": { "offset": 0, "size": 4,
+/// "type": "GhosttyStyleColorTag" },
+/// "value": { "offset": 8, "size": 8,
+/// "type": "GhosttyStyleColorValue", "tag": "tag",
+/// "arms": { "NONE": null, "PALETTE": "palette",
+/// "RGB": "rgb" } }
+/// }
+/// }
+/// }
+/// }
+/// @endcode
+///
+/// The returned pointer is valid for the lifetime of the process.
+///
+/// @return Pointer to the null-terminated JSON string.
+@ffi.Native<ffi.Pointer<ffi.Char> Function()>()
+external ffi.Pointer<ffi.Char> ghostty_type_json();
+
 /// Allocate a buffer of `len` bytes.
 ///
 /// Uses the provided allocator, or the default allocator if NULL is passed.
@@ -89,25 +145,315 @@ GhosttyResult ghostty_build_info(
 /// from a GhosttyColorRgb value. Primarily useful in WebAssembly environments
 /// where accessing struct fields directly is difficult.
 ///
-/// @param color The RGB color value
+/// @param color Pointer to the RGB color value
 /// @param r Pointer to store the red component (0-255)
 /// @param g Pointer to store the green component (0-255)
 /// @param b Pointer to store the blue component (0-255)
 ///
-/// @ingroup sgr
+/// @ingroup color
 @ffi.Native<
   ffi.Void Function(
-    GhosttyColorRgb,
+    ffi.Pointer<GhosttyColorRgb>,
     ffi.Pointer<ffi.Uint8>,
     ffi.Pointer<ffi.Uint8>,
     ffi.Pointer<ffi.Uint8>,
   )
 >()
 external void ghostty_color_rgb_get(
-  GhosttyColorRgb color,
+  ffi.Pointer<GhosttyColorRgb> color,
   ffi.Pointer<ffi.Uint8> r,
   ffi.Pointer<ffi.Uint8> g,
   ffi.Pointer<ffi.Uint8> b,
+);
+
+/// Parse an X11 color name.
+///
+/// The color name is resolved from Ghostty's embedded rgb.txt table.
+/// Leading and trailing spaces and tabs are trimmed, and matching is
+/// ASCII case-insensitive. Hex values are not accepted by this function.
+///
+/// @param name The color name bytes (must not be NULL)
+/// @param len The length of @p name in bytes
+/// @param[out] out The parsed RGB color
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if no color
+/// matches or @p name is NULL
+///
+/// @ingroup color
+@ffi.Native<
+  ffi.Int Function(
+    ffi.Pointer<ffi.Char>,
+    ffi.Size,
+    ffi.Pointer<GhosttyColorRgb>,
+  )
+>(symbol: 'ghostty_color_parse_x11')
+external int _ghostty_color_parse_x11(
+  ffi.Pointer<ffi.Char> name,
+  int len,
+  ffi.Pointer<GhosttyColorRgb> out,
+);
+
+GhosttyResult ghostty_color_parse_x11(
+  ffi.Pointer<ffi.Char> name,
+  int len,
+  ffi.Pointer<GhosttyColorRgb> out,
+) => GhosttyResult.fromValue(_ghostty_color_parse_x11(name, len, out));
+
+/// Parse a flexible Ghostty color value.
+///
+/// Accepts Ghostty's terminal color syntax: X11 color names, hex colors
+/// in 3-, 6-, 9-, or 12-digit form (the leading # is optional for 3- and
+/// 6-digit values), and rgb:<red>/<green>/<blue> or
+/// rgbi:<red>/<green>/<blue> specifications. Leading and trailing spaces
+/// and tabs are trimmed.
+///
+/// @param value The color value bytes (must not be NULL)
+/// @param len The length of @p value in bytes
+/// @param[out] out The parsed RGB color
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if parsing
+/// fails or @p value is NULL
+///
+/// @ingroup color
+@ffi.Native<
+  ffi.Int Function(
+    ffi.Pointer<ffi.Char>,
+    ffi.Size,
+    ffi.Pointer<GhosttyColorRgb>,
+  )
+>(symbol: 'ghostty_color_parse')
+external int _ghostty_color_parse(
+  ffi.Pointer<ffi.Char> value,
+  int len,
+  ffi.Pointer<GhosttyColorRgb> out,
+);
+
+GhosttyResult ghostty_color_parse(
+  ffi.Pointer<ffi.Char> value,
+  int len,
+  ffi.Pointer<GhosttyColorRgb> out,
+) => GhosttyResult.fromValue(_ghostty_color_parse(value, len, out));
+
+/// Parse a Ghostty palette entry.
+///
+/// Accepts Ghostty palette config syntax: N=COLOR. N is a palette index
+/// from 0 to 255 in decimal or in 0x, 0o, or 0b-prefixed form. Spaces and
+/// tabs around N and COLOR are ignored. COLOR accepts the same syntax as
+/// ghostty_color_parse().
+///
+/// @param value The palette entry bytes (must not be NULL)
+/// @param len The length of @p value in bytes
+/// @param[out] out_index The parsed palette index
+/// @param[out] out_rgb The parsed RGB color
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE on any
+/// failure, including index overflow
+///
+/// @ingroup color
+@ffi.Native<
+  ffi.Int Function(
+    ffi.Pointer<ffi.Char>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Pointer<GhosttyColorRgb>,
+  )
+>(symbol: 'ghostty_color_parse_palette_entry')
+external int _ghostty_color_parse_palette_entry(
+  ffi.Pointer<ffi.Char> value,
+  int len,
+  ffi.Pointer<ffi.Uint8> out_index,
+  ffi.Pointer<GhosttyColorRgb> out_rgb,
+);
+
+GhosttyResult ghostty_color_parse_palette_entry(
+  ffi.Pointer<ffi.Char> value,
+  int len,
+  ffi.Pointer<ffi.Uint8> out_index,
+  ffi.Pointer<GhosttyColorRgb> out_rgb,
+) => GhosttyResult.fromValue(
+  _ghostty_color_parse_palette_entry(value, len, out_index, out_rgb),
+);
+
+/// Get Ghostty's built-in default 256-color palette.
+///
+/// Writes exactly 256 entries: Ghostty's base16 defaults, the xterm
+/// 6x6x6 color cube, and the grayscale ramp.
+///
+/// @param[out] out The output palette, an array of exactly 256
+/// GhosttyColorRgb values
+///
+/// @ingroup color
+@ffi.Native<ffi.Void Function(ffi.Pointer<GhosttyColorRgb>)>()
+external void ghostty_color_palette_default(ffi.Pointer<GhosttyColorRgb> out);
+
+/// Generate a 256-color palette from base colors.
+///
+/// The base palette supplies indices 0-15, which are always preserved.
+/// If @p base is NULL, Ghostty's default palette is used. If @p skip is
+/// NULL, no extra indices are skipped. Set bits in @p skip preserve those
+/// indices from @p base. The 216-color cube at indices 16-231 is generated
+/// with trilinear CIELAB interpolation, and the grayscale ramp at indices
+/// 232-255 is interpolated from the background to the foreground.
+///
+/// For light themes, @p harmonious controls whether the generated palette
+/// keeps the background-to-foreground orientation. When false, Ghostty
+/// swaps the light background and dark foreground so the cube and ramp run
+/// dark-to-light. The output palette may be the same pointer as @p base.
+///
+/// @param base The base palette, an array of exactly 256 GhosttyColorRgb
+/// values, or NULL to use Ghostty's default palette
+/// @param skip The palette indices to preserve from @p base, or NULL for
+/// an empty mask
+/// @param bg The terminal background color (must not be NULL)
+/// @param fg The terminal foreground color (must not be NULL)
+/// @param harmonious Whether light themes keep background-to-foreground
+/// orientation
+/// @param[out] out The output palette, an array of exactly 256
+/// GhosttyColorRgb values
+///
+/// @ingroup color
+@ffi.Native<
+  ffi.Void Function(
+    ffi.Pointer<GhosttyColorRgb>,
+    ffi.Pointer<GhosttyColorPaletteMask>,
+    ffi.Pointer<GhosttyColorRgb>,
+    ffi.Pointer<GhosttyColorRgb>,
+    ffi.Bool,
+    ffi.Pointer<GhosttyColorRgb>,
+  )
+>()
+external void ghostty_color_palette_generate(
+  ffi.Pointer<GhosttyColorRgb> base,
+  ffi.Pointer<GhosttyColorPaletteMask> skip,
+  ffi.Pointer<GhosttyColorRgb> bg,
+  ffi.Pointer<GhosttyColorRgb> fg,
+  bool harmonious,
+  ffi.Pointer<GhosttyColorRgb> out,
+);
+
+/// Calculate W3C relative luminance for an RGB color.
+///
+/// Returns a normalized value from 0.0 for black to 1.0 for white.
+/// See https://www.w3.org/TR/WCAG20/#relativeluminancedef.
+///
+/// @param color The RGB color (must not be NULL)
+/// @return Relative luminance in the range 0.0 to 1.0
+///
+/// @ingroup color
+@ffi.Native<ffi.Double Function(ffi.Pointer<GhosttyColorRgb>)>()
+external double ghostty_color_luminance(ffi.Pointer<GhosttyColorRgb> color);
+
+/// Calculate perceived luminance for an RGB color.
+///
+/// Returns a normalized value from 0.0 for black to 1.0 for white.
+/// Ghostty treats a background color as light when this exceeds 0.5.
+/// This is not the metric used internally by
+/// ghostty_color_palette_generate(), which uses CIELAB lightness.
+///
+/// @param color The RGB color (must not be NULL)
+/// @return Perceived luminance in the range 0.0 to 1.0
+///
+/// @ingroup color
+@ffi.Native<ffi.Double Function(ffi.Pointer<GhosttyColorRgb>)>()
+external double ghostty_color_perceived_luminance(
+  ffi.Pointer<GhosttyColorRgb> color,
+);
+
+/// Calculate the WCAG contrast ratio between two RGB colors.
+///
+/// The contrast ratio is symmetric and ranges from 1.0 for identical
+/// colors to 21.0 for black and white.
+///
+/// @param a The first RGB color (must not be NULL)
+/// @param b The second RGB color (must not be NULL)
+/// @return WCAG contrast ratio in the range 1.0 to 21.0
+///
+/// @ingroup color
+@ffi.Native<
+  ffi.Double Function(
+    ffi.Pointer<GhosttyColorRgb>,
+    ffi.Pointer<GhosttyColorRgb>,
+  )
+>()
+external double ghostty_color_contrast(
+  ffi.Pointer<GhosttyColorRgb> a,
+  ffi.Pointer<GhosttyColorRgb> b,
+);
+
+/// Get Ghostty's X11 color name table.
+///
+/// The returned pointer references static memory valid for the program
+/// lifetime and is never NULL. Entries are in rgb.txt order and are
+/// terminated by an entry with name == NULL. Aliases are separate entries,
+/// such as "medium spring green" and "MediumSpringGreen". Names are the
+/// exact supported spellings from rgb.txt; ghostty_color_parse_x11() also
+/// matches them case-insensitively.
+///
+/// @code{.c}
+/// for (const GhosttyColorX11Entry* e = ghostty_color_x11_names();
+/// e->name != NULL;
+/// e++) {
+/// // e->name and e->color are valid here.
+/// }
+/// @endcode
+///
+/// @return Pointer to the first X11 color entry
+///
+/// @ingroup color
+@ffi.Native<ffi.Pointer<GhosttyColorX11Entry> Function()>()
+external ffi.Pointer<GhosttyColorX11Entry> ghostty_color_x11_names();
+
+/// Get the number of X11 color name entries.
+///
+/// The returned count excludes the NULL terminator and is provided so
+/// bindings can preallocate storage before reading ghostty_color_x11_names().
+///
+/// @return Number of X11 color name entries
+///
+/// @ingroup color
+@ffi.Native<ffi.Size Function()>()
+external int ghostty_color_x11_name_count();
+
+/// Encode a color scheme report into an escape sequence.
+///
+/// Encodes a color scheme report into the provided buffer. Dark color schemes
+/// emit ESC [ ? 997 ; 1 n, and light color schemes emit ESC [ ? 997 ; 2 n.
+/// The encoded bytes are identical to the terminal's internal CSI ? 996 n
+/// query response.
+///
+/// Hosts should gate unsolicited sends on GHOSTTY_MODE_COLOR_SCHEME_REPORT
+/// (mode 2031) being set, which can be checked via the mode getters.
+///
+/// If the buffer is too small, the function returns GHOSTTY_OUT_OF_SPACE
+/// and writes the required buffer size to @p out_written. The caller can
+/// then retry with a sufficiently sized buffer.
+///
+/// @param scheme The color scheme to encode
+/// @param buf Output buffer to write the encoded sequence into (may be NULL)
+/// @param buf_len Size of the output buffer in bytes
+/// @param[out] out_written On success, the number of bytes written. On
+/// GHOSTTY_OUT_OF_SPACE, the required buffer size.
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_OUT_OF_SPACE if the buffer
+/// is too small
+@ffi.Native<
+  ffi.Int Function(
+    ffi.UnsignedInt,
+    ffi.Pointer<ffi.Char>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_color_scheme_report_encode')
+external int _ghostty_color_scheme_report_encode(
+  int scheme,
+  ffi.Pointer<ffi.Char> buf,
+  int buf_len,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_color_scheme_report_encode(
+  GhosttyColorScheme scheme,
+  ffi.Pointer<ffi.Char> buf,
+  int buf_len,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_color_scheme_report_encode(scheme.value, buf, buf_len, out_written),
 );
 
 /// Encode a focus event into a terminal escape sequence.
@@ -150,96 +496,6 @@ GhosttyResult ghostty_focus_encode(
   _ghostty_focus_encode(event.value, buf, buf_len, out_written),
 );
 
-/// Encode a DECRPM (DEC Private Mode Report) response sequence.
-///
-/// Writes a mode report escape sequence into the provided buffer.
-/// The generated sequence has the form:
-/// - DEC private mode: CSI ? Ps1 ; Ps2 $ y
-/// - ANSI mode:        CSI Ps1 ; Ps2 $ y
-///
-/// If the buffer is too small, the function returns GHOSTTY_OUT_OF_SPACE
-/// and writes the required buffer size to @p out_written. The caller can
-/// then retry with a sufficiently sized buffer.
-///
-/// @param mode The mode identifying the mode to report on
-/// @param state The report state for this mode
-/// @param buf Output buffer to write the encoded sequence into (may be NULL)
-/// @param buf_len Size of the output buffer in bytes
-/// @param[out] out_written On success, the number of bytes written. On
-/// GHOSTTY_OUT_OF_SPACE, the required buffer size.
-/// @return GHOSTTY_SUCCESS on success, GHOSTTY_OUT_OF_SPACE if the buffer
-/// is too small
-@ffi.Native<
-  ffi.Int Function(
-    GhosttyMode,
-    ffi.UnsignedInt,
-    ffi.Pointer<ffi.Char>,
-    ffi.Size,
-    ffi.Pointer<ffi.Size>,
-  )
->(symbol: 'ghostty_mode_report_encode')
-external int _ghostty_mode_report_encode(
-  int mode,
-  int state,
-  ffi.Pointer<ffi.Char> buf,
-  int buf_len,
-  ffi.Pointer<ffi.Size> out_written,
-);
-
-GhosttyResult ghostty_mode_report_encode(
-  DartGhosttyMode mode,
-  GhosttyModeReportState state,
-  ffi.Pointer<ffi.Char> buf,
-  int buf_len,
-  ffi.Pointer<ffi.Size> out_written,
-) => GhosttyResult.fromValue(
-  _ghostty_mode_report_encode(mode, state.value, buf, buf_len, out_written),
-);
-
-/// Encode a terminal size report into an escape sequence.
-///
-/// Encodes a size report in the format specified by @p style into the
-/// provided buffer.
-///
-/// If the buffer is too small, the function returns GHOSTTY_OUT_OF_SPACE
-/// and writes the required buffer size to @p out_written. The caller can
-/// then retry with a sufficiently sized buffer.
-///
-/// @param style The size report format to encode
-/// @param size Terminal size information
-/// @param buf Output buffer to write the encoded sequence into (may be NULL)
-/// @param buf_len Size of the output buffer in bytes
-/// @param[out] out_written On success, the number of bytes written. On
-/// GHOSTTY_OUT_OF_SPACE, the required buffer size.
-/// @return GHOSTTY_SUCCESS on success, GHOSTTY_OUT_OF_SPACE if the buffer
-/// is too small
-@ffi.Native<
-  ffi.Int Function(
-    ffi.UnsignedInt,
-    GhosttySizeReportSize,
-    ffi.Pointer<ffi.Char>,
-    ffi.Size,
-    ffi.Pointer<ffi.Size>,
-  )
->(symbol: 'ghostty_size_report_encode')
-external int _ghostty_size_report_encode(
-  int style,
-  GhosttySizeReportSize size,
-  ffi.Pointer<ffi.Char> buf,
-  int buf_len,
-  ffi.Pointer<ffi.Size> out_written,
-);
-
-GhosttyResult ghostty_size_report_encode(
-  GhosttySizeReportStyle style,
-  GhosttySizeReportSize size,
-  ffi.Pointer<ffi.Char> buf,
-  int buf_len,
-  ffi.Pointer<ffi.Size> out_written,
-) => GhosttyResult.fromValue(
-  _ghostty_size_report_encode(style.value, size, buf, buf_len, out_written),
-);
-
 /// Get data from a cell.
 ///
 /// Extracts typed data from the given cell based on the specified
@@ -265,6 +521,52 @@ GhosttyResult ghostty_cell_get(
   ffi.Pointer<ffi.Void> out,
 ) => GhosttyResult.fromValue(_ghostty_cell_get(cell, data.value, out));
 
+/// Get multiple data fields from a cell in a single call.
+///
+/// Each element in the keys array specifies a data kind, and the
+/// corresponding element in the values array receives the result.
+///
+/// Processing stops at the first error; on success out_written
+/// is set to count, on error it is set to the index of the
+/// failing key (i.e. the number of values successfully written).
+///
+/// @param cell The cell value
+/// @param count Number of key/value pairs
+/// @param keys Array of data kinds to query
+/// @param values Array of output pointers (types must match each key's
+/// documented output type)
+/// @param[out] out_written On return, receives the number of values
+/// successfully written (may be NULL)
+/// @return GHOSTTY_SUCCESS if all queries succeed
+///
+/// @ingroup screen
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyCell,
+    ffi.Size,
+    ffi.Pointer<ffi.UnsignedInt>,
+    ffi.Pointer<ffi.Pointer<ffi.Void>>,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_cell_get_multi')
+external int _ghostty_cell_get_multi(
+  int cell,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_cell_get_multi(
+  DartGhosttyCell cell,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_cell_get_multi(cell, count, keys, values, out_written),
+);
+
 /// Get data from a row.
 ///
 /// Extracts typed data from the given row based on the specified
@@ -289,6 +591,52 @@ GhosttyResult ghostty_row_get(
   GhosttyRowData data,
   ffi.Pointer<ffi.Void> out,
 ) => GhosttyResult.fromValue(_ghostty_row_get(row, data.value, out));
+
+/// Get multiple data fields from a row in a single call.
+///
+/// Each element in the keys array specifies a data kind, and the
+/// corresponding element in the values array receives the result.
+///
+/// Processing stops at the first error; on success out_written
+/// is set to count, on error it is set to the index of the
+/// failing key (i.e. the number of values successfully written).
+///
+/// @param row The row value
+/// @param count Number of key/value pairs
+/// @param keys Array of data kinds to query
+/// @param values Array of output pointers (types must match each key's
+/// documented output type)
+/// @param[out] out_written On return, receives the number of values
+/// successfully written (may be NULL)
+/// @return GHOSTTY_SUCCESS if all queries succeed
+///
+/// @ingroup screen
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyRow,
+    ffi.Size,
+    ffi.Pointer<ffi.UnsignedInt>,
+    ffi.Pointer<ffi.Pointer<ffi.Void>>,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_row_get_multi')
+external int _ghostty_row_get_multi(
+  int row,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_row_get_multi(
+  DartGhosttyRow row,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_row_get_multi(row, count, keys, values, out_written),
+);
 
 /// Get the default style.
 ///
@@ -397,6 +745,48 @@ GhosttyResult ghostty_grid_ref_graphemes(
   _ghostty_grid_ref_graphemes(ref, buf, buf_len, out_len),
 );
 
+/// Get the hyperlink URI for the cell at the grid reference's position.
+///
+/// Writes the URI bytes into the provided buffer. If the cell has no
+/// hyperlink, out_len is set to 0 and GHOSTTY_SUCCESS is returned.
+///
+/// If the buffer is too small (or NULL), the function returns
+/// GHOSTTY_OUT_OF_SPACE and writes the required number of bytes to
+/// out_len. The caller can then retry with a sufficiently sized buffer.
+///
+/// @param ref Pointer to the grid reference
+/// @param buf Output buffer for the URI bytes (may be NULL)
+/// @param buf_len Size of the output buffer in bytes
+/// @param[out] out_len On success, the number of bytes written. On
+/// GHOSTTY_OUT_OF_SPACE, the required buffer size in bytes.
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if the ref's
+/// node is NULL, GHOSTTY_OUT_OF_SPACE if the buffer is too small
+///
+/// @ingroup grid_ref
+@ffi.Native<
+  ffi.Int Function(
+    ffi.Pointer<GhosttyGridRef>,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_grid_ref_hyperlink_uri')
+external int _ghostty_grid_ref_hyperlink_uri(
+  ffi.Pointer<GhosttyGridRef> ref,
+  ffi.Pointer<ffi.Uint8> buf,
+  int buf_len,
+  ffi.Pointer<ffi.Size> out_len,
+);
+
+GhosttyResult ghostty_grid_ref_hyperlink_uri(
+  ffi.Pointer<GhosttyGridRef> ref,
+  ffi.Pointer<ffi.Uint8> buf,
+  int buf_len,
+  ffi.Pointer<ffi.Size> out_len,
+) => GhosttyResult.fromValue(
+  _ghostty_grid_ref_hyperlink_uri(ref, buf, buf_len, out_len),
+);
+
 /// Get the style of the cell at the grid reference's position.
 ///
 /// @param ref Pointer to the grid reference
@@ -418,11 +808,1574 @@ GhosttyResult ghostty_grid_ref_style(
   ffi.Pointer<GhosttyStyle> out_style,
 ) => GhosttyResult.fromValue(_ghostty_grid_ref_style(ref, out_style));
 
+/// Create a reusable selection gesture event object.
+///
+/// @param allocator Allocator, or NULL for the default allocator
+/// @param out_event Receives the created event handle
+/// @param type Event type. This is fixed for the lifetime of the event.
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if out_event is
+/// NULL or type is invalid, or GHOSTTY_OUT_OF_MEMORY if allocation fails
+///
+/// @ingroup selection
+@ffi.Native<
+  ffi.Int Function(
+    ffi.Pointer<GhosttyAllocator>,
+    ffi.Pointer<GhosttySelectionGestureEvent>,
+    ffi.UnsignedInt,
+  )
+>(symbol: 'ghostty_selection_gesture_event_new')
+external int _ghostty_selection_gesture_event_new(
+  ffi.Pointer<GhosttyAllocator> allocator,
+  ffi.Pointer<GhosttySelectionGestureEvent> out_event,
+  int type,
+);
+
+GhosttyResult ghostty_selection_gesture_event_new(
+  ffi.Pointer<GhosttyAllocator> allocator,
+  ffi.Pointer<GhosttySelectionGestureEvent> out_event,
+  GhosttySelectionGestureEventType type,
+) => GhosttyResult.fromValue(
+  _ghostty_selection_gesture_event_new(allocator, out_event, type.value),
+);
+
+/// Free a selection gesture event object.
+///
+/// Passing NULL is allowed and is a no-op.
+///
+/// @param event Selection gesture event handle to free
+///
+/// @ingroup selection
+@ffi.Native<ffi.Void Function(GhosttySelectionGestureEvent)>()
+external void ghostty_selection_gesture_event_free(
+  GhosttySelectionGestureEvent event,
+);
+
+/// Set or clear an option on a selection gesture event.
+///
+/// The value type depends on option and is documented by
+/// GhosttySelectionGestureEventOption. Passing NULL for value clears the option.
+///
+/// @param event Selection gesture event handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param option Event option to set or clear
+/// @param value Pointer to the input value for option, or NULL to clear
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_OUT_OF_MEMORY if copying
+/// event-owned data fails, or GHOSTTY_INVALID_VALUE if event, option, or
+/// value is invalid
+///
+/// @ingroup selection
+@ffi.Native<
+  ffi.Int Function(
+    GhosttySelectionGestureEvent,
+    ffi.UnsignedInt,
+    ffi.Pointer<ffi.Void>,
+  )
+>(symbol: 'ghostty_selection_gesture_event_set')
+external int _ghostty_selection_gesture_event_set(
+  GhosttySelectionGestureEvent event,
+  int option,
+  ffi.Pointer<ffi.Void> value,
+);
+
+GhosttyResult ghostty_selection_gesture_event_set(
+  GhosttySelectionGestureEvent event,
+  GhosttySelectionGestureEventOption option,
+  ffi.Pointer<ffi.Void> value,
+) => GhosttyResult.fromValue(
+  _ghostty_selection_gesture_event_set(event, option.value, value),
+);
+
+/// Apply a selection gesture event and return the resulting selection snapshot.
+///
+/// This dispatches to the gesture operation matching the event's fixed type.
+/// For GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_PRESS, the event must have
+/// GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REF set before calling this function.
+/// All other press options use their initialized defaults when unset or cleared.
+///
+/// For GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_RELEASE, only
+/// GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REF is valid. It is optional; if unset or
+/// cleared, release records that the pointer did not map to a valid cell. Release
+/// events update gesture state but do not produce a selection, so this function
+/// returns GHOSTTY_NO_VALUE after applying them.
+///
+/// For GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_DRAG,
+/// GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REF and
+/// GHOSTTY_SELECTION_GESTURE_EVENT_OPT_GEOMETRY are required. Position,
+/// rectangle, and word-boundary codepoints are optional and use initialized
+/// defaults when unset or cleared.
+///
+/// For GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_AUTOSCROLL_TICK,
+/// GHOSTTY_SELECTION_GESTURE_EVENT_OPT_VIEWPORT and
+/// GHOSTTY_SELECTION_GESTURE_EVENT_OPT_GEOMETRY are required. Position,
+/// rectangle, and word-boundary codepoints are optional and use initialized
+/// defaults when unset or cleared.
+///
+/// For GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_DEEP_PRESS, only
+/// GHOSTTY_SELECTION_GESTURE_EVENT_OPT_WORD_BOUNDARY_CODEPOINTS is valid. It is
+/// optional and uses initialized defaults when unset or cleared.
+///
+/// The returned selection is not installed as the terminal's current selection.
+/// It is a snapshot with the same lifetime rules as GhosttySelection.
+///
+/// @param gesture Selection gesture handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param terminal Terminal used to interpret and update gesture state
+/// @param event Selection gesture event handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param[out] out_selection On success, receives the resulting selection. May
+/// be NULL to apply the event and discard the selection result.
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_NO_VALUE if the event does not
+/// currently produce a selection, GHOSTTY_OUT_OF_MEMORY if tracking
+/// gesture state fails, or GHOSTTY_INVALID_VALUE if gesture, terminal,
+/// event, or required event data is invalid
+///
+/// @ingroup selection
+@ffi.Native<
+  ffi.Int Function(
+    GhosttySelectionGesture,
+    GhosttyTerminal,
+    GhosttySelectionGestureEvent,
+    ffi.Pointer<GhosttySelection>,
+  )
+>(symbol: 'ghostty_selection_gesture_event')
+external int _ghostty_selection_gesture_event(
+  GhosttySelectionGesture gesture,
+  GhosttyTerminal terminal,
+  GhosttySelectionGestureEvent event,
+  ffi.Pointer<GhosttySelection> out_selection,
+);
+
+GhosttyResult ghostty_selection_gesture_event(
+  GhosttySelectionGesture gesture,
+  GhosttyTerminal terminal,
+  GhosttySelectionGestureEvent event,
+  ffi.Pointer<GhosttySelection> out_selection,
+) => GhosttyResult.fromValue(
+  _ghostty_selection_gesture_event(gesture, terminal, event, out_selection),
+);
+
+/// Create a selection gesture object.
+///
+/// The gesture stores mutable state for terminal text selection gestures. The
+/// gesture is not bound to a terminal at creation time; terminal-dependent APIs
+/// take the terminal explicitly.
+///
+/// @param allocator Allocator, or NULL for the default allocator
+/// @param out_gesture Receives the created gesture handle
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if out_gesture is
+/// NULL, or GHOSTTY_OUT_OF_MEMORY if allocation fails
+///
+/// @ingroup selection
+@ffi.Native<
+  ffi.Int Function(
+    ffi.Pointer<GhosttyAllocator>,
+    ffi.Pointer<GhosttySelectionGesture>,
+  )
+>(symbol: 'ghostty_selection_gesture_new')
+external int _ghostty_selection_gesture_new(
+  ffi.Pointer<GhosttyAllocator> allocator,
+  ffi.Pointer<GhosttySelectionGesture> out_gesture,
+);
+
+GhosttyResult ghostty_selection_gesture_new(
+  ffi.Pointer<GhosttyAllocator> allocator,
+  ffi.Pointer<GhosttySelectionGesture> out_gesture,
+) => GhosttyResult.fromValue(
+  _ghostty_selection_gesture_new(allocator, out_gesture),
+);
+
+/// Free a selection gesture object.
+///
+/// This releases any tracked terminal references owned by the gesture using the
+/// provided terminal, then frees the gesture object. Passing NULL for gesture is
+/// allowed and is a no-op.
+///
+/// If the terminal is still alive, pass the terminal most recently used with the
+/// gesture so any tracked terminal references can be released correctly. If the
+/// terminal has already been freed, pass NULL for terminal; the terminal's page
+/// storage has already released the underlying tracked references, so the
+/// gesture wrapper can be safely discarded without touching the stale terminal
+/// state.
+///
+/// @param gesture Selection gesture handle to free
+/// @param terminal Terminal used to release tracked gesture state, or NULL if
+/// the terminal has already been freed
+///
+/// @ingroup selection
+@ffi.Native<ffi.Void Function(GhosttySelectionGesture, GhosttyTerminal)>()
+external void ghostty_selection_gesture_free(
+  GhosttySelectionGesture gesture,
+  GhosttyTerminal terminal,
+);
+
+/// Reset any active selection gesture state.
+///
+/// This cancels the active click sequence and releases any tracked terminal
+/// references owned by the gesture without freeing the gesture object.
+/// Passing NULL is allowed and is a no-op.
+///
+/// @param gesture Selection gesture handle to reset
+/// @param terminal Terminal used to release tracked gesture state
+///
+/// @ingroup selection
+@ffi.Native<ffi.Void Function(GhosttySelectionGesture, GhosttyTerminal)>()
+external void ghostty_selection_gesture_reset(
+  GhosttySelectionGesture gesture,
+  GhosttyTerminal terminal,
+);
+
+/// Read data from a selection gesture.
+///
+/// The type of value depends on data and is documented by
+/// GhosttySelectionGestureData. For GHOSTTY_SELECTION_GESTURE_DATA_ANCHOR,
+/// the returned GhosttyGridRef is an untracked snapshot with normal grid-ref
+/// lifetime rules.
+///
+/// @param gesture Selection gesture handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param terminal Terminal used to validate terminal-backed gesture state
+/// @param data Data field to read
+/// @param value Output pointer whose type depends on data
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_NO_VALUE if the requested data
+/// has no value, or GHOSTTY_INVALID_VALUE if gesture, terminal, data, or
+/// value is invalid
+///
+/// @ingroup selection
+@ffi.Native<
+  ffi.Int Function(
+    GhosttySelectionGesture,
+    GhosttyTerminal,
+    ffi.UnsignedInt,
+    ffi.Pointer<ffi.Void>,
+  )
+>(symbol: 'ghostty_selection_gesture_get')
+external int _ghostty_selection_gesture_get(
+  GhosttySelectionGesture gesture,
+  GhosttyTerminal terminal,
+  int data,
+  ffi.Pointer<ffi.Void> value,
+);
+
+GhosttyResult ghostty_selection_gesture_get(
+  GhosttySelectionGesture gesture,
+  GhosttyTerminal terminal,
+  GhosttySelectionGestureData data,
+  ffi.Pointer<ffi.Void> value,
+) => GhosttyResult.fromValue(
+  _ghostty_selection_gesture_get(gesture, terminal, data.value, value),
+);
+
+/// Read multiple data fields from a selection gesture in a single call.
+///
+/// This is an optimization over calling ghostty_selection_gesture_get() multiple
+/// times. Each entry in values must point to storage of the type documented by
+/// the corresponding GhosttySelectionGestureData key.
+///
+/// If any individual read fails, the function returns that error and writes the
+/// index of the failing key to out_written when out_written is non-NULL. On
+/// success, out_written receives count when non-NULL.
+///
+/// @param gesture Selection gesture handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param terminal Terminal used to validate terminal-backed gesture state
+/// @param count Number of data fields to read
+/// @param keys Data fields to read (must not be NULL)
+/// @param values Output pointers corresponding to keys (must not be NULL)
+/// @param out_written Optional number of fields read, or failing index on error
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_NO_VALUE if a requested data
+/// field has no value, or GHOSTTY_INVALID_VALUE if gesture, terminal,
+/// keys, values, or a value pointer is invalid
+///
+/// @ingroup selection
+@ffi.Native<
+  ffi.Int Function(
+    GhosttySelectionGesture,
+    GhosttyTerminal,
+    ffi.Size,
+    ffi.Pointer<ffi.UnsignedInt>,
+    ffi.Pointer<ffi.Pointer<ffi.Void>>,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_selection_gesture_get_multi')
+external int _ghostty_selection_gesture_get_multi(
+  GhosttySelectionGesture gesture,
+  GhosttyTerminal terminal,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_selection_gesture_get_multi(
+  GhosttySelectionGesture gesture,
+  GhosttyTerminal terminal,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_selection_gesture_get_multi(
+    gesture,
+    terminal,
+    count,
+    keys,
+    values,
+    out_written,
+  ),
+);
+
+/// Derive a word selection snapshot from a terminal grid reference.
+///
+/// The returned selection is not installed as the terminal's current
+/// selection. It is a snapshot with the same lifetime rules as GhosttySelection.
+///
+/// @param terminal The terminal handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param options Word-selection options
+/// @param[out] out_selection On success, receives the derived selection
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_NO_VALUE if the valid ref has
+/// no selectable word content, or GHOSTTY_INVALID_VALUE if the
+/// terminal, options, ref, codepoint pointer, or output pointer are
+/// invalid.
+///
+/// @ingroup selection
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyTerminal,
+    ffi.Pointer<GhosttyTerminalSelectWordOptions>,
+    ffi.Pointer<GhosttySelection>,
+  )
+>(symbol: 'ghostty_terminal_select_word')
+external int _ghostty_terminal_select_word(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttyTerminalSelectWordOptions> options,
+  ffi.Pointer<GhosttySelection> out_selection,
+);
+
+GhosttyResult ghostty_terminal_select_word(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttyTerminalSelectWordOptions> options,
+  ffi.Pointer<GhosttySelection> out_selection,
+) => GhosttyResult.fromValue(
+  _ghostty_terminal_select_word(terminal, options, out_selection),
+);
+
+/// Derive the nearest word selection snapshot between two terminal grid refs.
+///
+/// Starting at options->start, this searches toward options->end (inclusive)
+/// and returns the first selectable word found using Ghostty's word-selection
+/// rules.
+///
+/// This is useful for implementing double-click-and-drag selection in a UI. If
+/// a user double-clicks one word and drags across spaces or punctuation toward
+/// another word, selecting only the word directly under the current pointer can
+/// flicker or collapse when the pointer is between words. Instead, ask for the
+/// nearest word between the original click and the drag point, ask again in the
+/// reverse direction, and combine the two word bounds into the drag selection.
+///
+/// @snippet c-vt-selection/src/main.c selection-word-between
+///
+/// The returned selection is not installed as the terminal's current
+/// selection. It is a snapshot with the same lifetime rules as GhosttySelection.
+///
+/// @param terminal The terminal handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param options Word-between-selection options
+/// @param[out] out_selection On success, receives the derived selection
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_NO_VALUE if there is no
+/// selectable word content between the valid refs, or
+/// GHOSTTY_INVALID_VALUE if the terminal, options, refs, codepoint
+/// pointer, or output pointer are invalid.
+///
+/// @ingroup selection
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyTerminal,
+    ffi.Pointer<GhosttyTerminalSelectWordBetweenOptions>,
+    ffi.Pointer<GhosttySelection>,
+  )
+>(symbol: 'ghostty_terminal_select_word_between')
+external int _ghostty_terminal_select_word_between(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttyTerminalSelectWordBetweenOptions> options,
+  ffi.Pointer<GhosttySelection> out_selection,
+);
+
+GhosttyResult ghostty_terminal_select_word_between(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttyTerminalSelectWordBetweenOptions> options,
+  ffi.Pointer<GhosttySelection> out_selection,
+) => GhosttyResult.fromValue(
+  _ghostty_terminal_select_word_between(terminal, options, out_selection),
+);
+
+/// Derive a line selection snapshot from a terminal grid reference.
+///
+/// The returned selection is not installed as the terminal's current
+/// selection. It is a snapshot with the same lifetime rules as GhosttySelection.
+///
+/// @param terminal The terminal handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param options Line-selection options
+/// @param[out] out_selection On success, receives the derived selection
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_NO_VALUE if the valid ref has
+/// no selectable line content, or GHOSTTY_INVALID_VALUE if the
+/// terminal, options, ref, codepoint pointer, or output pointer are
+/// invalid.
+///
+/// @ingroup selection
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyTerminal,
+    ffi.Pointer<GhosttyTerminalSelectLineOptions>,
+    ffi.Pointer<GhosttySelection>,
+  )
+>(symbol: 'ghostty_terminal_select_line')
+external int _ghostty_terminal_select_line(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttyTerminalSelectLineOptions> options,
+  ffi.Pointer<GhosttySelection> out_selection,
+);
+
+GhosttyResult ghostty_terminal_select_line(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttyTerminalSelectLineOptions> options,
+  ffi.Pointer<GhosttySelection> out_selection,
+) => GhosttyResult.fromValue(
+  _ghostty_terminal_select_line(terminal, options, out_selection),
+);
+
+/// Derive a selection snapshot covering all selectable terminal content.
+///
+/// The returned selection is not installed as the terminal's current
+/// selection. It is a snapshot with the same lifetime rules as GhosttySelection.
+///
+/// @param terminal The terminal handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param[out] out_selection On success, receives the derived selection
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_NO_VALUE if there is no
+/// selectable content, or GHOSTTY_INVALID_VALUE if the terminal or
+/// output pointer is invalid.
+///
+/// @ingroup selection
+@ffi.Native<ffi.Int Function(GhosttyTerminal, ffi.Pointer<GhosttySelection>)>(
+  symbol: 'ghostty_terminal_select_all',
+)
+external int _ghostty_terminal_select_all(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttySelection> out_selection,
+);
+
+GhosttyResult ghostty_terminal_select_all(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttySelection> out_selection,
+) => GhosttyResult.fromValue(
+  _ghostty_terminal_select_all(terminal, out_selection),
+);
+
+/// Derive a command-output selection snapshot from a terminal grid reference.
+///
+/// The returned selection is not installed as the terminal's current
+/// selection. It is a snapshot with the same lifetime rules as GhosttySelection.
+///
+/// @param terminal The terminal handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param ref Grid reference within command output to select
+/// @param[out] out_selection On success, receives the derived selection
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_NO_VALUE if the valid ref is
+/// not selectable command output, or GHOSTTY_INVALID_VALUE if the
+/// terminal, ref, or output pointer is invalid.
+///
+/// @ingroup selection
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyTerminal,
+    GhosttyGridRef,
+    ffi.Pointer<GhosttySelection>,
+  )
+>(symbol: 'ghostty_terminal_select_output')
+external int _ghostty_terminal_select_output(
+  GhosttyTerminal terminal,
+  GhosttyGridRef ref,
+  ffi.Pointer<GhosttySelection> out_selection,
+);
+
+GhosttyResult ghostty_terminal_select_output(
+  GhosttyTerminal terminal,
+  GhosttyGridRef ref,
+  ffi.Pointer<GhosttySelection> out_selection,
+) => GhosttyResult.fromValue(
+  _ghostty_terminal_select_output(terminal, ref, out_selection),
+);
+
+/// Format a terminal selection into a caller-provided buffer.
+///
+/// This is a one-shot convenience API for formatting either the terminal's
+/// active selection or a caller-provided GhosttySelection without explicitly
+/// creating a GhosttyFormatter.
+///
+/// Pass NULL for buf to query the required output size. In that case,
+/// out_written receives the required size and the function returns
+/// GHOSTTY_OUT_OF_SPACE.
+///
+/// If buf is too small, the function returns GHOSTTY_OUT_OF_SPACE and writes
+/// the required size to out_written. The caller can then retry with a larger
+/// buffer.
+///
+/// If options.selection is NULL and the terminal has no active selection, the
+/// function returns GHOSTTY_NO_VALUE.
+///
+/// @param terminal The terminal to read from (must not be NULL)
+/// @param options Selection formatting options
+/// @param buf Output buffer, or NULL to query required size
+/// @param buf_len Length of buf in bytes
+/// @param out_written Number of bytes written, or required size on
+/// GHOSTTY_OUT_OF_SPACE (must not be NULL)
+/// @return GHOSTTY_SUCCESS on success, or an error code on failure
+///
+/// @ingroup selection
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyTerminal,
+    GhosttyTerminalSelectionFormatOptions,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_terminal_selection_format_buf')
+external int _ghostty_terminal_selection_format_buf(
+  GhosttyTerminal terminal,
+  GhosttyTerminalSelectionFormatOptions options,
+  ffi.Pointer<ffi.Uint8> buf,
+  int buf_len,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_terminal_selection_format_buf(
+  GhosttyTerminal terminal,
+  GhosttyTerminalSelectionFormatOptions options,
+  ffi.Pointer<ffi.Uint8> buf,
+  int buf_len,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_terminal_selection_format_buf(
+    terminal,
+    options,
+    buf,
+    buf_len,
+    out_written,
+  ),
+);
+
+/// Format a terminal selection into an allocated buffer.
+///
+/// This is a one-shot convenience API for formatting either the terminal's
+/// active selection or a caller-provided GhosttySelection without explicitly
+/// creating a GhosttyFormatter.
+///
+/// The returned buffer is allocated using allocator, or the default allocator
+/// if NULL is passed. The caller owns the returned buffer and must free it with
+/// ghostty_free(), passing the same allocator and returned length.
+///
+/// The returned bytes are not NUL-terminated. This supports plain text, VT, and
+/// HTML uniformly as byte output.
+///
+/// If options.selection is NULL and the terminal has no active selection, the
+/// function returns GHOSTTY_NO_VALUE and leaves out_ptr as NULL and out_len as 0.
+///
+/// @param terminal The terminal to read from (must not be NULL)
+/// @param allocator Allocator used for the returned buffer, or NULL for the default allocator
+/// @param options Selection formatting options
+/// @param out_ptr Receives the allocated output buffer (must not be NULL)
+/// @param out_len Receives the output length in bytes (must not be NULL)
+/// @return GHOSTTY_SUCCESS on success, or an error code on failure
+///
+/// @ingroup selection
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyTerminal,
+    ffi.Pointer<GhosttyAllocator>,
+    GhosttyTerminalSelectionFormatOptions,
+    ffi.Pointer<ffi.Pointer<ffi.Uint8>>,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_terminal_selection_format_alloc')
+external int _ghostty_terminal_selection_format_alloc(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttyAllocator> allocator,
+  GhosttyTerminalSelectionFormatOptions options,
+  ffi.Pointer<ffi.Pointer<ffi.Uint8>> out_ptr,
+  ffi.Pointer<ffi.Size> out_len,
+);
+
+GhosttyResult ghostty_terminal_selection_format_alloc(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttyAllocator> allocator,
+  GhosttyTerminalSelectionFormatOptions options,
+  ffi.Pointer<ffi.Pointer<ffi.Uint8>> out_ptr,
+  ffi.Pointer<ffi.Size> out_len,
+) => GhosttyResult.fromValue(
+  _ghostty_terminal_selection_format_alloc(
+    terminal,
+    allocator,
+    options,
+    out_ptr,
+    out_len,
+  ),
+);
+
+/// Adjust a selection snapshot using terminal selection semantics.
+///
+/// This mutates the caller-provided GhosttySelection in place. The logical end
+/// endpoint is always moved, regardless of whether the selection is forward or
+/// reversed visually. The input selection remains a snapshot: after adjustment,
+/// call ghostty_terminal_set() with GHOSTTY_TERMINAL_OPT_SELECTION to install it
+/// as the terminal-owned selection if desired.
+///
+/// The selection's start and end grid refs must both be valid untracked
+/// snapshots for the given terminal's currently active screen. In practice,
+/// they must come from that terminal and screen, and no mutating terminal call
+/// may have occurred since the refs were produced or reconstructed from
+/// tracked refs. Passing refs from another terminal, another screen, or stale
+/// refs violates this precondition.
+///
+/// @param terminal The terminal handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param selection Selection snapshot to adjust in place
+/// @param adjustment The adjustment operation to apply
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if the terminal,
+/// selection, or adjustment are invalid. Selection reference validity
+/// is a precondition and is not checked.
+///
+/// @ingroup selection
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyTerminal,
+    ffi.Pointer<GhosttySelection>,
+    ffi.UnsignedInt,
+  )
+>(symbol: 'ghostty_terminal_selection_adjust')
+external int _ghostty_terminal_selection_adjust(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttySelection> selection,
+  int adjustment,
+);
+
+GhosttyResult ghostty_terminal_selection_adjust(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttySelection> selection,
+  GhosttySelectionAdjust adjustment,
+) => GhosttyResult.fromValue(
+  _ghostty_terminal_selection_adjust(terminal, selection, adjustment.value),
+);
+
+/// Get the current endpoint ordering of a selection snapshot.
+///
+/// The selection's start and end grid refs must both be valid untracked
+/// snapshots for the given terminal's currently active screen. In practice,
+/// they must come from that terminal and screen, and no mutating terminal call
+/// may have occurred since the refs were produced or reconstructed from
+/// tracked refs. Passing refs from another terminal, another screen, or stale
+/// refs violates this precondition.
+///
+/// @param terminal The terminal handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param selection Selection snapshot to inspect
+/// @param[out] out_order On success, receives the selection order
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if the terminal,
+/// selection, or output pointer are invalid. Selection reference
+/// validity is a precondition and is not checked.
+///
+/// @ingroup selection
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyTerminal,
+    ffi.Pointer<GhosttySelection>,
+    ffi.Pointer<ffi.UnsignedInt>,
+  )
+>(symbol: 'ghostty_terminal_selection_order')
+external int _ghostty_terminal_selection_order(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttySelection> selection,
+  ffi.Pointer<ffi.UnsignedInt> out_order,
+);
+
+GhosttyResult ghostty_terminal_selection_order(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttySelection> selection,
+  ffi.Pointer<ffi.UnsignedInt> out_order,
+) => GhosttyResult.fromValue(
+  _ghostty_terminal_selection_order(terminal, selection, out_order),
+);
+
+/// Return a selection snapshot with endpoints ordered as requested.
+///
+/// Use GHOSTTY_SELECTION_ORDER_FORWARD to get top-left to bottom-right bounds,
+/// and GHOSTTY_SELECTION_ORDER_REVERSE to get bottom-right to top-left bounds.
+/// Mirrored desired orders are accepted but normalized the same as forward.
+/// The output selection is a fresh untracked snapshot and is not installed as
+/// the terminal's current selection.
+///
+/// The selection's start and end grid refs must both be valid untracked
+/// snapshots for the given terminal's currently active screen. In practice,
+/// they must come from that terminal and screen, and no mutating terminal call
+/// may have occurred since the refs were produced or reconstructed from
+/// tracked refs. Passing refs from another terminal, another screen, or stale
+/// refs violates this precondition.
+///
+/// @param terminal The terminal handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param selection Selection snapshot to order
+/// @param desired Desired endpoint order
+/// @param[out] out_selection On success, receives the ordered selection
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if the terminal,
+/// selection, desired order, or output pointer are invalid. Selection
+/// reference validity is a precondition and is not checked.
+///
+/// @ingroup selection
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyTerminal,
+    ffi.Pointer<GhosttySelection>,
+    ffi.UnsignedInt,
+    ffi.Pointer<GhosttySelection>,
+  )
+>(symbol: 'ghostty_terminal_selection_ordered')
+external int _ghostty_terminal_selection_ordered(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttySelection> selection,
+  int desired,
+  ffi.Pointer<GhosttySelection> out_selection,
+);
+
+GhosttyResult ghostty_terminal_selection_ordered(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttySelection> selection,
+  GhosttySelectionOrder desired,
+  ffi.Pointer<GhosttySelection> out_selection,
+) => GhosttyResult.fromValue(
+  _ghostty_terminal_selection_ordered(
+    terminal,
+    selection,
+    desired.value,
+    out_selection,
+  ),
+);
+
+/// Test whether a terminal point is inside a selection snapshot.
+///
+/// This uses the same selection semantics as the terminal, including
+/// rectangular/block selections and linear selections spanning multiple rows.
+///
+/// The selection's start and end grid refs must both be valid untracked
+/// snapshots for the given terminal's currently active screen. In practice,
+/// they must come from that terminal and screen, and no mutating terminal call
+/// may have occurred since the refs were produced or reconstructed from
+/// tracked refs. Passing refs from another terminal, another screen, or stale
+/// refs violates this precondition.
+///
+/// @param terminal The terminal handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param selection Selection snapshot to inspect
+/// @param point Point to test for containment
+/// @param[out] out_contains On success, receives whether point is inside selection
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if the terminal,
+/// selection, point, or output pointer are invalid. Selection reference
+/// validity is a precondition and is not checked.
+///
+/// @ingroup selection
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyTerminal,
+    ffi.Pointer<GhosttySelection>,
+    GhosttyPoint,
+    ffi.Pointer<ffi.Bool>,
+  )
+>(symbol: 'ghostty_terminal_selection_contains')
+external int _ghostty_terminal_selection_contains(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttySelection> selection,
+  GhosttyPoint point,
+  ffi.Pointer<ffi.Bool> out_contains,
+);
+
+GhosttyResult ghostty_terminal_selection_contains(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttySelection> selection,
+  GhosttyPoint point,
+  ffi.Pointer<ffi.Bool> out_contains,
+) => GhosttyResult.fromValue(
+  _ghostty_terminal_selection_contains(
+    terminal,
+    selection,
+    point,
+    out_contains,
+  ),
+);
+
+/// Test whether two selection snapshots are equal.
+///
+/// Equality uses the terminal's internal selection semantics: both endpoint
+/// pins must match and both selections must have the same rectangular/block
+/// state. This avoids requiring callers to compare raw GhosttyGridRef internals.
+///
+/// Both selections' start and end grid refs must be valid untracked snapshots
+/// for the given terminal's currently active screen. In practice, they must
+/// come from that terminal and screen, and no mutating terminal call may have
+/// occurred since the refs were produced or reconstructed from tracked refs.
+/// Passing refs from another terminal, another screen, or stale refs violates
+/// this precondition.
+///
+/// @param terminal The terminal handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param a First selection snapshot to compare
+/// @param b Second selection snapshot to compare
+/// @param[out] out_equal On success, receives whether the selections are equal
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if the terminal,
+/// selections, or output pointer are invalid. Selection reference
+/// validity is a precondition and is not checked.
+///
+/// @ingroup selection
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyTerminal,
+    ffi.Pointer<GhosttySelection>,
+    ffi.Pointer<GhosttySelection>,
+    ffi.Pointer<ffi.Bool>,
+  )
+>(symbol: 'ghostty_terminal_selection_equal')
+external int _ghostty_terminal_selection_equal(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttySelection> a,
+  ffi.Pointer<GhosttySelection> b,
+  ffi.Pointer<ffi.Bool> out_equal,
+);
+
+GhosttyResult ghostty_terminal_selection_equal(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttySelection> a,
+  ffi.Pointer<GhosttySelection> b,
+  ffi.Pointer<ffi.Bool> out_equal,
+) => GhosttyResult.fromValue(
+  _ghostty_terminal_selection_equal(terminal, a, b, out_equal),
+);
+
+/// Encode a DECRPM (DEC Private Mode Report) response sequence.
+///
+/// Writes a mode report escape sequence into the provided buffer.
+/// The generated sequence has the form:
+/// - DEC private mode: CSI ? Ps1 ; Ps2 $ y
+/// - ANSI mode:        CSI Ps1 ; Ps2 $ y
+///
+/// If the buffer is too small, the function returns GHOSTTY_OUT_OF_SPACE
+/// and writes the required buffer size to @p out_written. The caller can
+/// then retry with a sufficiently sized buffer.
+///
+/// @param mode The mode identifying the mode to report on
+/// @param state The report state for this mode
+/// @param buf Output buffer to write the encoded sequence into (may be NULL)
+/// @param buf_len Size of the output buffer in bytes
+/// @param[out] out_written On success, the number of bytes written. On
+/// GHOSTTY_OUT_OF_SPACE, the required buffer size.
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_OUT_OF_SPACE if the buffer
+/// is too small
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyMode,
+    ffi.UnsignedInt,
+    ffi.Pointer<ffi.Char>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_mode_report_encode')
+external int _ghostty_mode_report_encode(
+  int mode,
+  int state,
+  ffi.Pointer<ffi.Char> buf,
+  int buf_len,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_mode_report_encode(
+  DartGhosttyMode mode,
+  GhosttyModeReportState state,
+  ffi.Pointer<ffi.Char> buf,
+  int buf_len,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_mode_report_encode(mode, state.value, buf, buf_len, out_written),
+);
+
+/// Encode a terminal size report into an escape sequence.
+///
+/// Encodes a size report in the format specified by @p style into the
+/// provided buffer.
+///
+/// If the buffer is too small, the function returns GHOSTTY_OUT_OF_SPACE
+/// and writes the required buffer size to @p out_written. The caller can
+/// then retry with a sufficiently sized buffer.
+///
+/// @param style The size report format to encode
+/// @param size Terminal size information
+/// @param buf Output buffer to write the encoded sequence into (may be NULL)
+/// @param buf_len Size of the output buffer in bytes
+/// @param[out] out_written On success, the number of bytes written. On
+/// GHOSTTY_OUT_OF_SPACE, the required buffer size.
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_OUT_OF_SPACE if the buffer
+/// is too small
+@ffi.Native<
+  ffi.Int Function(
+    ffi.UnsignedInt,
+    GhosttySizeReportSize,
+    ffi.Pointer<ffi.Char>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_size_report_encode')
+external int _ghostty_size_report_encode(
+  int style,
+  GhosttySizeReportSize size,
+  ffi.Pointer<ffi.Char> buf,
+  int buf_len,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_size_report_encode(
+  GhosttySizeReportStyle style,
+  GhosttySizeReportSize size,
+  ffi.Pointer<ffi.Char> buf,
+  int buf_len,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_size_report_encode(style.value, size, buf, buf_len, out_written),
+);
+
+/// Get data from a kitty graphics storage instance.
+///
+/// The output pointer must be of the appropriate type for the requested
+/// data kind.
+///
+/// Returns GHOSTTY_NO_VALUE when Kitty graphics are disabled at build time.
+///
+/// @param graphics The kitty graphics handle
+/// @param data The type of data to extract
+/// @param[out] out Pointer to store the extracted data
+/// @return GHOSTTY_SUCCESS on success
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(GhosttyKittyGraphics, ffi.UnsignedInt, ffi.Pointer<ffi.Void>)
+>(symbol: 'ghostty_kitty_graphics_get')
+external int _ghostty_kitty_graphics_get(
+  GhosttyKittyGraphics graphics,
+  int data,
+  ffi.Pointer<ffi.Void> out,
+);
+
+GhosttyResult ghostty_kitty_graphics_get(
+  GhosttyKittyGraphics graphics,
+  GhosttyKittyGraphicsData data,
+  ffi.Pointer<ffi.Void> out,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_get(graphics, data.value, out),
+);
+
+/// Look up a Kitty graphics image by its image ID.
+///
+/// Returns NULL if no image with the given ID exists or if Kitty graphics
+/// are disabled at build time.
+///
+/// @param graphics The kitty graphics handle
+/// @param image_id The image ID to look up
+/// @return An opaque image handle, or NULL if not found
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  GhosttyKittyGraphicsImage Function(GhosttyKittyGraphics, ffi.Uint32)
+>()
+external GhosttyKittyGraphicsImage ghostty_kitty_graphics_image(
+  GhosttyKittyGraphics graphics,
+  int image_id,
+);
+
+/// Get data from a Kitty graphics image.
+///
+/// The output pointer must be of the appropriate type for the requested
+/// data kind.
+///
+/// @param image The image handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param data The data kind to query
+/// @param[out] out Pointer to receive the queried value
+/// @return GHOSTTY_SUCCESS on success
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyKittyGraphicsImage,
+    ffi.UnsignedInt,
+    ffi.Pointer<ffi.Void>,
+  )
+>(symbol: 'ghostty_kitty_graphics_image_get')
+external int _ghostty_kitty_graphics_image_get(
+  GhosttyKittyGraphicsImage image,
+  int data,
+  ffi.Pointer<ffi.Void> out,
+);
+
+GhosttyResult ghostty_kitty_graphics_image_get(
+  GhosttyKittyGraphicsImage image,
+  GhosttyKittyGraphicsImageData data,
+  ffi.Pointer<ffi.Void> out,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_image_get(image, data.value, out),
+);
+
+/// Get multiple data fields from a Kitty graphics image in a single call.
+///
+/// This is an optimization over calling ghostty_kitty_graphics_image_get()
+/// repeatedly, particularly useful in environments with high per-call
+/// overhead such as FFI or Cgo.
+///
+/// Each element in the keys array specifies a data kind, and the
+/// corresponding element in the values array receives the result.
+/// The type of each values[i] pointer must match the output type
+/// documented for keys[i].
+///
+/// Processing stops at the first error; on success out_written
+/// is set to count, on error it is set to the index of the
+/// failing key (i.e. the number of values successfully written).
+///
+/// @param image The image handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param count Number of key/value pairs
+/// @param keys Array of data kinds to query
+/// @param values Array of output pointers (types must match each key's
+/// documented output type)
+/// @param[out] out_written On return, receives the number of values
+/// successfully written (may be NULL)
+/// @return GHOSTTY_SUCCESS if all queries succeed
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyKittyGraphicsImage,
+    ffi.Size,
+    ffi.Pointer<ffi.UnsignedInt>,
+    ffi.Pointer<ffi.Pointer<ffi.Void>>,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_kitty_graphics_image_get_multi')
+external int _ghostty_kitty_graphics_image_get_multi(
+  GhosttyKittyGraphicsImage image,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_kitty_graphics_image_get_multi(
+  GhosttyKittyGraphicsImage image,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_image_get_multi(
+    image,
+    count,
+    keys,
+    values,
+    out_written,
+  ),
+);
+
+/// Create a new placement iterator instance.
+///
+/// All fields except the allocator are left undefined until populated
+/// via ghostty_kitty_graphics_get() with
+/// GHOSTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR.
+///
+/// @param allocator Pointer to allocator, or NULL to use the default allocator
+/// @param[out] out_iterator On success, receives the created iterator handle
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_OUT_OF_MEMORY on allocation
+/// failure
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(
+    ffi.Pointer<GhosttyAllocator>,
+    ffi.Pointer<GhosttyKittyGraphicsPlacementIterator>,
+  )
+>(symbol: 'ghostty_kitty_graphics_placement_iterator_new')
+external int _ghostty_kitty_graphics_placement_iterator_new(
+  ffi.Pointer<GhosttyAllocator> allocator,
+  ffi.Pointer<GhosttyKittyGraphicsPlacementIterator> out_iterator,
+);
+
+GhosttyResult ghostty_kitty_graphics_placement_iterator_new(
+  ffi.Pointer<GhosttyAllocator> allocator,
+  ffi.Pointer<GhosttyKittyGraphicsPlacementIterator> out_iterator,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_placement_iterator_new(allocator, out_iterator),
+);
+
+/// Free a placement iterator.
+///
+/// @param iterator The iterator handle to free (may be NULL)
+///
+/// @ingroup kitty_graphics
+@ffi.Native<ffi.Void Function(GhosttyKittyGraphicsPlacementIterator)>()
+external void ghostty_kitty_graphics_placement_iterator_free(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+);
+
+/// Set an option on a placement iterator.
+///
+/// Use GHOSTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER with a
+/// GhosttyKittyPlacementLayer value to filter placements by z-layer.
+/// The filter is applied during iteration: ghostty_kitty_graphics_placement_next()
+/// will skip placements that do not match the configured layer.
+///
+/// The default layer is GHOSTTY_KITTY_PLACEMENT_LAYER_ALL (no filtering).
+///
+/// @param iterator The iterator handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param option The option to set
+/// @param value Pointer to the value (type depends on option; NULL returns
+/// GHOSTTY_INVALID_VALUE)
+/// @return GHOSTTY_SUCCESS on success
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyKittyGraphicsPlacementIterator,
+    ffi.UnsignedInt,
+    ffi.Pointer<ffi.Void>,
+  )
+>(symbol: 'ghostty_kitty_graphics_placement_iterator_set')
+external int _ghostty_kitty_graphics_placement_iterator_set(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  int option,
+  ffi.Pointer<ffi.Void> value,
+);
+
+GhosttyResult ghostty_kitty_graphics_placement_iterator_set(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsPlacementIteratorOption option,
+  ffi.Pointer<ffi.Void> value,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_placement_iterator_set(iterator, option.value, value),
+);
+
+/// Advance the placement iterator to the next placement.
+///
+/// If a layer filter has been set via
+/// ghostty_kitty_graphics_placement_iterator_set(), only placements
+/// matching that layer are returned.
+///
+/// @param iterator The iterator handle (may be NULL)
+/// @return true if advanced to the next placement, false if at the end
+///
+/// @ingroup kitty_graphics
+@ffi.Native<ffi.Bool Function(GhosttyKittyGraphicsPlacementIterator)>()
+external bool ghostty_kitty_graphics_placement_next(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+);
+
+/// Get data from the current placement in a placement iterator.
+///
+/// Call ghostty_kitty_graphics_placement_next() at least once before
+/// calling this function.
+///
+/// @param iterator The iterator handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param data The data kind to query
+/// @param[out] out Pointer to receive the queried value
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if the
+/// iterator is NULL or not positioned on a placement
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyKittyGraphicsPlacementIterator,
+    ffi.UnsignedInt,
+    ffi.Pointer<ffi.Void>,
+  )
+>(symbol: 'ghostty_kitty_graphics_placement_get')
+external int _ghostty_kitty_graphics_placement_get(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  int data,
+  ffi.Pointer<ffi.Void> out,
+);
+
+GhosttyResult ghostty_kitty_graphics_placement_get(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsPlacementData data,
+  ffi.Pointer<ffi.Void> out,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_placement_get(iterator, data.value, out),
+);
+
+/// Get multiple data fields from the current placement in a single call.
+///
+/// This is an optimization over calling ghostty_kitty_graphics_placement_get()
+/// repeatedly, particularly useful in environments with high per-call
+/// overhead such as FFI or Cgo.
+///
+/// Each element in the keys array specifies a data kind, and the
+/// corresponding element in the values array receives the result.
+/// The type of each values[i] pointer must match the output type
+/// documented for keys[i].
+///
+/// Processing stops at the first error; on success out_written
+/// is set to count, on error it is set to the index of the
+/// failing key (i.e. the number of values successfully written).
+///
+/// @param iterator The iterator handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param count Number of key/value pairs
+/// @param keys Array of data kinds to query
+/// @param values Array of output pointers (types must match each key's
+/// documented output type)
+/// @param[out] out_written On return, receives the number of values
+/// successfully written (may be NULL)
+/// @return GHOSTTY_SUCCESS if all queries succeed
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyKittyGraphicsPlacementIterator,
+    ffi.Size,
+    ffi.Pointer<ffi.UnsignedInt>,
+    ffi.Pointer<ffi.Pointer<ffi.Void>>,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_kitty_graphics_placement_get_multi')
+external int _ghostty_kitty_graphics_placement_get_multi(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_kitty_graphics_placement_get_multi(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_placement_get_multi(
+    iterator,
+    count,
+    keys,
+    values,
+    out_written,
+  ),
+);
+
+/// Compute the grid rectangle occupied by the current placement.
+///
+/// Uses the placement's pin, the image dimensions, and the terminal's
+/// cell/pixel geometry to calculate the bounding rectangle. Virtual
+/// placements (unicode placeholders) return GHOSTTY_NO_VALUE.
+///
+/// @param terminal The terminal handle
+/// @param image The image handle for this placement's image
+/// @param iterator The placement iterator positioned on a placement
+/// @param[out] out_selection On success, receives the bounding rectangle
+/// as a selection with rectangle=true
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if any handle
+/// is NULL or the iterator is not positioned, GHOSTTY_NO_VALUE for
+/// virtual placements or when Kitty graphics are disabled
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyKittyGraphicsPlacementIterator,
+    GhosttyKittyGraphicsImage,
+    GhosttyTerminal,
+    ffi.Pointer<GhosttySelection>,
+  )
+>(symbol: 'ghostty_kitty_graphics_placement_rect')
+external int _ghostty_kitty_graphics_placement_rect(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsImage image,
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttySelection> out_selection,
+);
+
+GhosttyResult ghostty_kitty_graphics_placement_rect(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsImage image,
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttySelection> out_selection,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_placement_rect(
+    iterator,
+    image,
+    terminal,
+    out_selection,
+  ),
+);
+
+/// Compute the rendered pixel size of the current placement.
+///
+/// Takes into account the placement's source rectangle, specified
+/// columns/rows, and aspect ratio to calculate the final rendered
+/// pixel dimensions.
+///
+/// @param iterator The placement iterator positioned on a placement
+/// @param image The image handle for this placement's image
+/// @param terminal The terminal handle
+/// @param[out] out_width On success, receives the width in pixels
+/// @param[out] out_height On success, receives the height in pixels
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if any handle
+/// is NULL or the iterator is not positioned, GHOSTTY_NO_VALUE when
+/// Kitty graphics are disabled
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyKittyGraphicsPlacementIterator,
+    GhosttyKittyGraphicsImage,
+    GhosttyTerminal,
+    ffi.Pointer<ffi.Uint32>,
+    ffi.Pointer<ffi.Uint32>,
+  )
+>(symbol: 'ghostty_kitty_graphics_placement_pixel_size')
+external int _ghostty_kitty_graphics_placement_pixel_size(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsImage image,
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Uint32> out_width,
+  ffi.Pointer<ffi.Uint32> out_height,
+);
+
+GhosttyResult ghostty_kitty_graphics_placement_pixel_size(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsImage image,
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Uint32> out_width,
+  ffi.Pointer<ffi.Uint32> out_height,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_placement_pixel_size(
+    iterator,
+    image,
+    terminal,
+    out_width,
+    out_height,
+  ),
+);
+
+/// Compute the grid cell size of the current placement.
+///
+/// Returns the number of columns and rows that the placement occupies
+/// in the terminal grid. If the placement specifies explicit columns
+/// and rows, those are returned directly; otherwise they are calculated
+/// from the pixel size and cell dimensions.
+///
+/// @param iterator The placement iterator positioned on a placement
+/// @param image The image handle for this placement's image
+/// @param terminal The terminal handle
+/// @param[out] out_cols On success, receives the number of columns
+/// @param[out] out_rows On success, receives the number of rows
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if any handle
+/// is NULL or the iterator is not positioned, GHOSTTY_NO_VALUE when
+/// Kitty graphics are disabled
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyKittyGraphicsPlacementIterator,
+    GhosttyKittyGraphicsImage,
+    GhosttyTerminal,
+    ffi.Pointer<ffi.Uint32>,
+    ffi.Pointer<ffi.Uint32>,
+  )
+>(symbol: 'ghostty_kitty_graphics_placement_grid_size')
+external int _ghostty_kitty_graphics_placement_grid_size(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsImage image,
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Uint32> out_cols,
+  ffi.Pointer<ffi.Uint32> out_rows,
+);
+
+GhosttyResult ghostty_kitty_graphics_placement_grid_size(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsImage image,
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Uint32> out_cols,
+  ffi.Pointer<ffi.Uint32> out_rows,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_placement_grid_size(
+    iterator,
+    image,
+    terminal,
+    out_cols,
+    out_rows,
+  ),
+);
+
+/// Get the viewport-relative grid position of the current placement.
+///
+/// Converts the placement's internal pin to viewport-relative column and
+/// row coordinates. The returned coordinates represent the top-left
+/// corner of the placement in the viewport's grid coordinate space.
+///
+/// The row value can be negative when the placement's origin has
+/// scrolled above the top of the viewport. For example, a 4-row
+/// image that has scrolled up by 2 rows returns row=-2, meaning
+/// its top 2 rows are above the visible area but its bottom 2 rows
+/// are still on screen. Embedders should use these coordinates
+/// directly when computing the destination rectangle for rendering;
+/// the embedder is responsible for clipping the portion of the image
+/// that falls outside the viewport.
+///
+/// Returns GHOSTTY_SUCCESS for any placement that is at least
+/// partially visible in the viewport. Returns GHOSTTY_NO_VALUE when
+/// the placement is completely outside the viewport (its bottom edge
+/// is above the viewport or its top edge is at or below the last
+/// viewport row), or when the placement is a virtual (unicode
+/// placeholder) placement.
+///
+/// @param iterator The placement iterator positioned on a placement
+/// @param image The image handle for this placement's image
+/// @param terminal The terminal handle
+/// @param[out] out_col On success, receives the viewport-relative column
+/// @param[out] out_row On success, receives the viewport-relative row
+/// (may be negative for partially visible placements)
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_NO_VALUE if fully
+/// off-screen or virtual, GHOSTTY_INVALID_VALUE if any handle
+/// is NULL or the iterator is not positioned
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyKittyGraphicsPlacementIterator,
+    GhosttyKittyGraphicsImage,
+    GhosttyTerminal,
+    ffi.Pointer<ffi.Int32>,
+    ffi.Pointer<ffi.Int32>,
+  )
+>(symbol: 'ghostty_kitty_graphics_placement_viewport_pos')
+external int _ghostty_kitty_graphics_placement_viewport_pos(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsImage image,
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Int32> out_col,
+  ffi.Pointer<ffi.Int32> out_row,
+);
+
+GhosttyResult ghostty_kitty_graphics_placement_viewport_pos(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsImage image,
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Int32> out_col,
+  ffi.Pointer<ffi.Int32> out_row,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_placement_viewport_pos(
+    iterator,
+    image,
+    terminal,
+    out_col,
+    out_row,
+  ),
+);
+
+/// Get the resolved source rectangle for the current placement.
+///
+/// Applies kitty protocol semantics: a width or height of 0 in the
+/// placement means "use the full image dimension", and the resulting
+/// rectangle is clamped to the actual image bounds. The returned
+/// values are in pixels and are ready to use for texture sampling.
+///
+/// @param iterator The placement iterator positioned on a placement
+/// @param image The image handle for this placement's image
+/// @param[out] out_x Source rect x origin in pixels
+/// @param[out] out_y Source rect y origin in pixels
+/// @param[out] out_width Source rect width in pixels
+/// @param[out] out_height Source rect height in pixels
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if any
+/// handle is NULL or the iterator is not positioned
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyKittyGraphicsPlacementIterator,
+    GhosttyKittyGraphicsImage,
+    ffi.Pointer<ffi.Uint32>,
+    ffi.Pointer<ffi.Uint32>,
+    ffi.Pointer<ffi.Uint32>,
+    ffi.Pointer<ffi.Uint32>,
+  )
+>(symbol: 'ghostty_kitty_graphics_placement_source_rect')
+external int _ghostty_kitty_graphics_placement_source_rect(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsImage image,
+  ffi.Pointer<ffi.Uint32> out_x,
+  ffi.Pointer<ffi.Uint32> out_y,
+  ffi.Pointer<ffi.Uint32> out_width,
+  ffi.Pointer<ffi.Uint32> out_height,
+);
+
+GhosttyResult ghostty_kitty_graphics_placement_source_rect(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsImage image,
+  ffi.Pointer<ffi.Uint32> out_x,
+  ffi.Pointer<ffi.Uint32> out_y,
+  ffi.Pointer<ffi.Uint32> out_width,
+  ffi.Pointer<ffi.Uint32> out_height,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_placement_source_rect(
+    iterator,
+    image,
+    out_x,
+    out_y,
+    out_width,
+    out_height,
+  ),
+);
+
+/// Get all rendering geometry for a placement in a single call.
+///
+/// Combines pixel size, grid size, viewport position, and source
+/// rectangle into one struct. Initialize with
+/// GHOSTTY_INIT_SIZED(GhosttyKittyGraphicsPlacementRenderInfo).
+///
+/// When viewport_visible is false, the placement is fully off-screen
+/// or is a virtual placement; viewport_col and viewport_row may
+/// contain meaningless values in that case.
+///
+/// @param iterator The iterator positioned on a placement
+/// @param image The image handle for this placement's image
+/// @param terminal The terminal handle
+/// @param[out] out_info Pointer to receive the rendering geometry
+/// @return GHOSTTY_SUCCESS on success
+///
+/// @ingroup kitty_graphics
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyKittyGraphicsPlacementIterator,
+    GhosttyKittyGraphicsImage,
+    GhosttyTerminal,
+    ffi.Pointer<GhosttyKittyGraphicsPlacementRenderInfo>,
+  )
+>(symbol: 'ghostty_kitty_graphics_placement_render_info')
+external int _ghostty_kitty_graphics_placement_render_info(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsImage image,
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttyKittyGraphicsPlacementRenderInfo> out_info,
+);
+
+GhosttyResult ghostty_kitty_graphics_placement_render_info(
+  GhosttyKittyGraphicsPlacementIterator iterator,
+  GhosttyKittyGraphicsImage image,
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttyKittyGraphicsPlacementRenderInfo> out_info,
+) => GhosttyResult.fromValue(
+  _ghostty_kitty_graphics_placement_render_info(
+    iterator,
+    image,
+    terminal,
+    out_info,
+  ),
+);
+
 /// Create a new terminal instance.
+///
+/// The terminal starts with various reasonable defaults e.g. around
+/// scrollback limits. Use ghostty_terminal_set() to change any options
+/// prior to using the terminal.
 ///
 /// @param allocator Pointer to allocator, or NULL to use the default allocator
 /// @param terminal Pointer to store the created terminal handle
-/// @param options Terminal initialization options
+/// @param cols Terminal width in cells (must be greater than zero)
+/// @param rows Terminal height in cells (must be greater than zero)
 /// @return GHOSTTY_SUCCESS on success, or an error code on failure
 ///
 /// @ingroup terminal
@@ -430,21 +2383,24 @@ GhosttyResult ghostty_grid_ref_style(
   ffi.Int Function(
     ffi.Pointer<GhosttyAllocator>,
     ffi.Pointer<GhosttyTerminal>,
-    GhosttyTerminalOptions,
+    ffi.Uint16,
+    ffi.Uint16,
   )
 >(symbol: 'ghostty_terminal_new')
 external int _ghostty_terminal_new(
   ffi.Pointer<GhosttyAllocator> allocator,
   ffi.Pointer<GhosttyTerminal> terminal,
-  GhosttyTerminalOptions options,
+  int cols,
+  int rows,
 );
 
 GhosttyResult ghostty_terminal_new(
   ffi.Pointer<GhosttyAllocator> allocator,
   ffi.Pointer<GhosttyTerminal> terminal,
-  GhosttyTerminalOptions options,
+  int cols,
+  int rows,
 ) => GhosttyResult.fromValue(
-  _ghostty_terminal_new(allocator, terminal, options),
+  _ghostty_terminal_new(allocator, terminal, cols, rows),
 );
 
 /// Free a terminal instance.
@@ -522,11 +2478,13 @@ GhosttyResult ghostty_terminal_resize(
 /// write_pty callback and userdata pointer. The value is passed
 /// directly for pointer types (callbacks, userdata) or as a pointer
 /// to the value for non-pointer types (e.g. GhosttyString*).
-/// NULL clears the option to its default.
+/// The behavior of a NULL value is specific to each option and is
+/// documented by the corresponding GhosttyTerminalOption value.
 ///
-/// Callbacks are invoked synchronously during ghostty_terminal_vt_write().
-/// Callbacks must not call ghostty_terminal_vt_write() on the same
-/// terminal (no reentrancy).
+/// Callbacks are invoked synchronously during VT writes. Callbacks must not
+/// call ghostty_terminal_vt_write() or
+/// ghostty_terminal_vt_write_until_ground() on the same terminal
+/// (no reentrancy).
 ///
 /// @param terminal The terminal handle (may be NULL, in which case this is a no-op)
 /// @param option The option to set
@@ -579,12 +2537,195 @@ external void ghostty_terminal_vt_write(
   int len,
 );
 
+/// Write VT-encoded data, but only the shortest prefix needed to reach ground.
+///
+/// Ground is when the stream isn't in the middle of any type of sequence:
+/// UTF-8, ESC, CSI, OSC, etc. It is the stateless point of the stream.
+///
+/// This is useful to know because it is a point at which you can
+/// safely insert out-of-band VT sequences. For example, while reading
+/// from a pty if you want to make your own changes, you can wait until
+/// the pty input reaches ground, then write yours.
+///
+/// If the stream is already at ground then this consumes nothing and returns
+/// GHOSTTY_SUCCESS. On success, out_consumed is the number of bytes consumed
+/// before reaching ground, including the byte that reaches it.
+/// GHOSTTY_NO_VALUE means the full slice was consumed without reaching ground.
+///
+/// @param terminal The terminal handle (must not be NULL)
+/// @param data Pointer to the data to write, or NULL when len is zero
+/// @param len Length of the data in bytes
+/// @param[out] out_consumed Number of bytes consumed (must not be NULL)
+/// @return GHOSTTY_SUCCESS if ground was reached, GHOSTTY_NO_VALUE if all input
+/// was consumed without reaching ground, or GHOSTTY_INVALID_VALUE if
+/// an argument is invalid
+///
+/// @ingroup terminal
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyTerminal,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_terminal_vt_write_until_ground')
+external int _ghostty_terminal_vt_write_until_ground(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Uint8> data,
+  int len,
+  ffi.Pointer<ffi.Size> out_consumed,
+);
+
+GhosttyResult ghostty_terminal_vt_write_until_ground(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Uint8> data,
+  int len,
+  ffi.Pointer<ffi.Size> out_consumed,
+) => GhosttyResult.fromValue(
+  _ghostty_terminal_vt_write_until_ground(terminal, data, len, out_consumed),
+);
+
+/// Write the terminal's replay-safe VT continuation to a callback writer.
+///
+/// The continuation is the exact byte suffix needed to reconstruct unfinished
+/// VT parser or UTF-8 decoder state in an equivalent terminal. It is empty
+/// when the stream is at ground. The callback is invoked synchronously and
+/// may be called more than once. It must not call terminal APIs with the same
+/// terminal handle.
+///
+/// Continuation tracking must have been enabled by setting
+/// GHOSTTY_TERMINAL_OPT_CONTINUATION_MAX_BYTES to a nonzero value before the
+/// input that produced the continuation was written.
+///
+/// The caller must serialize this operation with both VT write functions and
+/// all other access to the same terminal.
+///
+/// @param terminal Terminal to read from (must not be NULL)
+/// @param writer Destination writer whose write callback must not be NULL
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_IO_ERROR if the callback rejects
+/// a write, GHOSTTY_LIMIT_EXCEEDED if output accounting overflows, or
+/// GHOSTTY_INVALID_VALUE if an argument is invalid, tracking is
+/// disabled, or the current continuation is unavailable
+///
+/// @ingroup terminal
+@ffi.Native<ffi.Int Function(GhosttyTerminal, GhosttyWriter)>(
+  symbol: 'ghostty_terminal_continuation_write',
+)
+external int _ghostty_terminal_continuation_write(
+  GhosttyTerminal terminal,
+  GhosttyWriter writer,
+);
+
+GhosttyResult ghostty_terminal_continuation_write(
+  GhosttyTerminal terminal,
+  GhosttyWriter writer,
+) => GhosttyResult.fromValue(
+  _ghostty_terminal_continuation_write(terminal, writer),
+);
+
+/// Copy the terminal's replay-safe VT continuation into a caller buffer.
+///
+/// Pass NULL for buf with buf_len zero to query the required size. A size query
+/// returns GHOSTTY_OUT_OF_SPACE and stores the required size in out_written,
+/// including zero when the stream is at ground. If a non-NULL buffer is too
+/// small, the function has the same result and reports the full required size.
+/// Continuation tracking must have been enabled by setting
+/// GHOSTTY_TERMINAL_OPT_CONTINUATION_MAX_BYTES to a nonzero value before the
+/// input that produced the continuation was written.
+///
+/// The caller must serialize this operation with all other access to the same
+/// terminal.
+///
+/// @param terminal Terminal to read from (must not be NULL)
+/// @param buf Destination buffer, or NULL when buf_len is zero
+/// @param buf_len Destination buffer capacity in bytes
+/// @param[out] out_written Bytes written, or required size on
+/// GHOSTTY_OUT_OF_SPACE (must not be NULL)
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_OUT_OF_SPACE for a size query or
+/// insufficient buffer, or GHOSTTY_INVALID_VALUE if an argument is
+/// invalid, tracking is disabled, or the current continuation is
+/// unavailable
+///
+/// @ingroup terminal
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyTerminal,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_terminal_continuation_buf')
+external int _ghostty_terminal_continuation_buf(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Uint8> buf,
+  int buf_len,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_terminal_continuation_buf(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Uint8> buf,
+  int buf_len,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_terminal_continuation_buf(terminal, buf, buf_len, out_written),
+);
+
+/// Return an allocated copy of the terminal's replay-safe VT continuation.
+///
+/// The returned bytes are allocated with allocator, or the default allocator
+/// when allocator is NULL. The caller must release them with ghostty_free(),
+/// passing the same allocator and returned length. An empty continuation is a
+/// successful zero-length allocation.
+/// Continuation tracking must have been enabled by setting
+/// GHOSTTY_TERMINAL_OPT_CONTINUATION_MAX_BYTES to a nonzero value before the
+/// input that produced the continuation was written.
+///
+/// The caller must serialize this operation with all other access to the same
+/// terminal.
+///
+/// @param terminal Terminal to read from (must not be NULL)
+/// @param allocator Allocator for the output, or NULL for the default allocator
+/// @param[out] out_ptr Allocated continuation bytes (must not be NULL)
+/// @param[out] out_len Number of continuation bytes (must not be NULL)
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_OUT_OF_MEMORY on allocation
+/// failure, or GHOSTTY_INVALID_VALUE if an argument is invalid,
+/// tracking is disabled, or the current continuation is unavailable
+///
+/// @ingroup terminal
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyTerminal,
+    ffi.Pointer<GhosttyAllocator>,
+    ffi.Pointer<ffi.Pointer<ffi.Uint8>>,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_terminal_continuation_alloc')
+external int _ghostty_terminal_continuation_alloc(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttyAllocator> allocator,
+  ffi.Pointer<ffi.Pointer<ffi.Uint8>> out_ptr,
+  ffi.Pointer<ffi.Size> out_len,
+);
+
+GhosttyResult ghostty_terminal_continuation_alloc(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttyAllocator> allocator,
+  ffi.Pointer<ffi.Pointer<ffi.Uint8>> out_ptr,
+  ffi.Pointer<ffi.Size> out_len,
+) => GhosttyResult.fromValue(
+  _ghostty_terminal_continuation_alloc(terminal, allocator, out_ptr, out_len),
+);
+
 /// Scroll the terminal viewport.
 ///
 /// Scrolls the terminal's viewport according to the given behavior.
 /// When using GHOSTTY_SCROLL_VIEWPORT_DELTA, set the delta field in
 /// the value union to specify the number of rows to scroll (negative
-/// for up, positive for down). For other behaviors, the value is ignored.
+/// for up, positive for down). When using GHOSTTY_SCROLL_VIEWPORT_ROW,
+/// set the row field to the absolute row offset from the top of the
+/// scrollable area (the same row space as the offset field of
+/// GhosttyTerminalScrollbar). For other behaviors, the value is ignored.
 ///
 /// @param terminal The terminal handle (may be NULL, in which case this is a no-op)
 /// @param behavior The scroll behavior as a tagged union
@@ -596,60 +2737,82 @@ external void ghostty_terminal_scroll_viewport(
   GhosttyTerminalScrollViewport behavior,
 );
 
-/// Get the current value of a terminal mode.
+/// Return the current compression activity token.
 ///
-/// Returns the value of the mode identified by the given mode.
+/// The token is opaque and only equality comparisons are meaningful. An
+/// embedding application should cache it and restart its compression idle
+/// delay whenever the value changes. The value may wrap and changes in either
+/// direction have the same meaning.
+///
+/// This function only observes terminal state. It does not perform or schedule
+/// compression.
 ///
 /// @param terminal The terminal handle (NULL returns GHOSTTY_INVALID_VALUE)
-/// @param mode The mode identifying the mode to query
-/// @param[out] out_value On success, set to true if the mode is set, false
-/// if it is reset
-/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if the terminal
-/// is NULL or the mode does not correspond to a known mode
+/// @param[out] out_activity Receives the current activity token
+/// @return GHOSTTY_SUCCESS on success, or GHOSTTY_INVALID_VALUE if an argument
+/// is NULL
+///
+/// @ingroup terminal
+@ffi.Native<ffi.Int Function(GhosttyTerminal, ffi.Pointer<ffi.Uint64>)>(
+  symbol: 'ghostty_terminal_compression_activity',
+)
+external int _ghostty_terminal_compression_activity(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Uint64> out_activity,
+);
+
+GhosttyResult ghostty_terminal_compression_activity(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Uint64> out_activity,
+) => GhosttyResult.fromValue(
+  _ghostty_terminal_compression_activity(terminal, out_activity),
+);
+
+/// Compress eligible terminal scrollback.
+///
+/// Incremental mode performs bounded work suitable for an idle callback. A
+/// pending result means the application should invoke another step while the
+/// terminal remains idle. A complete result means no continuation is needed
+/// until ghostty_terminal_compression_activity() changes. Full mode performs
+/// one synchronous scan and can stall on large scrollback buffers.
+///
+/// Compression is opportunistic. Complete means the pass has finished, not
+/// that every page was compressed: pages may be unprofitable or encounter an
+/// allocation or reclamation failure. Compression changes only the terminal's
+/// storage representation and never its logical contents or scrollback limit.
+/// Accessing compressed history restores it transparently.
+///
+/// This function is not thread-safe with other operations on the same
+/// terminal. The caller must serialize it with writes, rendering, searches,
+/// and other terminal access.
+///
+/// @param terminal The terminal handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param mode The amount of compression work to perform
+/// @param[out] out_result Receives the compression scheduling result
+/// @return GHOSTTY_SUCCESS on success, or GHOSTTY_INVALID_VALUE if an argument
+/// or mode is invalid
 ///
 /// @ingroup terminal
 @ffi.Native<
-  ffi.Int Function(GhosttyTerminal, GhosttyMode, ffi.Pointer<ffi.Bool>)
->(symbol: 'ghostty_terminal_mode_get')
-external int _ghostty_terminal_mode_get(
+  ffi.Int Function(
+    GhosttyTerminal,
+    ffi.UnsignedInt,
+    ffi.Pointer<ffi.UnsignedInt>,
+  )
+>(symbol: 'ghostty_terminal_compress')
+external int _ghostty_terminal_compress(
   GhosttyTerminal terminal,
   int mode,
-  ffi.Pointer<ffi.Bool> out_value,
+  ffi.Pointer<ffi.UnsignedInt> out_result,
 );
 
-GhosttyResult ghostty_terminal_mode_get(
+GhosttyResult ghostty_terminal_compress(
   GhosttyTerminal terminal,
-  DartGhosttyMode mode,
-  ffi.Pointer<ffi.Bool> out_value,
+  GhosttyTerminalCompressionMode mode,
+  ffi.Pointer<ffi.UnsignedInt> out_result,
 ) => GhosttyResult.fromValue(
-  _ghostty_terminal_mode_get(terminal, mode, out_value),
+  _ghostty_terminal_compress(terminal, mode.value, out_result),
 );
-
-/// Set the value of a terminal mode.
-///
-/// Sets the mode identified by the given mode to the specified value.
-///
-/// @param terminal The terminal handle (NULL returns GHOSTTY_INVALID_VALUE)
-/// @param mode The mode identifying the mode to set
-/// @param value true to set the mode, false to reset it
-/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if the terminal
-/// is NULL or the mode does not correspond to a known mode
-///
-/// @ingroup terminal
-@ffi.Native<ffi.Int Function(GhosttyTerminal, GhosttyMode, ffi.Bool)>(
-  symbol: 'ghostty_terminal_mode_set',
-)
-external int _ghostty_terminal_mode_set(
-  GhosttyTerminal terminal,
-  int mode,
-  bool value,
-);
-
-GhosttyResult ghostty_terminal_mode_set(
-  GhosttyTerminal terminal,
-  DartGhosttyMode mode,
-  bool value,
-) => GhosttyResult.fromValue(_ghostty_terminal_mode_set(terminal, mode, value));
 
 /// Get data from a terminal instance.
 ///
@@ -679,6 +2842,58 @@ GhosttyResult ghostty_terminal_get(
   GhosttyTerminalData data,
   ffi.Pointer<ffi.Void> out,
 ) => GhosttyResult.fromValue(_ghostty_terminal_get(terminal, data.value, out));
+
+/// Get multiple data fields from a terminal in a single call.
+///
+/// This is an optimization over calling ghostty_terminal_get()
+/// repeatedly, particularly useful in environments with high per-call
+/// overhead such as FFI or Cgo.
+///
+/// Each element in the keys array specifies a data kind, and the
+/// corresponding element in the values array receives the result.
+/// The type of each values[i] pointer must match the output type
+/// documented for keys[i].
+///
+/// Processing stops at the first error; on success out_written
+/// is set to count, on error it is set to the index of the
+/// failing key (i.e. the number of values successfully written).
+///
+/// @param terminal The terminal handle (may be NULL)
+/// @param count Number of key/value pairs
+/// @param keys Array of data kinds to query
+/// @param values Array of output pointers (types must match each key's
+/// documented output type)
+/// @param[out] out_written On return, receives the number of values
+/// successfully written (may be NULL)
+/// @return GHOSTTY_SUCCESS if all queries succeed
+///
+/// @ingroup terminal
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyTerminal,
+    ffi.Size,
+    ffi.Pointer<ffi.UnsignedInt>,
+    ffi.Pointer<ffi.Pointer<ffi.Void>>,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_terminal_get_multi')
+external int _ghostty_terminal_get_multi(
+  GhosttyTerminal terminal,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_terminal_get_multi(
+  GhosttyTerminal terminal,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_terminal_get_multi(terminal, count, keys, values, out_written),
+);
 
 /// Resolve a point in the terminal grid to a grid reference.
 ///
@@ -721,6 +2936,101 @@ GhosttyResult ghostty_terminal_grid_ref(
   _ghostty_terminal_grid_ref(terminal, point, out_ref),
 );
 
+/// Create an owned tracked grid reference for a terminal point.
+///
+/// This is the tracked variant of ghostty_terminal_grid_ref(). The returned
+/// handle follows the referenced cell as the terminal's page list is modified:
+/// scrolling, pruning, resize/reflow, and other page-list operations update the
+/// tracked reference automatically.
+///
+/// The reference is attached to the terminal screen/page-list that is active at
+/// creation time.
+///
+/// If the point is outside the requested coordinate space, this returns
+/// GHOSTTY_INVALID_VALUE and writes NULL to out_ref.
+///
+/// The returned handle must be freed with ghostty_tracked_grid_ref_free(). If
+/// the terminal is freed first, the handle remains valid only for
+/// tracked-grid-ref APIs: it reports no value and can still be freed.
+///
+/// @param terminal Terminal instance.
+/// @param point Point to track.
+/// @param[out] out_ref On success, receives the tracked reference handle.
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if terminal,
+/// point, or out_ref is invalid, or GHOSTTY_OUT_OF_MEMORY if allocation
+/// fails.
+///
+/// @ingroup terminal
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyTerminal,
+    GhosttyPoint,
+    ffi.Pointer<GhosttyTrackedGridRef>,
+  )
+>(symbol: 'ghostty_terminal_grid_ref_track')
+external int _ghostty_terminal_grid_ref_track(
+  GhosttyTerminal terminal,
+  GhosttyPoint point,
+  ffi.Pointer<GhosttyTrackedGridRef> out_ref,
+);
+
+GhosttyResult ghostty_terminal_grid_ref_track(
+  GhosttyTerminal terminal,
+  GhosttyPoint point,
+  ffi.Pointer<GhosttyTrackedGridRef> out_ref,
+) => GhosttyResult.fromValue(
+  _ghostty_terminal_grid_ref_track(terminal, point, out_ref),
+);
+
+/// Convert a grid reference back to a point in the given coordinate system.
+///
+/// This is the inverse of ghostty_terminal_grid_ref(): given a grid reference,
+/// it returns the x/y coordinates in the requested coordinate system (active,
+/// viewport, screen, or history).
+///
+/// The grid reference must have been obtained from the same terminal instance.
+/// Like all grid references, it is only valid until the next mutating terminal
+/// call.
+///
+/// Not every grid reference is representable in every coordinate system. For
+/// example, a cell in scrollback history cannot be expressed in active
+/// coordinates, and a cell that has scrolled off the visible area cannot be
+/// expressed in viewport coordinates. In these cases, the function returns
+/// GHOSTTY_NO_VALUE.
+///
+/// @param terminal The terminal handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param ref Pointer to the grid reference to convert
+/// @param tag The target coordinate system
+/// @param[out] out On success, set to the coordinate in the requested system (may be NULL)
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if the terminal
+/// or ref is NULL/invalid, GHOSTTY_NO_VALUE if the ref falls outside
+/// the requested coordinate system
+///
+/// @ingroup terminal
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyTerminal,
+    ffi.Pointer<GhosttyGridRef>,
+    ffi.UnsignedInt,
+    ffi.Pointer<GhosttyPointCoordinate>,
+  )
+>(symbol: 'ghostty_terminal_point_from_grid_ref')
+external int _ghostty_terminal_point_from_grid_ref(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttyGridRef> ref,
+  int tag,
+  ffi.Pointer<GhosttyPointCoordinate> out,
+);
+
+GhosttyResult ghostty_terminal_point_from_grid_ref(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttyGridRef> ref,
+  GhosttyPointTag tag,
+  ffi.Pointer<GhosttyPointCoordinate> out,
+) => GhosttyResult.fromValue(
+  _ghostty_terminal_point_from_grid_ref(terminal, ref, tag.value, out),
+);
+
 /// Create a formatter for a terminal's active screen.
 ///
 /// The terminal must outlive the formatter. The formatter stores a borrowed
@@ -756,6 +3066,37 @@ GhosttyResult ghostty_formatter_terminal_new(
 ) => GhosttyResult.fromValue(
   _ghostty_formatter_terminal_new(allocator, formatter, terminal, options),
 );
+
+/// Run the formatter and stream output to a writer.
+///
+/// Each call formats the current terminal state and invokes the writer
+/// synchronously as output becomes available. The callback may be called more
+/// than once and must not call formatter or terminal APIs using the same
+/// formatter or its terminal.
+///
+/// If an error occurs, the writer may already contain a partial formatted
+/// output. The operation cannot be resumed from that partial output. This
+/// function does not flush or make the caller's destination durable.
+///
+/// @param formatter The formatter handle (must not be NULL)
+/// @param writer Destination writer whose write callback must not be NULL
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_IO_ERROR if the writer rejects
+/// output, GHOSTTY_LIMIT_EXCEEDED if output accounting overflows, or
+/// GHOSTTY_INVALID_VALUE if an argument is invalid
+///
+/// @ingroup formatter
+@ffi.Native<ffi.Int Function(GhosttyFormatter, GhosttyWriter)>(
+  symbol: 'ghostty_formatter_format',
+)
+external int _ghostty_formatter_format(
+  GhosttyFormatter formatter,
+  GhosttyWriter writer,
+);
+
+GhosttyResult ghostty_formatter_format(
+  GhosttyFormatter formatter,
+  GhosttyWriter writer,
+) => GhosttyResult.fromValue(_ghostty_formatter_format(formatter, writer));
 
 /// Run the formatter and produce output into the caller-provided buffer.
 ///
@@ -891,6 +3232,12 @@ external void ghostty_render_state_free(GhosttyRenderState state);
 /// This consumes terminal/screen dirty state in the same way as the internal
 /// render state update path.
 ///
+/// This is a convenience function that performs a full update in one call,
+/// equivalent to ghostty_render_state_begin_update immediately followed by
+/// ghostty_render_state_end_update. Callers that hold a lock over the
+/// terminal state should prefer calling the two phases directly so that the
+/// lock is only held for the begin phase.
+///
 /// @param state The render state handle (NULL returns GHOSTTY_INVALID_VALUE)
 /// @param terminal The terminal handle to read from (NULL returns GHOSTTY_INVALID_VALUE)
 /// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if `state` or
@@ -911,6 +3258,89 @@ GhosttyResult ghostty_render_state_update(
   GhosttyTerminal terminal,
 ) => GhosttyResult.fromValue(_ghostty_render_state_update(state, terminal));
 
+/// Begin an update of a render state instance from a terminal.
+///
+/// Every begin must be completed with a ghostty_render_state_end_update call
+/// before the render state is read.
+///
+/// This two-phase structure exists for callers that synchronize access to the
+/// terminal state (e.g. with a lock shared with an IO thread): only this
+/// function requires terminal access, so a caller can hold its lock for this
+/// call only and then call ghostty_render_state_end_update after releasing
+/// it. The end phase exclusively reads and writes memory owned by the render
+/// state, so it is safe to call while the terminal is being modified.
+///
+/// Work that doesn't require terminal access may be deferred to the end phase
+/// to keep this call (and therefore lock hold time) as short as possible.
+/// Callers must treat the render state as incomplete until
+/// ghostty_render_state_end_update is called.
+///
+/// This consumes terminal/screen dirty state in the same way as the internal
+/// render state update path.
+///
+/// @param state The render state handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param terminal The terminal handle to read from (NULL returns GHOSTTY_INVALID_VALUE)
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if `state` or
+/// `terminal` is NULL, GHOSTTY_OUT_OF_MEMORY if updating the state requires
+/// allocation and that allocation fails
+///
+/// @ingroup render
+@ffi.Native<ffi.Int Function(GhosttyRenderState, GhosttyTerminal)>(
+  symbol: 'ghostty_render_state_begin_update',
+)
+external int _ghostty_render_state_begin_update(
+  GhosttyRenderState state,
+  GhosttyTerminal terminal,
+);
+
+GhosttyResult ghostty_render_state_begin_update(
+  GhosttyRenderState state,
+  GhosttyTerminal terminal,
+) => GhosttyResult.fromValue(
+  _ghostty_render_state_begin_update(state, terminal),
+);
+
+/// Complete a prior ghostty_render_state_begin_update call by performing any
+/// deferred work.
+///
+/// This only reads and writes memory owned by the render state, so it is safe
+/// to call while the terminal is being modified (no terminal synchronization
+/// is required). Calling this without a prior begin is a safe no-op.
+///
+/// @param state The render state handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if `state` is
+/// NULL
+///
+/// @ingroup render
+@ffi.Native<ffi.Int Function(GhosttyRenderState)>(
+  symbol: 'ghostty_render_state_end_update',
+)
+external int _ghostty_render_state_end_update(GhosttyRenderState state);
+
+GhosttyResult ghostty_render_state_end_update(GhosttyRenderState state) =>
+    GhosttyResult.fromValue(_ghostty_render_state_end_update(state));
+
+/// Mark all dirty render-state data as consumed.
+///
+/// This sets the global dirty state to GHOSTTY_RENDER_STATE_DIRTY_FALSE and
+/// clears every per-row dirty flag. It is idempotent and does not modify cell
+/// contents or dirty state owned by the terminal. Call this only after a
+/// complete frame has been rendered successfully; partial consumers should
+/// use ghostty_render_state_set() and ghostty_render_state_row_set() instead.
+///
+/// @param state The render state handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if `state` is
+/// NULL
+///
+/// @ingroup render
+@ffi.Native<ffi.Int Function(GhosttyRenderState)>(
+  symbol: 'ghostty_render_state_clean',
+)
+external int _ghostty_render_state_clean(GhosttyRenderState state);
+
+GhosttyResult ghostty_render_state_clean(GhosttyRenderState state) =>
+    GhosttyResult.fromValue(_ghostty_render_state_clean(state));
+
 /// Get a value from a render state.
 ///
 /// The `out` pointer must point to a value of the type corresponding to the
@@ -919,8 +3349,9 @@ GhosttyResult ghostty_render_state_update(
 /// @param state The render state handle (NULL returns GHOSTTY_INVALID_VALUE)
 /// @param data The data kind to query
 /// @param[out] out Pointer to receive the queried value
-/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if `state` is
-/// NULL or `data` is not a recognized enum value
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if `state` or
+/// `out` is NULL, `data` is not a recognized enum value, or a sized
+/// output struct is smaller than `sizeof(size_t)`
 ///
 /// @ingroup render
 @ffi.Native<
@@ -937,6 +3368,52 @@ GhosttyResult ghostty_render_state_get(
   GhosttyRenderStateData data,
   ffi.Pointer<ffi.Void> out,
 ) => GhosttyResult.fromValue(_ghostty_render_state_get(state, data.value, out));
+
+/// Get multiple data fields from a render state in a single call.
+///
+/// Each element in the keys array specifies a data kind, and the
+/// corresponding element in the values array receives the result.
+///
+/// Processing stops at the first error; on success out_written
+/// is set to count, on error it is set to the index of the
+/// failing key (i.e. the number of values successfully written).
+///
+/// @param state The render state handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param count Number of key/value pairs
+/// @param keys Array of data kinds to query
+/// @param values Array of output pointers (types must match each key's
+/// documented output type)
+/// @param[out] out_written On return, receives the number of values
+/// successfully written (may be NULL)
+/// @return GHOSTTY_SUCCESS if all queries succeed
+///
+/// @ingroup render
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyRenderState,
+    ffi.Size,
+    ffi.Pointer<ffi.UnsignedInt>,
+    ffi.Pointer<ffi.Pointer<ffi.Void>>,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_render_state_get_multi')
+external int _ghostty_render_state_get_multi(
+  GhosttyRenderState state,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_render_state_get_multi(
+  GhosttyRenderState state,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_render_state_get_multi(state, count, keys, values, out_written),
+);
 
 /// Set an option on a render state.
 ///
@@ -966,34 +3443,6 @@ GhosttyResult ghostty_render_state_set(
   ffi.Pointer<ffi.Void> value,
 ) => GhosttyResult.fromValue(
   _ghostty_render_state_set(state, option.value, value),
-);
-
-/// Get the current color information from a render state.
-///
-/// This writes as many fields as fit in the caller-provided sized struct.
-/// `out_colors->size` must be set by the caller (typically via
-/// GHOSTTY_INIT_SIZED(GhosttyRenderStateColors)).
-///
-/// @param state The render state handle (NULL returns GHOSTTY_INVALID_VALUE)
-/// @param[out] out_colors Sized output struct to receive render-state colors
-/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if `state` or
-/// `out_colors` is NULL, or if `out_colors->size` is smaller than
-/// `sizeof(size_t)`
-///
-/// @ingroup render
-@ffi.Native<
-  ffi.Int Function(GhosttyRenderState, ffi.Pointer<GhosttyRenderStateColors>)
->(symbol: 'ghostty_render_state_colors_get')
-external int _ghostty_render_state_colors_get(
-  GhosttyRenderState state,
-  ffi.Pointer<GhosttyRenderStateColors> out_colors,
-);
-
-GhosttyResult ghostty_render_state_colors_get(
-  GhosttyRenderState state,
-  ffi.Pointer<GhosttyRenderStateColors> out_colors,
-) => GhosttyResult.fromValue(
-  _ghostty_render_state_colors_get(state, out_colors),
 );
 
 /// Create a new row iterator instance.
@@ -1038,7 +3487,8 @@ external void ghostty_render_state_row_iterator_free(
 
 /// Move a render-state row iterator to the next row.
 ///
-/// Returns true if the iterator moved successfully and row data is
+/// Rows are visited contiguously in ascending viewport order, starting at
+/// y = 0. Returns true if the iterator moved successfully and row data is
 /// available to read at the new position.
 ///
 /// @param iterator The iterator handle to advance (may be NULL)
@@ -1051,11 +3501,37 @@ external bool ghostty_render_state_row_iterator_next(
   GhosttyRenderStateRowIterator iterator,
 );
 
+/// Move a render-state row iterator to the next row requiring a redraw.
+///
+/// If the global dirty state is GHOSTTY_RENDER_STATE_DIRTY_FALSE, this returns
+/// false. If it is GHOSTTY_RENDER_STATE_DIRTY_PARTIAL, clean rows are skipped.
+/// If it is GHOSTTY_RENDER_STATE_DIRTY_FULL, every remaining row is returned
+/// regardless of its per-row dirty flag. Rows are returned in ascending
+/// viewport order. This function does not clear any dirty state.
+///
+/// @param iterator The iterator handle to advance (NULL returns false)
+/// @param[out] out_y Receives the viewport y coordinate when true is returned
+/// (NULL returns false); it is not modified when false is
+/// returned
+/// @return true if advanced to a row requiring a redraw, false if an argument
+/// is NULL or the iterator has reached the end of the effective dirty
+/// rows
+///
+/// @ingroup render
+@ffi.Native<
+  ffi.Bool Function(GhosttyRenderStateRowIterator, ffi.Pointer<ffi.Uint16>)
+>()
+external bool ghostty_render_state_row_iterator_next_dirty(
+  GhosttyRenderStateRowIterator iterator,
+  ffi.Pointer<ffi.Uint16> out_y,
+);
+
 /// Get a value from the current row in a render-state row iterator.
 ///
 /// The `out` pointer must point to a value of the type corresponding to the
 /// requested data kind (see GhosttyRenderStateRowData).
-/// Call ghostty_render_state_row_iterator_next() at least once before
+/// Call ghostty_render_state_row_iterator_next() or
+/// ghostty_render_state_row_iterator_next_dirty() at least once before
 /// calling this function.
 ///
 /// @param iterator The iterator handle to query (NULL returns GHOSTTY_INVALID_VALUE)
@@ -1086,11 +3562,64 @@ GhosttyResult ghostty_render_state_row_get(
   _ghostty_render_state_row_get(iterator, data.value, out),
 );
 
+/// Get multiple data fields from the current row in a single call.
+///
+/// Each element in the keys array specifies a data kind, and the
+/// corresponding element in the values array receives the result.
+///
+/// Processing stops at the first error; on success out_written
+/// is set to count, on error it is set to the index of the
+/// failing key (i.e. the number of values successfully written).
+///
+/// @param iterator The iterator handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param count Number of key/value pairs
+/// @param keys Array of data kinds to query
+/// @param values Array of output pointers (types must match each key's
+/// documented output type)
+/// @param[out] out_written On return, receives the number of values
+/// successfully written (may be NULL)
+/// @return GHOSTTY_SUCCESS if all queries succeed
+///
+/// @ingroup render
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyRenderStateRowIterator,
+    ffi.Size,
+    ffi.Pointer<ffi.UnsignedInt>,
+    ffi.Pointer<ffi.Pointer<ffi.Void>>,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_render_state_row_get_multi')
+external int _ghostty_render_state_row_get_multi(
+  GhosttyRenderStateRowIterator iterator,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_render_state_row_get_multi(
+  GhosttyRenderStateRowIterator iterator,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_render_state_row_get_multi(
+    iterator,
+    count,
+    keys,
+    values,
+    out_written,
+  ),
+);
+
 /// Set an option on the current row in a render-state row iterator.
 ///
 /// The `value` pointer must point to a value of the type corresponding to the
 /// requested option kind (see GhosttyRenderStateRowOption).
-/// Call ghostty_render_state_row_iterator_next() at least once before
+/// Call ghostty_render_state_row_iterator_next() or
+/// ghostty_render_state_row_iterator_next_dirty() at least once before
 /// calling this function.
 ///
 /// @param iterator The iterator handle to update (NULL returns GHOSTTY_INVALID_VALUE)
@@ -1231,6 +3760,58 @@ GhosttyResult ghostty_render_state_row_cells_get(
   _ghostty_render_state_row_cells_get(cells, data.value, out),
 );
 
+/// Get multiple data fields from the current cell in a single call.
+///
+/// Each element in the keys array specifies a data kind, and the
+/// corresponding element in the values array receives the result.
+///
+/// Processing stops at the first error; on success out_written
+/// is set to count, on error it is set to the index of the
+/// failing key (i.e. the number of values successfully written).
+///
+/// @param cells The row cells handle (NULL returns GHOSTTY_INVALID_VALUE)
+/// @param count Number of key/value pairs
+/// @param keys Array of data kinds to query
+/// @param values Array of output pointers (types must match each key's
+/// documented output type)
+/// @param[out] out_written On return, receives the number of values
+/// successfully written (may be NULL)
+/// @return GHOSTTY_SUCCESS if all queries succeed
+///
+/// @ingroup render
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyRenderStateRowCells,
+    ffi.Size,
+    ffi.Pointer<ffi.UnsignedInt>,
+    ffi.Pointer<ffi.Pointer<ffi.Void>>,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_render_state_row_cells_get_multi')
+external int _ghostty_render_state_row_cells_get_multi(
+  GhosttyRenderStateRowCells cells,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_render_state_row_cells_get_multi(
+  GhosttyRenderStateRowCells cells,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_render_state_row_cells_get_multi(
+    cells,
+    count,
+    keys,
+    values,
+    out_written,
+  ),
+);
+
 /// Free a row cells instance.
 ///
 /// @param cells The row cells handle to free (may be NULL)
@@ -1240,6 +3821,142 @@ GhosttyResult ghostty_render_state_row_cells_get(
 external void ghostty_render_state_row_cells_free(
   GhosttyRenderStateRowCells cells,
 );
+
+/// Free a tracked grid reference.
+///
+/// Passing NULL is allowed and has no effect. A tracked reference may be freed
+/// after the terminal that created it is freed.
+///
+/// @param ref Tracked grid reference to free.
+///
+/// @ingroup grid_ref
+@ffi.Native<ffi.Void Function(GhosttyTrackedGridRef)>()
+external void ghostty_tracked_grid_ref_free(GhosttyTrackedGridRef ref);
+
+/// Return whether a tracked grid reference currently has a meaningful value.
+///
+/// If the terminal that created the tracked reference has been freed, this
+/// returns false.
+///
+/// @param ref Tracked grid reference.
+/// @return true if the reference currently has a meaningful value.
+///
+/// @ingroup grid_ref
+@ffi.Native<ffi.Bool Function(GhosttyTrackedGridRef)>()
+external bool ghostty_tracked_grid_ref_has_value(GhosttyTrackedGridRef ref);
+
+/// Convert a tracked grid reference to a point in the requested coordinate
+/// space.
+///
+/// This is the tracked equivalent of ghostty_terminal_point_from_grid_ref().
+/// Unlike snapshotting, this does not expose an intermediate untracked
+/// GhosttyGridRef.
+///
+/// A tracked reference is resolved against the terminal screen/page-list that
+/// currently owns the reference. If the terminal has switched between primary
+/// and alternate screens since the reference was created or last set, this may
+/// be different from the terminal's currently active screen.
+///
+/// If the tracked reference no longer has a meaningful value, this returns
+/// GHOSTTY_NO_VALUE. GHOSTTY_NO_VALUE is also returned when the reference cannot
+/// be represented in the requested coordinate space, including after the
+/// terminal that created the tracked reference has been freed.
+///
+/// @param ref Tracked grid reference.
+/// @param tag Coordinate space to convert into.
+/// @param[out] out_point On success, receives the coordinate. May be NULL.
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if ref is invalid,
+/// or GHOSTTY_NO_VALUE if there is no representable value.
+///
+/// @ingroup grid_ref
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyTrackedGridRef,
+    ffi.UnsignedInt,
+    ffi.Pointer<GhosttyPointCoordinate>,
+  )
+>(symbol: 'ghostty_tracked_grid_ref_point')
+external int _ghostty_tracked_grid_ref_point(
+  GhosttyTrackedGridRef ref,
+  int tag,
+  ffi.Pointer<GhosttyPointCoordinate> out_point,
+);
+
+GhosttyResult ghostty_tracked_grid_ref_point(
+  GhosttyTrackedGridRef ref,
+  GhosttyPointTag tag,
+  ffi.Pointer<GhosttyPointCoordinate> out_point,
+) => GhosttyResult.fromValue(
+  _ghostty_tracked_grid_ref_point(ref, tag.value, out_point),
+);
+
+/// Move an existing tracked grid reference to a new terminal point.
+///
+/// On success, the tracked reference begins tracking the new point and any prior
+/// "no value" state is cleared. On GHOSTTY_OUT_OF_MEMORY, the original tracked
+/// reference is left unchanged.
+///
+/// The terminal must be the same terminal that created the tracked reference.
+/// The point is resolved against the terminal screen/page-list that is active at
+/// the time this function is called. If the terminal has switched between
+/// primary and alternate screens, this may move the tracked reference from one
+/// screen/page-list to the other.
+///
+/// @param ref Tracked grid reference.
+/// @param terminal Terminal instance that owns the reference.
+/// @param point New point to track.
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if ref, terminal,
+/// or point is invalid, or GHOSTTY_OUT_OF_MEMORY if allocation fails.
+///
+/// @ingroup grid_ref
+@ffi.Native<
+  ffi.Int Function(GhosttyTrackedGridRef, GhosttyTerminal, GhosttyPoint)
+>(symbol: 'ghostty_tracked_grid_ref_set')
+external int _ghostty_tracked_grid_ref_set(
+  GhosttyTrackedGridRef ref,
+  GhosttyTerminal terminal,
+  GhosttyPoint point,
+);
+
+GhosttyResult ghostty_tracked_grid_ref_set(
+  GhosttyTrackedGridRef ref,
+  GhosttyTerminal terminal,
+  GhosttyPoint point,
+) => GhosttyResult.fromValue(
+  _ghostty_tracked_grid_ref_set(ref, terminal, point),
+);
+
+/// Snapshot a tracked grid reference into a regular GhosttyGridRef.
+///
+/// The returned GhosttyGridRef is an untracked snapshot and has the same
+/// lifetime rules as ghostty_terminal_grid_ref(): it is only valid until the
+/// next terminal update. Snapshot immediately before calling
+/// ghostty_grid_ref_cell(), ghostty_grid_ref_row(),
+/// ghostty_grid_ref_graphemes(), ghostty_grid_ref_hyperlink_uri(), or
+/// ghostty_grid_ref_style().
+///
+/// If the tracked reference no longer has a meaningful value, this returns
+/// GHOSTTY_NO_VALUE. This includes references whose owning terminal has been
+/// freed.
+///
+/// @param ref Tracked grid reference.
+/// @param[out] out_ref On success, receives an untracked snapshot. May be NULL.
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if ref is invalid,
+/// or GHOSTTY_NO_VALUE if the tracked location was discarded.
+///
+/// @ingroup grid_ref
+@ffi.Native<
+  ffi.Int Function(GhosttyTrackedGridRef, ffi.Pointer<GhosttyGridRef>)
+>(symbol: 'ghostty_tracked_grid_ref_snapshot')
+external int _ghostty_tracked_grid_ref_snapshot(
+  GhosttyTrackedGridRef ref,
+  ffi.Pointer<GhosttyGridRef> out_ref,
+);
+
+GhosttyResult ghostty_tracked_grid_ref_snapshot(
+  GhosttyTrackedGridRef ref,
+  ffi.Pointer<GhosttyGridRef> out_ref,
+) => GhosttyResult.fromValue(_ghostty_tracked_grid_ref_snapshot(ref, out_ref));
 
 /// Create a new OSC parser instance.
 ///
@@ -1575,6 +4292,70 @@ GhosttySgrAttributeTag ghostty_sgr_attribute_tag(GhosttySgrAttribute attr) =>
 >()
 external ffi.Pointer<GhosttySgrAttributeValue> ghostty_sgr_attribute_value(
   ffi.Pointer<GhosttySgrAttribute> attr,
+);
+
+/// Set a system-level option.
+///
+/// Configures a process-global implementation function. These should be
+/// set once at startup before using any terminal functionality that
+/// depends on them.
+///
+/// @param option The option to set
+/// @param value  Pointer to the value (type depends on the option),
+/// or NULL to clear it
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if the
+/// option is not recognized
+@ffi.Native<ffi.Int Function(ffi.UnsignedInt, ffi.Pointer<ffi.Void>)>(
+  symbol: 'ghostty_sys_set',
+)
+external int _ghostty_sys_set(int option, ffi.Pointer<ffi.Void> value);
+
+GhosttyResult ghostty_sys_set(
+  GhosttySysOption option,
+  ffi.Pointer<ffi.Void> value,
+) => GhosttyResult.fromValue(_ghostty_sys_set(option.value, value));
+
+/// Built-in log callback that writes to stderr.
+///
+/// Formats each message as "[level](scope): message\n".
+/// Can be passed directly to ghostty_sys_set():
+///
+/// @code
+/// ghostty_sys_set(GHOSTTY_SYS_OPT_LOG, &ghostty_sys_log_stderr);
+/// @endcode
+@ffi.Native<
+  ffi.Void Function(
+    ffi.Pointer<ffi.Void>,
+    ffi.UnsignedInt,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+  )
+>(symbol: 'ghostty_sys_log_stderr')
+external void _ghostty_sys_log_stderr(
+  ffi.Pointer<ffi.Void> userdata,
+  int level,
+  ffi.Pointer<ffi.Uint8> scope,
+  int scope_len,
+  ffi.Pointer<ffi.Uint8> message,
+  int message_len,
+);
+
+void ghostty_sys_log_stderr(
+  ffi.Pointer<ffi.Void> userdata,
+  GhosttySysLogLevel level,
+  ffi.Pointer<ffi.Uint8> scope,
+  int scope_len,
+  ffi.Pointer<ffi.Uint8> message,
+  int message_len,
+) => _ghostty_sys_log_stderr(
+  userdata,
+  level.value,
+  scope,
+  scope_len,
+  message,
+  message_len,
 );
 
 /// Create a new key event instance.
@@ -2252,6 +5033,53 @@ GhosttyResult ghostty_mouse_encoder_encode(
   _ghostty_mouse_encoder_encode(encoder, event, out_buf, out_buf_size, out_len),
 );
 
+/// Paste into the terminal according to its current state: a Kitty
+/// clipboard protocol paste event if mode 5522 is enabled and a
+/// clipboard_read callback is installed, otherwise the text framed per
+/// mode 2004. See the group documentation for the full behavior. Output
+/// streams through the write_pty callback in chunks. The viewport is not
+/// scrolled; that is up to the embedder, as for key input.
+///
+/// A paste event records a session grant for its one-time password only
+/// once the event is written; a failed call never leaves a grant for an
+/// event that was never sent.
+///
+/// @param terminal The terminal handle
+/// @param paste The paste request, borrowed for the duration of the call
+/// @param[out] out_written On success, whether anything was written to
+/// the pty (the encoded text or a paste event). False means
+/// there was nothing to paste: no non-empty text
+/// representation. May be NULL.
+/// @return GHOSTTY_SUCCESS on success (see @p out_written);
+/// GHOSTTY_REJECTED if the text could inject commands and
+/// GhosttyPaste::allow_unsafe is false (nothing was written);
+/// GHOSTTY_INVALID_VALUE for a NULL terminal or paste, MIME
+/// types without a reader, or when no write_pty callback is
+/// installed; GHOSTTY_OUT_OF_MEMORY; GHOSTTY_IO_ERROR if the
+/// reader failed or there is no secure entropy source to mint a
+/// paste event password (wasm32-freestanding without
+/// GHOSTTY_SYS_OPT_RANDOM_SECURE set). Errors write nothing.
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyTerminal,
+    ffi.Pointer<GhosttyPaste>,
+    ffi.Pointer<ffi.Bool>,
+  )
+>(symbol: 'ghostty_terminal_paste')
+external int _ghostty_terminal_paste(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttyPaste> paste,
+  ffi.Pointer<ffi.Bool> out_written,
+);
+
+GhosttyResult ghostty_terminal_paste(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttyPaste> paste,
+  ffi.Pointer<ffi.Bool> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_terminal_paste(terminal, paste, out_written),
+);
+
 /// Check if paste data is safe to paste into the terminal.
 ///
 /// Data is considered unsafe if it contains:
@@ -2260,7 +5088,9 @@ GhosttyResult ghostty_mouse_encoder_encode(
 /// to exit bracketed paste mode and inject commands
 ///
 /// This check is conservative and considers data unsafe regardless of
-/// current terminal state.
+/// current terminal state. ghostty_terminal_paste() applies the
+/// terminal-state-aware rule itself (newlines are safe inside a
+/// bracketed paste); use this to apply the stricter rule on top.
 ///
 /// @param data The paste data to check (must not be NULL)
 /// @param len The length of the data in bytes
@@ -2283,6 +5113,9 @@ external bool ghostty_paste_is_safe(ffi.Pointer<ffi.Char> data, int len);
 /// If the output buffer is too small, the function returns
 /// GHOSTTY_OUT_OF_SPACE and sets the required size in @p out_written.
 /// The caller can then retry with a sufficiently sized buffer.
+///
+/// This is the encoder ghostty_terminal_paste() uses for a text paste;
+/// use it directly when there is no terminal to paste into.
 ///
 /// @param data The paste data to encode (modified in place, may be NULL)
 /// @param data_len The length of the input data in bytes
@@ -2323,6 +5156,563 @@ GhosttyResult ghostty_paste_encode(
   _ghostty_paste_encode(data, data_len, bracketed, buf, buf_len, out_written),
 );
 
+/// Encode a complete terminal snapshot to a writer.
+///
+/// The terminal's persistent VT stream supplies the continuation bytes needed
+/// to reconstruct unfinished parser state. The caller must prevent concurrent
+/// writes or other terminal mutation for the duration of this call. The writer
+/// callback must not call terminal APIs with the same terminal handle.
+/// A terminal can be encoded with tracking disabled when its VT parser and
+/// UTF-8 decoder are both at ground. If either is unfinished, tracking must
+/// have been enabled before the input that produced that state was written;
+/// otherwise this returns GHOSTTY_INVALID_VALUE.
+///
+/// Encoding begins at the writer's current position. If an error occurs, the
+/// writer may contain a partial snapshot without a valid FINISH marker.
+/// Calls to the writer are synchronous; this function does not flush or make
+/// the caller's destination durable.
+///
+/// @param terminal Terminal to encode (must not be NULL)
+/// @param writer Destination writer whose write callback must not be NULL
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_IO_ERROR if the writer rejects
+/// output, GHOSTTY_LIMIT_EXCEEDED if output accounting overflows, or
+/// another error code on failure
+///
+/// @ingroup snapshot
+@ffi.Native<ffi.Int Function(GhosttyTerminal, GhosttyWriter)>(
+  symbol: 'ghostty_snapshot_encode',
+)
+external int _ghostty_snapshot_encode(
+  GhosttyTerminal terminal,
+  GhosttyWriter writer,
+);
+
+GhosttyResult ghostty_snapshot_encode(
+  GhosttyTerminal terminal,
+  GhosttyWriter writer,
+) => GhosttyResult.fromValue(_ghostty_snapshot_encode(terminal, writer));
+
+/// Encode a complete terminal snapshot to a caller-provided buffer.
+///
+/// Pass NULL for buf with buf_len zero to query the required size. If the
+/// buffer is too small, this returns GHOSTTY_OUT_OF_SPACE and stores the
+/// required capacity in out_written. A non-NULL undersized buffer may contain
+/// a partial snapshot prefix. On success, out_written receives the number of
+/// bytes encoded.
+///
+/// A terminal can be encoded with tracking disabled when its VT parser and
+/// UTF-8 decoder are both at ground. If either is unfinished, tracking must
+/// have been enabled before the input that produced that state was written;
+/// otherwise this returns GHOSTTY_INVALID_VALUE.
+///
+/// @param terminal Terminal to encode (must not be NULL)
+/// @param buf Destination buffer, or NULL when buf_len is zero
+/// @param buf_len Destination buffer capacity in bytes
+/// @param[out] out_written Bytes written, or required capacity on
+/// GHOSTTY_OUT_OF_SPACE (must not be NULL)
+/// @return GHOSTTY_SUCCESS on success, or an error code on failure
+///
+/// @ingroup snapshot
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyTerminal,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_snapshot_encode_buf')
+external int _ghostty_snapshot_encode_buf(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Uint8> buf,
+  int buf_len,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_snapshot_encode_buf(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Uint8> buf,
+  int buf_len,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_snapshot_encode_buf(terminal, buf, buf_len, out_written),
+);
+
+/// Encode a complete terminal snapshot to an allocated buffer.
+///
+/// The returned buffer is allocated with allocator, or the default allocator
+/// when allocator is NULL. The caller must release it with ghostty_free(),
+/// passing the same allocator used here.
+///
+/// A terminal can be encoded with tracking disabled when its VT parser and
+/// UTF-8 decoder are both at ground. If either is unfinished, tracking must
+/// have been enabled before the input that produced that state was written;
+/// otherwise this returns GHOSTTY_INVALID_VALUE.
+///
+/// @param terminal Terminal to encode (must not be NULL)
+/// @param allocator Allocator for the output, or NULL for the default allocator
+/// @param[out] out_ptr Allocated snapshot bytes (must not be NULL)
+/// @param[out] out_len Number of allocated snapshot bytes (must not be NULL)
+/// @return GHOSTTY_SUCCESS on success, or an error code on failure
+///
+/// @ingroup snapshot
+@ffi.Native<
+  ffi.Int Function(
+    GhosttyTerminal,
+    ffi.Pointer<GhosttyAllocator>,
+    ffi.Pointer<ffi.Pointer<ffi.Uint8>>,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_snapshot_encode_alloc')
+external int _ghostty_snapshot_encode_alloc(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttyAllocator> allocator,
+  ffi.Pointer<ffi.Pointer<ffi.Uint8>> out_ptr,
+  ffi.Pointer<ffi.Size> out_len,
+);
+
+GhosttyResult ghostty_snapshot_encode_alloc(
+  GhosttyTerminal terminal,
+  ffi.Pointer<GhosttyAllocator> allocator,
+  ffi.Pointer<ffi.Pointer<ffi.Uint8>> out_ptr,
+  ffi.Pointer<ffi.Size> out_len,
+) => GhosttyResult.fromValue(
+  _ghostty_snapshot_encode_alloc(terminal, allocator, out_ptr, out_len),
+);
+
+/// Create a snapshot decoder that reads from a caller-provided reader.
+///
+/// The decoder stores a copy of reader. Its read callback must not be NULL, and
+/// both the callback and its caller-owned context must remain valid until
+/// FINISH is reached or the decoder is freed. Reads are synchronous and occur
+/// only during ready, next, or decode calls. A zero-byte successful read is
+/// permanent end-of-file, not temporary starvation; nonblocking sources must
+/// wait outside the decoder or block in their callback. The read callback must
+/// not call APIs, including ghostty_snapshot_decoder_free(), on the decoder
+/// that owns it. Returning false reports GHOSTTY_IO_ERROR; returning true with
+/// zero bytes before a required marker reports truncated snapshot data as
+/// GHOSTTY_INVALID_VALUE.
+///
+/// @param allocator Allocator for decoder and decoded terminal state, or NULL
+/// for the default allocator
+/// @param decoder Pointer to receive the decoder handle (must not be NULL)
+/// @param reader Snapshot source reader
+/// @return GHOSTTY_SUCCESS on success, or an error code on failure
+///
+/// @ingroup snapshot
+@ffi.Native<
+  ffi.Int Function(
+    ffi.Pointer<GhosttyAllocator>,
+    ffi.Pointer<GhosttySnapshotDecoder>,
+    GhosttyReader,
+  )
+>(symbol: 'ghostty_snapshot_decoder_new')
+external int _ghostty_snapshot_decoder_new(
+  ffi.Pointer<GhosttyAllocator> allocator,
+  ffi.Pointer<GhosttySnapshotDecoder> decoder,
+  GhosttyReader reader,
+);
+
+GhosttyResult ghostty_snapshot_decoder_new(
+  ffi.Pointer<GhosttyAllocator> allocator,
+  ffi.Pointer<GhosttySnapshotDecoder> decoder,
+  GhosttyReader reader,
+) => GhosttyResult.fromValue(
+  _ghostty_snapshot_decoder_new(allocator, decoder, reader),
+);
+
+/// Create a snapshot decoder over a borrowed byte buffer.
+///
+/// The bytes are not copied. ptr must remain valid and immutable until FINISH
+/// is reached or the decoder is freed. Bytes after FINISH are not consumed;
+/// query GHOSTTY_SNAPSHOT_DECODER_DATA_SOURCE_OFFSET to locate them.
+///
+/// @param allocator Allocator for decoder and decoded terminal state, or NULL
+/// for the default allocator
+/// @param decoder Pointer to receive the decoder handle (must not be NULL)
+/// @param ptr Snapshot source bytes
+/// @param len Number of source bytes
+/// @return GHOSTTY_SUCCESS on success, or an error code on failure
+///
+/// @ingroup snapshot
+@ffi.Native<
+  ffi.Int Function(
+    ffi.Pointer<GhosttyAllocator>,
+    ffi.Pointer<GhosttySnapshotDecoder>,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+  )
+>(symbol: 'ghostty_snapshot_decoder_new_buf')
+external int _ghostty_snapshot_decoder_new_buf(
+  ffi.Pointer<GhosttyAllocator> allocator,
+  ffi.Pointer<GhosttySnapshotDecoder> decoder,
+  ffi.Pointer<ffi.Uint8> ptr,
+  int len,
+);
+
+GhosttyResult ghostty_snapshot_decoder_new_buf(
+  ffi.Pointer<GhosttyAllocator> allocator,
+  ffi.Pointer<GhosttySnapshotDecoder> decoder,
+  ffi.Pointer<ffi.Uint8> ptr,
+  int len,
+) => GhosttyResult.fromValue(
+  _ghostty_snapshot_decoder_new_buf(allocator, decoder, ptr, len),
+);
+
+/// Free a snapshot decoder.
+///
+/// This does not release the caller's ownership of a terminal returned by
+/// ready or decode. Abandoning an incremental decode leaves that terminal
+/// usable with whatever history had already been restored.
+///
+/// @param decoder Decoder to free (may be NULL)
+///
+/// @ingroup snapshot
+@ffi.Native<ffi.Void Function(GhosttySnapshotDecoder)>()
+external void ghostty_snapshot_decoder_free(GhosttySnapshotDecoder decoder);
+
+/// Set a snapshot decoder option.
+///
+/// The value pointer must have the type documented by option. Options may only
+/// be changed before decoding starts.
+///
+/// @param decoder Decoder handle (must not be NULL)
+/// @param option Option to change
+/// @param value Pointer to the option value (must not be NULL)
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_INVALID_VALUE if decoding has
+/// started or an argument is invalid, or another error code on failure
+///
+/// @ingroup snapshot
+@ffi.Native<
+  ffi.Int Function(
+    GhosttySnapshotDecoder,
+    ffi.UnsignedInt,
+    ffi.Pointer<ffi.Void>,
+  )
+>(symbol: 'ghostty_snapshot_decoder_set')
+external int _ghostty_snapshot_decoder_set(
+  GhosttySnapshotDecoder decoder,
+  int option,
+  ffi.Pointer<ffi.Void> value,
+);
+
+GhosttyResult ghostty_snapshot_decoder_set(
+  GhosttySnapshotDecoder decoder,
+  GhosttySnapshotDecoderOption option,
+  ffi.Pointer<ffi.Void> value,
+) => GhosttyResult.fromValue(
+  _ghostty_snapshot_decoder_set(decoder, option.value, value),
+);
+
+/// Decode and validate the renderable snapshot prefix through READY.
+///
+/// On success, terminal receives a caller-owned terminal with its persistent
+/// VT stream already restored from the snapshot continuation. The terminal is
+/// immediately usable for rendering and live input. Older scrollback remains
+/// to be restored with ghostty_snapshot_decoder_next().
+///
+/// The restored parser state may be unfinished. By default, terminal
+/// continuation tracking is disabled and
+/// GHOSTTY_TERMINAL_DATA_CONTINUATION_MAX_BYTES returns zero. When
+/// GHOSTTY_SNAPSHOT_DECODER_OPT_RETAIN_CONTINUATION is true, the decoder's
+/// maximum continuation size is applied to the terminal, and the terminal
+/// continuation APIs export the exact current continuation when that limit is
+/// nonzero. Tracking remains enabled even if the exported continuation is
+/// empty. Callers that do not need ongoing tracking must set
+/// GHOSTTY_TERMINAL_OPT_CONTINUATION_MAX_BYTES to zero after export and before
+/// writing any post-snapshot bytes, because later input may change it.
+///
+/// The caller must keep the returned terminal alive until FINISH validates or
+/// the decoder is freed. The decoder borrows this terminal handle while it
+/// restores history; ghostty_snapshot_decoder_next() uses it automatically.
+///
+/// This operation may only be called once and only before decoding starts.
+/// terminal is set to NULL on every error. A decoding, I/O, or allocation
+/// error after input consumption begins poisons the decoder, after which it
+/// must be freed. An invalid argument or lifecycle error detected before the
+/// operation consumes input does not poison it.
+///
+/// @param decoder Decoder handle (must not be NULL)
+/// @param[out] terminal Pointer to receive the terminal (must not be NULL)
+/// @return GHOSTTY_SUCCESS on success, or an error code on failure
+///
+/// @ingroup snapshot
+@ffi.Native<
+  ffi.Int Function(GhosttySnapshotDecoder, ffi.Pointer<GhosttyTerminal>)
+>(symbol: 'ghostty_snapshot_decoder_ready')
+external int _ghostty_snapshot_decoder_ready(
+  GhosttySnapshotDecoder decoder,
+  ffi.Pointer<GhosttyTerminal> terminal,
+);
+
+GhosttyResult ghostty_snapshot_decoder_ready(
+  GhosttySnapshotDecoder decoder,
+  ffi.Pointer<GhosttyTerminal> terminal,
+) =>
+    GhosttyResult.fromValue(_ghostty_snapshot_decoder_ready(decoder, terminal));
+
+/// Decode one history page into the terminal returned by READY.
+///
+/// Each GHOSTTY_SUCCESS consumes and validates one PAGE record. Query the
+/// GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_* values before calling next again.
+/// GHOSTTY_NO_VALUE means FINISH was validated; repeated calls after FINISH
+/// also return GHOSTTY_NO_VALUE.
+///
+/// The terminal may be rendered, resized, and fed live PTY input between calls.
+/// If a history page can no longer be applied safely, it is still consumed and
+/// validated and progress reports zero rows. The decoder applies history
+/// to the caller-owned terminal produced by its READY operation.
+///
+/// A decoding error invalidates the decoder's source position. The terminal
+/// remains caller-owned and usable with its already-restored history, but only
+/// ghostty_snapshot_decoder_free() may subsequently be called on the decoder.
+///
+/// @param decoder Decoder handle (must not be NULL)
+/// @return GHOSTTY_SUCCESS for one page, GHOSTTY_NO_VALUE after FINISH, or an
+/// error code on failure
+///
+/// @ingroup snapshot
+@ffi.Native<ffi.Int Function(GhosttySnapshotDecoder)>(
+  symbol: 'ghostty_snapshot_decoder_next',
+)
+external int _ghostty_snapshot_decoder_next(GhosttySnapshotDecoder decoder);
+
+GhosttyResult ghostty_snapshot_decoder_next(GhosttySnapshotDecoder decoder) =>
+    GhosttyResult.fromValue(_ghostty_snapshot_decoder_next(decoder));
+
+/// Decode and validate one complete snapshot.
+///
+/// This is the one-shot form of READY followed by all history pages through
+/// FINISH. It may only be called before decoding starts. Bytes following FINISH
+/// are left unread. On success terminal receives a caller-owned terminal with
+/// its persistent VT stream restored. Continuation tracking on the returned
+/// terminal is disabled by default. When
+/// GHOSTTY_SNAPSHOT_DECODER_OPT_RETAIN_CONTINUATION is true, the decoder's
+/// maximum continuation size is applied to the terminal, and the terminal
+/// continuation APIs export the exact current continuation when that limit is
+/// nonzero. Tracking remains enabled even if the exported continuation is
+/// empty. Callers that do not need ongoing tracking must set
+/// GHOSTTY_TERMINAL_OPT_CONTINUATION_MAX_BYTES to zero after export and before
+/// writing any post-snapshot bytes, because later input may change it.
+/// terminal is set to NULL on every error.
+/// A decoding, I/O, or allocation error after input consumption begins poisons
+/// the decoder, after which it must be freed. An invalid argument or
+/// lifecycle error detected before the operation consumes input does not
+/// poison it.
+///
+/// @param decoder Decoder handle (must not be NULL)
+/// @param[out] terminal Pointer to receive the terminal (must not be NULL)
+/// @return GHOSTTY_SUCCESS on success, or an error code on failure
+///
+/// @ingroup snapshot
+@ffi.Native<
+  ffi.Int Function(GhosttySnapshotDecoder, ffi.Pointer<GhosttyTerminal>)
+>(symbol: 'ghostty_snapshot_decoder_decode')
+external int _ghostty_snapshot_decoder_decode(
+  GhosttySnapshotDecoder decoder,
+  ffi.Pointer<GhosttyTerminal> terminal,
+);
+
+GhosttyResult ghostty_snapshot_decoder_decode(
+  GhosttySnapshotDecoder decoder,
+  ffi.Pointer<GhosttyTerminal> terminal,
+) => GhosttyResult.fromValue(
+  _ghostty_snapshot_decoder_decode(decoder, terminal),
+);
+
+/// Get typed data from a snapshot decoder.
+///
+/// The output pointer must have the type documented by data. A phase-dependent
+/// value that is not currently available returns GHOSTTY_NO_VALUE.
+///
+/// @param decoder Decoder handle (must not be NULL)
+/// @param data Data kind to query
+/// @param[out] out Pointer to receive the value (must not be NULL)
+/// @return GHOSTTY_SUCCESS on success, GHOSTTY_NO_VALUE if the requested data
+/// is unavailable, or another error code on failure
+///
+/// @ingroup snapshot
+@ffi.Native<
+  ffi.Int Function(
+    GhosttySnapshotDecoder,
+    ffi.UnsignedInt,
+    ffi.Pointer<ffi.Void>,
+  )
+>(symbol: 'ghostty_snapshot_decoder_get')
+external int _ghostty_snapshot_decoder_get(
+  GhosttySnapshotDecoder decoder,
+  int data,
+  ffi.Pointer<ffi.Void> out,
+);
+
+GhosttyResult ghostty_snapshot_decoder_get(
+  GhosttySnapshotDecoder decoder,
+  GhosttySnapshotDecoderData data,
+  ffi.Pointer<ffi.Void> out,
+) => GhosttyResult.fromValue(
+  _ghostty_snapshot_decoder_get(decoder, data.value, out),
+);
+
+/// Get multiple snapshot decoder data fields in a single call.
+///
+/// Each keys element selects a data kind and the corresponding values element
+/// points to storage of the documented output type. Processing stops at the
+/// first error. On success out_written is set to count; on error it is set to
+/// the number of values written before the failing key. Invalid array arguments
+/// report zero values written.
+///
+/// @param decoder Decoder handle (must not be NULL)
+/// @param count Number of key/value pairs
+/// @param keys Array of data kinds to query
+/// @param values Array of output pointers corresponding to keys
+/// @param[out] out_written Number of successfully written values (may be NULL)
+/// @return GHOSTTY_SUCCESS if every query succeeds, or the first error
+///
+/// @ingroup snapshot
+@ffi.Native<
+  ffi.Int Function(
+    GhosttySnapshotDecoder,
+    ffi.Size,
+    ffi.Pointer<ffi.UnsignedInt>,
+    ffi.Pointer<ffi.Pointer<ffi.Void>>,
+    ffi.Pointer<ffi.Size>,
+  )
+>(symbol: 'ghostty_snapshot_decoder_get_multi')
+external int _ghostty_snapshot_decoder_get_multi(
+  GhosttySnapshotDecoder decoder,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+);
+
+GhosttyResult ghostty_snapshot_decoder_get_multi(
+  GhosttySnapshotDecoder decoder,
+  int count,
+  ffi.Pointer<ffi.UnsignedInt> keys,
+  ffi.Pointer<ffi.Pointer<ffi.Void>> values,
+  ffi.Pointer<ffi.Size> out_written,
+) => GhosttyResult.fromValue(
+  _ghostty_snapshot_decoder_get_multi(
+    decoder,
+    count,
+    keys,
+    values,
+    out_written,
+  ),
+);
+
+/// Returns the terminal display width of a Unicode codepoint in
+/// terminal grid cells: 0, 1, or 2.
+///
+/// This is the same width table the terminal itself uses when laying
+/// out printed text, so callers can predict column layout (e.g. IME
+/// preedit overlays) that exactly matches what the terminal will do
+/// when the text is actually written to it.
+///
+/// Semantics:
+/// - Returns 0 for zero-width codepoints: C0/C1 control characters,
+/// nonspacing and enclosing combining marks, default-ignorable
+/// codepoints (ZWJ, ZWNJ, variation selectors, etc.), and
+/// surrogate codepoints.
+/// - Returns 2 for wide codepoints: East Asian Wide/Fullwidth
+/// (including emoji with default emoji presentation) and regional
+/// indicators. Width is clamped to 2 (e.g. the three-em dash).
+/// - Returns 1 for everything else, including invalid codepoints
+/// beyond U+10FFFF (this function is total; it never fails).
+///
+/// This operates on a single codepoint only and therefore cannot account
+/// for grapheme-cluster-level width rules (VS16 emoji presentation,
+/// combining sequences, etc.). For cluster-accurate widths, use
+/// ghostty_unicode_grapheme_width(). Summing per-codepoint widths is only
+/// correct when mode 2027 (grapheme clustering) is disabled.
+///
+/// This function is pure, allocates nothing, and is thread-safe.
+///
+/// @param cp The Unicode codepoint to measure
+/// @return Display width in cells: 0, 1, or 2
+@ffi.Native<ffi.Uint8 Function(ffi.Uint32)>()
+external int ghostty_unicode_codepoint_width(int cp);
+
+/// Measures the terminal display width of the first grapheme cluster in a
+/// sequence of Unicode codepoints.
+///
+/// This uses the exact same grapheme segmentation and cluster width rules
+/// the terminal itself uses when printing text with grapheme clustering
+/// enabled (mode 2027), so callers can predict column layout (e.g. IME
+/// preedit overlays) that exactly matches what the terminal will do when
+/// the text is actually written to it. Unlike
+/// ghostty_unicode_codepoint_width(), this accounts for cluster-level
+/// rules: emoji variation selectors, ZWJ sequences, combining marks, and
+/// skin tone modifiers.
+///
+/// Reads codepoints from cps until the terminal would consider the
+/// grapheme cluster complete, stores the cluster's total width in cells
+/// (0, 1, or 2) into width (which may be NULL if only segmentation is
+/// desired), and returns the number of codepoints consumed. Returns 0 if
+/// and only if len is 0; otherwise consumes at least one codepoint. Measure
+/// a whole string by calling in a loop:
+///
+/// @code
+/// size_t total = 0;
+/// for (size_t i = 0; i < len;) {
+/// uint8_t width;
+/// i += ghostty_unicode_grapheme_width(cps + i, len - i, &width);
+/// total += width;
+/// }
+/// @endcode
+///
+/// This is not a streaming API. The provided sequence must contain a
+/// complete first grapheme cluster, or the logical end of the string. If
+/// input arrives in chunks, keep buffering while this function consumes all
+/// available codepoints (return value == len) and the stream may still
+/// continue; a later codepoint could still extend the cluster and change
+/// its width.
+///
+/// Width semantics, matching the terminal with mode 2027 enabled:
+/// - The cluster starts at the width of its first codepoint, as returned by
+/// ghostty_unicode_codepoint_width().
+/// - VS16 (U+FE0F) forces the cluster wide (2) and VS15 (U+FE0E) forces it
+/// narrow (1), but only when the immediately preceding codepoint in the
+/// cluster is a valid emoji variation sequence base (per Unicode
+/// emoji-variation-sequences.txt). Invalid variation selectors are
+/// ignored entirely.
+/// - Any other continuation codepoint that contributes to grapheme width
+/// forces the cluster wide (2). Note this means cluster width is NOT the
+/// maximum of per-codepoint widths: some continuation marks have narrow
+/// codepoint width yet still widen the cluster.
+///
+/// Mode dependence: this models mode 2027 (grapheme clustering) enabled,
+/// which is Ghostty's recommended configuration. When mode 2027 is
+/// disabled, clusters never combine and variation selectors never change
+/// width; predict layout in that case by summing
+/// ghostty_unicode_codepoint_width() over each codepoint instead.
+///
+/// Edge cases:
+/// - Codepoints beyond U+10FFFF consume one codepoint, have width 1, and
+/// are always cluster boundaries. This function is total; it never fails.
+/// - Control characters (C0/C1, CR, LF) are never printed through the
+/// terminal's text path; passing them here returns an unspecified (but
+/// stable and bounded) result.
+/// - A cluster whose first codepoint is zero-width (e.g. a lone combining
+/// mark) is malformed at a cell start; the terminal may attach it to
+/// earlier screen content. This function reports the fold result for the
+/// sequence in isolation (typically 0).
+///
+/// This function is pure, allocates nothing, and is thread-safe.
+///
+/// @param cps Pointer to codepoints (may be NULL only when len is 0)
+/// @param len Number of codepoints available
+/// @param width Out: cluster display width in cells (0-2); may be NULL
+/// @return Number of codepoints in the first grapheme cluster
+@ffi.Native<
+  ffi.Size Function(ffi.Pointer<ffi.Uint32>, ffi.Size, ffi.Pointer<ffi.Uint8>)
+>()
+external int ghostty_unicode_grapheme_width(
+  ffi.Pointer<ffi.Uint32> cps,
+  int len,
+  ffi.Pointer<ffi.Uint8> width,
+);
+
 /// Result codes for libghostty-vt operations.
 enum GhosttyResult {
   /// Operation completed successfully
@@ -2338,7 +5728,19 @@ enum GhosttyResult {
   GHOSTTY_OUT_OF_SPACE(-3),
 
   /// The requested value has no value
-  GHOSTTY_NO_VALUE(-4);
+  GHOSTTY_NO_VALUE(-4),
+
+  /// Operation failed while reading from or writing to external I/O
+  GHOSTTY_IO_ERROR(-5),
+
+  /// Operation failed because encoded input exceeded a configured limit
+  GHOSTTY_LIMIT_EXCEEDED(-6),
+
+  /// Operation was rejected by a safety check (e.g. pasted text that could
+  /// inject commands). Nothing was done. Confirm with the user and retry
+  /// with the operation's allow flag set.
+  GHOSTTY_REJECTED(-7),
+  GHOSTTY_RESULT_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyResult(this.value);
@@ -2349,7 +5751,156 @@ enum GhosttyResult {
     -2 => GHOSTTY_INVALID_VALUE,
     -3 => GHOSTTY_OUT_OF_SPACE,
     -4 => GHOSTTY_NO_VALUE,
+    -5 => GHOSTTY_IO_ERROR,
+    -6 => GHOSTTY_LIMIT_EXCEEDED,
+    -7 => GHOSTTY_REJECTED,
+    2147483647 => GHOSTTY_RESULT_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyResult: $value'),
+  };
+}
+
+final class GhosttyTerminalImpl extends ffi.Opaque {}
+
+/// Opaque handle to a terminal instance.
+///
+/// @ingroup terminal
+typedef GhosttyTerminal = ffi.Pointer<GhosttyTerminalImpl>;
+
+final class GhosttySnapshotDecoderImpl extends ffi.Opaque {}
+
+/// Opaque handle to an incremental terminal snapshot decoder.
+///
+/// @ingroup snapshot
+typedef GhosttySnapshotDecoder = ffi.Pointer<GhosttySnapshotDecoderImpl>;
+
+final class GhosttyTrackedGridRefImpl extends ffi.Opaque {}
+
+/// Opaque handle to a tracked grid reference.
+///
+/// A tracked grid reference is owned by the caller and must be freed with
+/// ghostty_tracked_grid_ref_free(). If the terminal that created it is freed
+/// first, the handle remains valid only for tracked-grid-ref APIs: it reports no
+/// value and can still be freed.
+///
+/// @ingroup grid_ref
+typedef GhosttyTrackedGridRef = ffi.Pointer<GhosttyTrackedGridRefImpl>;
+
+final class GhosttyKittyGraphicsImpl extends ffi.Opaque {}
+
+/// Opaque handle to a Kitty graphics image storage.
+///
+/// Obtained via ghostty_terminal_get() with
+/// GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS. The pointer is borrowed from
+/// the terminal and remains valid until the next mutating terminal call
+/// (e.g. ghostty_terminal_vt_write() or ghostty_terminal_reset()).
+///
+/// @ingroup kitty_graphics
+typedef GhosttyKittyGraphics = ffi.Pointer<GhosttyKittyGraphicsImpl>;
+
+final class GhosttyKittyGraphicsImageImpl extends ffi.Opaque {}
+
+/// Opaque handle to a Kitty graphics image.
+///
+/// Obtained via ghostty_kitty_graphics_image() with an image ID. The
+/// pointer is borrowed from the storage and remains valid until the next
+/// mutating terminal call.
+///
+/// @ingroup kitty_graphics
+typedef GhosttyKittyGraphicsImage = ffi.Pointer<GhosttyKittyGraphicsImageImpl>;
+
+final class GhosttyKittyGraphicsPlacementIteratorImpl extends ffi.Opaque {}
+
+/// Opaque handle to a Kitty graphics placement iterator.
+///
+/// @ingroup kitty_graphics
+typedef GhosttyKittyGraphicsPlacementIterator =
+    ffi.Pointer<GhosttyKittyGraphicsPlacementIteratorImpl>;
+
+final class GhosttyRenderStateImpl extends ffi.Opaque {}
+
+/// Opaque handle to a render state instance.
+///
+/// @ingroup render
+typedef GhosttyRenderState = ffi.Pointer<GhosttyRenderStateImpl>;
+
+final class GhosttyRenderStateRowIteratorImpl extends ffi.Opaque {}
+
+/// Opaque handle to a render-state row iterator.
+///
+/// @ingroup render
+typedef GhosttyRenderStateRowIterator =
+    ffi.Pointer<GhosttyRenderStateRowIteratorImpl>;
+
+final class GhosttyRenderStateRowCellsImpl extends ffi.Opaque {}
+
+/// Opaque handle to render-state row cells.
+///
+/// @ingroup render
+typedef GhosttyRenderStateRowCells =
+    ffi.Pointer<GhosttyRenderStateRowCellsImpl>;
+
+final class GhosttySgrParserImpl extends ffi.Opaque {}
+
+/// Opaque handle to an SGR parser instance.
+///
+/// This handle represents an SGR (Select Graphic Rendition) parser that can
+/// be used to parse SGR sequences and extract individual text attributes.
+///
+/// @ingroup sgr
+typedef GhosttySgrParser = ffi.Pointer<GhosttySgrParserImpl>;
+
+final class GhosttyFormatterImpl extends ffi.Opaque {}
+
+/// Opaque handle to a formatter instance.
+///
+/// @ingroup formatter
+typedef GhosttyFormatter = ffi.Pointer<GhosttyFormatterImpl>;
+
+final class GhosttyOscParserImpl extends ffi.Opaque {}
+
+/// Opaque handle to an OSC parser instance.
+///
+/// This handle represents an OSC (Operating System Command) parser that can
+/// be used to parse the contents of OSC sequences.
+///
+/// @ingroup osc
+typedef GhosttyOscParser = ffi.Pointer<GhosttyOscParserImpl>;
+
+final class GhosttyOscCommandImpl extends ffi.Opaque {}
+
+/// Opaque handle to a single OSC command.
+///
+/// This handle represents a parsed OSC (Operating System Command) command.
+/// The command can be queried for its type and associated data.
+///
+/// @ingroup osc
+typedef GhosttyOscCommand = ffi.Pointer<GhosttyOscCommandImpl>;
+
+/// Terminal content output format.
+///
+/// @ingroup formatter
+enum GhosttyFormatterFormat {
+  /// Plain text (no escape sequences).
+  GHOSTTY_FORMATTER_FORMAT_PLAIN(0),
+
+  /// VT sequences preserving colors, styles, URLs, etc.
+  GHOSTTY_FORMATTER_FORMAT_VT(1),
+
+  /// HTML with inline styles.
+  GHOSTTY_FORMATTER_FORMAT_HTML(2),
+  GHOSTTY_FORMATTER_FORMAT_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyFormatterFormat(this.value);
+
+  static GhosttyFormatterFormat fromValue(int value) => switch (value) {
+    0 => GHOSTTY_FORMATTER_FORMAT_PLAIN,
+    1 => GHOSTTY_FORMATTER_FORMAT_VT,
+    2 => GHOSTTY_FORMATTER_FORMAT_HTML,
+    2147483647 => GHOSTTY_FORMATTER_FORMAT_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyFormatterFormat: $value',
+    ),
   };
 }
 
@@ -2362,6 +5913,54 @@ final class GhosttyString extends ffi.Struct {
   external ffi.Pointer<ffi.Uint8> ptr;
 
   /// Length of the string in bytes.
+  @ffi.Size()
+  external int len;
+}
+
+/// A caller-provided byte buffer.
+///
+/// APIs that write to this type use `len` for the number of bytes written on
+/// GHOSTTY_SUCCESS and the required byte capacity on GHOSTTY_OUT_OF_SPACE.
+final class GhosttyBuffer extends ffi.Struct {
+  /// Destination buffer for bytes. May be NULL when cap is 0 to query required size.
+  external ffi.Pointer<ffi.Uint8> ptr;
+
+  /// Capacity of ptr in bytes.
+  @ffi.Size()
+  external int cap;
+
+  /// Bytes written on success, or required byte capacity on GHOSTTY_OUT_OF_SPACE.
+  @ffi.Size()
+  external int len;
+}
+
+/// A surface-space position in pixels.
+///
+/// This is not a terminal grid coordinate. It represents an x/y position in the
+/// rendered surface coordinate space, with (0, 0) at the top-left of the
+/// surface.
+final class GhosttySurfacePosition extends ffi.Struct {
+  /// X position in surface pixels.
+  @ffi.Double()
+  external double x;
+
+  /// Y position in surface pixels.
+  @ffi.Double()
+  external double y;
+}
+
+/// A borrowed list of Unicode scalar values.
+///
+/// Values are encoded as uint32_t scalar values. The memory is not owned by this
+/// struct. The pointer is only valid for the lifetime documented by the API that
+/// consumes or produces it.
+///
+/// APIs may document special handling for NULL + len 0, such as “use defaults”.
+final class GhosttyCodepoints extends ffi.Struct {
+  /// Pointer to Unicode scalar values.
+  external ffi.Pointer<ffi.Uint32> ptr;
+
+  /// Number of entries in ptr.
   @ffi.Size()
   external int len;
 }
@@ -2544,7 +6143,8 @@ enum GhosttyOptimizeMode {
   GHOSTTY_OPTIMIZE_DEBUG(0),
   GHOSTTY_OPTIMIZE_RELEASE_SAFE(1),
   GHOSTTY_OPTIMIZE_RELEASE_SMALL(2),
-  GHOSTTY_OPTIMIZE_RELEASE_FAST(3);
+  GHOSTTY_OPTIMIZE_RELEASE_FAST(3),
+  GHOSTTY_OPTIMIZE_MODE_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyOptimizeMode(this.value);
@@ -2554,6 +6154,7 @@ enum GhosttyOptimizeMode {
     1 => GHOSTTY_OPTIMIZE_RELEASE_SAFE,
     2 => GHOSTTY_OPTIMIZE_RELEASE_SMALL,
     3 => GHOSTTY_OPTIMIZE_RELEASE_FAST,
+    2147483647 => GHOSTTY_OPTIMIZE_MODE_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyOptimizeMode: $value'),
   };
 }
@@ -2605,11 +6206,18 @@ enum GhosttyBuildInfo {
   /// Output type: size_t *
   GHOSTTY_BUILD_INFO_VERSION_PATCH(8),
 
+  /// The pre metadata string (e.g. "alpha", "beta", "dev"). Has zero length if
+  /// no pre metadata is present.
+  ///
+  /// Output type: GhosttyString *
+  GHOSTTY_BUILD_INFO_VERSION_PRE(9),
+
   /// The build metadata string (e.g. commit hash). Has zero length if
   /// no build metadata is present.
   ///
   /// Output type: GhosttyString *
-  GHOSTTY_BUILD_INFO_VERSION_BUILD(9);
+  GHOSTTY_BUILD_INFO_VERSION_BUILD(10),
+  GHOSTTY_BUILD_INFO_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyBuildInfo(this.value);
@@ -2624,14 +6232,16 @@ enum GhosttyBuildInfo {
     6 => GHOSTTY_BUILD_INFO_VERSION_MAJOR,
     7 => GHOSTTY_BUILD_INFO_VERSION_MINOR,
     8 => GHOSTTY_BUILD_INFO_VERSION_PATCH,
-    9 => GHOSTTY_BUILD_INFO_VERSION_BUILD,
+    9 => GHOSTTY_BUILD_INFO_VERSION_PRE,
+    10 => GHOSTTY_BUILD_INFO_VERSION_BUILD,
+    2147483647 => GHOSTTY_BUILD_INFO_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyBuildInfo: $value'),
   };
 }
 
 /// RGB color value.
 ///
-/// @ingroup sgr
+/// @ingroup color
 final class GhosttyColorRgb extends ffi.Struct {
   /// < Red component (0-255)
   @ffi.Uint8()
@@ -2648,16 +6258,48 @@ final class GhosttyColorRgb extends ffi.Struct {
 
 /// Palette color index (0-255).
 ///
-/// @ingroup sgr
+/// @ingroup color
 typedef GhosttyColorPaletteIndex = ffi.Uint8;
 typedef DartGhosttyColorPaletteIndex = int;
+
+/// A 256-bit mask of palette indices.
+///
+/// Index i is set iff `(bits[i >> 6] >> (i & 63)) & 1` is 1.
+/// The mask is typically initialized to zero and then populated with
+/// GHOSTTY_COLOR_PALETTE_MASK_SET().
+///
+/// @code{.c}
+/// GhosttyColorPaletteMask mask = {0};
+/// GHOSTTY_COLOR_PALETTE_MASK_SET(&mask, 20);
+/// if (GHOSTTY_COLOR_PALETTE_MASK_IS_SET(&mask, 20)) {
+/// // Index 20 will be preserved.
+/// }
+/// @endcode
+///
+/// @ingroup color
+final class GhosttyColorPaletteMask extends ffi.Struct {
+  @ffi.Array.multi([4])
+  external ffi.Array<ffi.Uint64> bits;
+}
+
+/// An entry in Ghostty's X11 color name table.
+///
+/// @ingroup color
+final class GhosttyColorX11Entry extends ffi.Struct {
+  /// Null-terminated color name. NULL marks the end of the table.
+  external ffi.Pointer<ffi.Char> name;
+
+  /// The RGB value of the color.
+  external GhosttyColorRgb color;
+}
 
 /// Color scheme reported in response to a CSI ? 996 n query.
 ///
 /// @ingroup terminal
 enum GhosttyColorScheme {
   GHOSTTY_COLOR_SCHEME_LIGHT(0),
-  GHOSTTY_COLOR_SCHEME_DARK(1);
+  GHOSTTY_COLOR_SCHEME_DARK(1),
+  GHOSTTY_COLOR_SCHEME_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyColorScheme(this.value);
@@ -2665,6 +6307,7 @@ enum GhosttyColorScheme {
   static GhosttyColorScheme fromValue(int value) => switch (value) {
     0 => GHOSTTY_COLOR_SCHEME_LIGHT,
     1 => GHOSTTY_COLOR_SCHEME_DARK,
+    2147483647 => GHOSTTY_COLOR_SCHEME_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyColorScheme: $value'),
   };
 }
@@ -2743,7 +6386,8 @@ enum GhosttyFocusEvent {
   GHOSTTY_FOCUS_GAINED(0),
 
   /// Terminal window lost focus
-  GHOSTTY_FOCUS_LOST(1);
+  GHOSTTY_FOCUS_LOST(1),
+  GHOSTTY_FOCUS_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyFocusEvent(this.value);
@@ -2751,107 +6395,153 @@ enum GhosttyFocusEvent {
   static GhosttyFocusEvent fromValue(int value) => switch (value) {
     0 => GHOSTTY_FOCUS_GAINED,
     1 => GHOSTTY_FOCUS_LOST,
+    2147483647 => GHOSTTY_FOCUS_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyFocusEvent: $value'),
   };
 }
 
-/// A packed 16-bit terminal mode.
+typedef GhosttyReaderFnFunction = ffi.Bool Function(
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<ffi.Uint8> buffer,
+  ffi.Size capacity,
+  ffi.Pointer<ffi.Size> out_read,
+);
+typedef DartGhosttyReaderFnFunction = bool Function(
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<ffi.Uint8> buffer,
+  int capacity,
+  ffi.Pointer<ffi.Size> out_read,
+);
+
+/// Read bytes from a source.
 ///
-/// Encodes a mode value (bits 0–14) and an ANSI flag (bit 15) into a
-/// single 16-bit integer. Use the inline helper functions to construct
-/// and inspect modes rather than manipulating bits directly.
-typedef GhosttyMode = ffi.Uint16;
-typedef DartGhosttyMode = int;
-
-/// DECRPM report state values.
+/// The callback must set @p out_read to a value no greater than @p capacity
+/// when returning true. A positive value reports progress; it may be less than
+/// capacity and does not indicate end-of-file. A zero value is definitive
+/// end-of-file. It must not be used to report temporary input starvation or a
+/// would-block condition.
 ///
-/// These correspond to the Ps2 parameter in a DECRPM response
-/// sequence (CSI ? Ps1 ; Ps2 $ y).
-enum GhosttyModeReportState {
-  /// Mode is not recognized
-  GHOSTTY_MODE_REPORT_NOT_RECOGNIZED(0),
+/// Returning false reports a fatal read error and the value of @p out_read is
+/// ignored. The library does not inspect or modify errno.
+///
+/// All pointer arguments are borrowed and valid only for the duration of the
+/// callback. The callback is invoked synchronously on the calling thread.
+///
+/// @param userdata Opaque userdata from GhosttyReader
+/// @param buffer Destination for read bytes; always non-NULL
+/// @param capacity Writable capacity of @p buffer; always greater than zero
+/// @param[out] out_read Number of bytes read when returning true; non-NULL
+/// @return true for a successful read or end-of-file, false for a fatal error
+typedef GhosttyReaderFn =
+    ffi.Pointer<ffi.NativeFunction<GhosttyReaderFnFunction>>;
+typedef GhosttyWriterFnFunction = ffi.Bool Function(
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<ffi.Uint8> data,
+  ffi.Size len,
+);
+typedef DartGhosttyWriterFnFunction = bool Function(
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<ffi.Uint8> data,
+  int len,
+);
 
-  /// Mode is set (enabled)
-  GHOSTTY_MODE_REPORT_SET(1),
+/// Write bytes to a destination.
+///
+/// Returning true means all @p len bytes were accepted. Returning false
+/// reports a fatal write error. A callback wrapping an interface that permits
+/// partial writes must retry internally until the full slice is accepted or
+/// an error occurs.
+///
+/// On failure, the destination may already contain a prefix of the bytes. The
+/// calling operation fails and must not be resumed from that partial output.
+/// The library does not inspect or modify errno.
+///
+/// @p data is borrowed and valid only for the duration of the callback. The
+/// callback is invoked synchronously on the calling thread. Successful return
+/// means the bytes were handed to the destination; it does not imply that the
+/// destination was flushed or made durable.
+///
+/// @param userdata Opaque userdata from GhosttyWriter
+/// @param data Source bytes; always non-NULL
+/// @param len Number of source bytes; always greater than zero
+/// @return true if the complete slice was accepted, false on fatal error
+typedef GhosttyWriterFn =
+    ffi.Pointer<ffi.NativeFunction<GhosttyWriterFnFunction>>;
 
-  /// Mode is reset (disabled)
-  GHOSTTY_MODE_REPORT_RESET(2),
+/// A byte source callback and its opaque context.
+///
+/// The struct is passed by value. @p read must be non-NULL.
+final class GhosttyReader extends ffi.Struct {
+  external GhosttyReaderFn read;
 
-  /// Mode is permanently set
-  GHOSTTY_MODE_REPORT_PERMANENTLY_SET(3),
-
-  /// Mode is permanently reset
-  GHOSTTY_MODE_REPORT_PERMANENTLY_RESET(4);
-
-  final int value;
-  const GhosttyModeReportState(this.value);
-
-  static GhosttyModeReportState fromValue(int value) => switch (value) {
-    0 => GHOSTTY_MODE_REPORT_NOT_RECOGNIZED,
-    1 => GHOSTTY_MODE_REPORT_SET,
-    2 => GHOSTTY_MODE_REPORT_RESET,
-    3 => GHOSTTY_MODE_REPORT_PERMANENTLY_SET,
-    4 => GHOSTTY_MODE_REPORT_PERMANENTLY_RESET,
-    _ => throw ArgumentError(
-      'Unknown value for GhosttyModeReportState: $value',
-    ),
-  };
+  external ffi.Pointer<ffi.Void> userdata;
 }
 
-/// Size report style.
+/// A byte destination callback and its opaque context.
 ///
-/// Determines the output format for the terminal size report.
-enum GhosttySizeReportStyle {
-  /// In-band size report (mode 2048): ESC [ 48 ; rows ; cols ; height ; width t
-  GHOSTTY_SIZE_REPORT_MODE_2048(0),
+/// The struct is passed by value. @p write must be non-NULL.
+final class GhosttyWriter extends ffi.Struct {
+  external GhosttyWriterFn write;
 
-  /// XTWINOPS text area size in pixels: ESC [ 4 ; height ; width t
-  GHOSTTY_SIZE_REPORT_CSI_14_T(1),
-
-  /// XTWINOPS cell size in pixels: ESC [ 6 ; height ; width t
-  GHOSTTY_SIZE_REPORT_CSI_16_T(2),
-
-  /// XTWINOPS text area size in characters: ESC [ 8 ; rows ; cols t
-  GHOSTTY_SIZE_REPORT_CSI_18_T(3);
-
-  final int value;
-  const GhosttySizeReportStyle(this.value);
-
-  static GhosttySizeReportStyle fromValue(int value) => switch (value) {
-    0 => GHOSTTY_SIZE_REPORT_MODE_2048,
-    1 => GHOSTTY_SIZE_REPORT_CSI_14_T,
-    2 => GHOSTTY_SIZE_REPORT_CSI_16_T,
-    3 => GHOSTTY_SIZE_REPORT_CSI_18_T,
-    _ => throw ArgumentError(
-      'Unknown value for GhosttySizeReportStyle: $value',
-    ),
-  };
+  external ffi.Pointer<ffi.Void> userdata;
 }
 
-/// Terminal size information for encoding size reports.
-final class GhosttySizeReportSize extends ffi.Struct {
-  /// Terminal row count in cells.
-  @ffi.Uint16()
-  external int rows;
+typedef GhosttyMimeReaderFnFunction = ffi.Bool Function(
+  ffi.Pointer<ffi.Void> userdata,
+  GhosttyString mime,
+  GhosttyWriter writer,
+);
+typedef DartGhosttyMimeReaderFnFunction = bool Function(
+  ffi.Pointer<ffi.Void> userdata,
+  GhosttyString mime,
+  GhosttyWriter writer,
+);
 
-  /// Terminal column count in cells.
-  @ffi.Uint16()
-  external int columns;
+/// Read one MIME-typed representation of some content, streaming its
+/// bytes to a writer.
+///
+/// The library calls this with the MIME type of the representation it
+/// needs. The callback writes all of that representation's data to
+/// @p writer, in as many calls to `writer.write(writer.userdata, data,
+/// len)` as is convenient (one call with everything or many small
+/// pieces both work), and returns true. Nothing written is retained
+/// beyond each write call, so the data may be borrowed from anywhere:
+/// a pasteboard item, a file being read, a stream.
+///
+/// Returning false reports that the data could not be read. If the
+/// writer refuses a write (returns false), stop and return false
+/// without writing more.
+///
+/// All pointer arguments, the mime, and the writer are borrowed and
+/// valid only for the duration of the callback. The callback is
+/// invoked synchronously on the calling thread. The API receiving the
+/// GhosttyMimeReader defines which MIME types are requested, how many
+/// times, and any consistency requirements across repeated reads.
+///
+/// @param userdata Opaque userdata from GhosttyMimeReader
+/// @param mime The MIME type of the representation to read
+/// @param writer Where to write the data; valid only during this call
+/// @return true once all the data was written, false if it could not
+/// be read or the writer refused a write
+typedef GhosttyMimeReaderFn =
+    ffi.Pointer<ffi.NativeFunction<GhosttyMimeReaderFnFunction>>;
 
-  /// Width of a single terminal cell in pixels.
-  @ffi.Uint32()
-  external int cell_width;
+/// A MIME-typed content source callback and its opaque context.
+///
+/// The struct is passed by value. @p read must be non-NULL.
+final class GhosttyMimeReader extends ffi.Struct {
+  external GhosttyMimeReaderFn read;
 
-  /// Height of a single terminal cell in pixels.
-  @ffi.Uint32()
-  external int cell_height;
+  external ffi.Pointer<ffi.Void> userdata;
 }
 
-/// Opaque cell value.
+/// Packed cell value.
 ///
-/// Represents a single terminal cell. The internal layout is opaque and
-/// must be queried via ghostty_cell_get(). Obtain cell values from
-/// terminal query APIs.
+/// Represents a single terminal cell. Portable callers can query fields via
+/// ghostty_cell_get(). Boundary-sensitive callers can decode the packed value
+/// using the GhosttyCell descriptor returned by ghostty_type_json(). The
+/// manifest is authoritative for the linked build; hardcoding bit positions
+/// is unsupported.
 ///
 /// @ingroup screen
 typedef GhosttyCell = ffi.Uint64;
@@ -2866,6 +6556,23 @@ typedef DartGhosttyCell = int;
 /// @ingroup screen
 typedef GhosttyRow = ffi.Uint64;
 typedef DartGhosttyRow = int;
+
+/// A borrowed view of contiguous raw cell values.
+///
+/// The memory is not owned by this struct. The pointer is only valid
+/// for the lifetime documented by the API that produces it. Each value
+/// can be queried via ghostty_cell_get() or decoded using the GhosttyCell
+/// packed descriptor returned by ghostty_type_json().
+///
+/// @ingroup screen
+final class GhosttyCellsView extends ffi.Struct {
+  /// Pointer to len contiguous cell values.
+  external ffi.Pointer<GhosttyCell> ptr;
+
+  /// Number of cells.
+  @ffi.Size()
+  external int len;
+}
 
 /// Cell content tag.
 ///
@@ -2883,7 +6590,8 @@ enum GhosttyCellContentTag {
   GHOSTTY_CELL_CONTENT_BG_COLOR_PALETTE(2),
 
   /// No text; background color as RGB.
-  GHOSTTY_CELL_CONTENT_BG_COLOR_RGB(3);
+  GHOSTTY_CELL_CONTENT_BG_COLOR_RGB(3),
+  GHOSTTY_CELL_CONTENT_TAG_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyCellContentTag(this.value);
@@ -2893,6 +6601,7 @@ enum GhosttyCellContentTag {
     1 => GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME,
     2 => GHOSTTY_CELL_CONTENT_BG_COLOR_PALETTE,
     3 => GHOSTTY_CELL_CONTENT_BG_COLOR_RGB,
+    2147483647 => GHOSTTY_CELL_CONTENT_TAG_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyCellContentTag: $value'),
   };
 }
@@ -2913,7 +6622,8 @@ enum GhosttyCellWide {
   GHOSTTY_CELL_WIDE_SPACER_TAIL(2),
 
   /// Spacer at end of soft-wrapped line for a wide character.
-  GHOSTTY_CELL_WIDE_SPACER_HEAD(3);
+  GHOSTTY_CELL_WIDE_SPACER_HEAD(3),
+  GHOSTTY_CELL_WIDE_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyCellWide(this.value);
@@ -2923,6 +6633,7 @@ enum GhosttyCellWide {
     1 => GHOSTTY_CELL_WIDE_WIDE,
     2 => GHOSTTY_CELL_WIDE_SPACER_TAIL,
     3 => GHOSTTY_CELL_WIDE_SPACER_HEAD,
+    2147483647 => GHOSTTY_CELL_WIDE_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyCellWide: $value'),
   };
 }
@@ -2941,7 +6652,8 @@ enum GhosttyCellSemanticContent {
   GHOSTTY_CELL_SEMANTIC_INPUT(1),
 
   /// Content that is part of a shell prompt.
-  GHOSTTY_CELL_SEMANTIC_PROMPT(2);
+  GHOSTTY_CELL_SEMANTIC_PROMPT(2),
+  GHOSTTY_CELL_SEMANTIC_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyCellSemanticContent(this.value);
@@ -2950,6 +6662,7 @@ enum GhosttyCellSemanticContent {
     0 => GHOSTTY_CELL_SEMANTIC_OUTPUT,
     1 => GHOSTTY_CELL_SEMANTIC_INPUT,
     2 => GHOSTTY_CELL_SEMANTIC_PROMPT,
+    2147483647 => GHOSTTY_CELL_SEMANTIC_MAX_VALUE,
     _ => throw ArgumentError(
       'Unknown value for GhosttyCellSemanticContent: $value',
     ),
@@ -3021,7 +6734,8 @@ enum GhosttyCellData {
   /// Only valid when content_tag is GHOSTTY_CELL_CONTENT_BG_COLOR_RGB.
   ///
   /// Output type: GhosttyColorRgb *
-  GHOSTTY_CELL_DATA_COLOR_RGB(11);
+  GHOSTTY_CELL_DATA_COLOR_RGB(11),
+  GHOSTTY_CELL_DATA_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyCellData(this.value);
@@ -3039,6 +6753,7 @@ enum GhosttyCellData {
     9 => GHOSTTY_CELL_DATA_SEMANTIC_CONTENT,
     10 => GHOSTTY_CELL_DATA_COLOR_PALETTE,
     11 => GHOSTTY_CELL_DATA_COLOR_RGB,
+    2147483647 => GHOSTTY_CELL_DATA_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyCellData: $value'),
   };
 }
@@ -3057,7 +6772,8 @@ enum GhosttyRowSemanticPrompt {
   GHOSTTY_ROW_SEMANTIC_PROMPT(1),
 
   /// Prompt cells exist and this is a continuation line.
-  GHOSTTY_ROW_SEMANTIC_PROMPT_CONTINUATION(2);
+  GHOSTTY_ROW_SEMANTIC_PROMPT_CONTINUATION(2),
+  GHOSTTY_ROW_SEMANTIC_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyRowSemanticPrompt(this.value);
@@ -3066,6 +6782,7 @@ enum GhosttyRowSemanticPrompt {
     0 => GHOSTTY_ROW_SEMANTIC_NONE,
     1 => GHOSTTY_ROW_SEMANTIC_PROMPT,
     2 => GHOSTTY_ROW_SEMANTIC_PROMPT_CONTINUATION,
+    2147483647 => GHOSTTY_ROW_SEMANTIC_MAX_VALUE,
     _ => throw ArgumentError(
       'Unknown value for GhosttyRowSemanticPrompt: $value',
     ),
@@ -3120,7 +6837,8 @@ enum GhosttyRowData {
   /// Whether this row is dirty and requires a redraw.
   ///
   /// Output type: bool *
-  GHOSTTY_ROW_DATA_DIRTY(8);
+  GHOSTTY_ROW_DATA_DIRTY(8),
+  GHOSTTY_ROW_DATA_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyRowData(this.value);
@@ -3135,6 +6853,7 @@ enum GhosttyRowData {
     6 => GHOSTTY_ROW_DATA_SEMANTIC_PROMPT,
     7 => GHOSTTY_ROW_DATA_KITTY_VIRTUAL_PLACEHOLDER,
     8 => GHOSTTY_ROW_DATA_DIRTY,
+    2147483647 => GHOSTTY_ROW_DATA_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyRowData: $value'),
   };
 }
@@ -3157,7 +6876,8 @@ typedef DartGhosttyStyleId = int;
 enum GhosttyStyleColorTag {
   GHOSTTY_STYLE_COLOR_NONE(0),
   GHOSTTY_STYLE_COLOR_PALETTE(1),
-  GHOSTTY_STYLE_COLOR_RGB(2);
+  GHOSTTY_STYLE_COLOR_RGB(2),
+  GHOSTTY_STYLE_COLOR_TAG_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyStyleColorTag(this.value);
@@ -3166,6 +6886,7 @@ enum GhosttyStyleColorTag {
     0 => GHOSTTY_STYLE_COLOR_NONE,
     1 => GHOSTTY_STYLE_COLOR_PALETTE,
     2 => GHOSTTY_STYLE_COLOR_RGB,
+    2147483647 => GHOSTTY_STYLE_COLOR_TAG_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyStyleColorTag: $value'),
   };
 }
@@ -3296,7 +7017,8 @@ enum GhosttyPointTag {
   GHOSTTY_POINT_TAG_SCREEN(2),
 
   /// Scrollback history only (before active area).
-  GHOSTTY_POINT_TAG_HISTORY(3);
+  GHOSTTY_POINT_TAG_HISTORY(3),
+  GHOSTTY_POINT_TAG_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyPointTag(this.value);
@@ -3306,6 +7028,7 @@ enum GhosttyPointTag {
     1 => GHOSTTY_POINT_TAG_VIEWPORT,
     2 => GHOSTTY_POINT_TAG_SCREEN,
     3 => GHOSTTY_POINT_TAG_HISTORY,
+    2147483647 => GHOSTTY_POINT_TAG_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyPointTag: $value'),
   };
 }
@@ -3334,28 +7057,1130 @@ final class GhosttyPoint extends ffi.Struct {
   external GhosttyPointValue value;
 }
 
-final class GhosttyTerminalImpl extends ffi.Opaque {}
+final class GhosttySelectionGestureImpl extends ffi.Opaque {}
 
-/// Opaque handle to a terminal instance.
+/// Opaque handle to state for interpreting terminal selection gestures.
 ///
-/// @ingroup terminal
-typedef GhosttyTerminal = ffi.Pointer<GhosttyTerminalImpl>;
-
-/// Terminal initialization options.
+/// The gesture owns only the state required to interpret pointer events. Calls
+/// that use a gesture are not concurrency-safe and must be serialized with
+/// terminal mutations.
 ///
-/// @ingroup terminal
-final class GhosttyTerminalOptions extends ffi.Struct {
-  /// Terminal width in cells. Must be greater than zero.
-  @ffi.Uint16()
-  external int cols;
+/// @ingroup selection
+typedef GhosttySelectionGesture = ffi.Pointer<GhosttySelectionGestureImpl>;
 
-  /// Terminal height in cells. Must be greater than zero.
+final class GhosttySelectionGestureEventImpl extends ffi.Opaque {}
+
+/// Opaque handle to reusable input data for selection gesture operations.
+///
+/// Event options are set with ghostty_selection_gesture_event_set(). Individual
+/// gesture operations document which options are required or optional.
+///
+/// @ingroup selection
+typedef GhosttySelectionGestureEvent =
+    ffi.Pointer<GhosttySelectionGestureEventImpl>;
+
+/// A snapshot selection range defined by two grid references.
+///
+/// Both endpoints are inclusive. The endpoints preserve selection direction
+/// and may be reversed; callers must not assume that start is the top-left
+/// endpoint or that end is the bottom-right endpoint.
+///
+/// When rectangle is false, the endpoints describe a linear selection. When
+/// rectangle is true, the same endpoints are interpreted as opposite corners
+/// of a rectangular/block selection.
+///
+/// The start and end values are untracked GhosttyGridRef snapshots and are
+/// only valid until the next mutating operation on the terminal that produced
+/// them unless the selection is reconstructed from tracked references.
+///
+/// This is a sized struct. Use GHOSTTY_INIT_SIZED() to initialize it.
+///
+/// @ingroup selection
+final class GhosttySelection extends ffi.Struct {
+  /// Size of this struct in bytes. Must be set to sizeof(GhosttySelection).
+  @ffi.Size()
+  external int size;
+
+  /// Start of the selection range (inclusive).
+  ///
+  /// This may be after end in terminal order. It is an untracked
+  /// GhosttyGridRef snapshot and follows untracked grid-ref lifetime rules.
+  external GhosttyGridRef start;
+
+  /// End of the selection range (inclusive).
+  ///
+  /// This may be before start in terminal order. It is an untracked
+  /// GhosttyGridRef snapshot and follows untracked grid-ref lifetime rules.
+  external GhosttyGridRef end;
+
+  /// Whether the endpoints are interpreted as a rectangular/block selection
+  /// rather than a linear selection.
+  @ffi.Bool()
+  external bool rectangle;
+}
+
+/// Options for deriving a word selection from a terminal grid reference.
+///
+/// This is a sized struct. Use GHOSTTY_INIT_SIZED() to initialize it.
+/// If boundary_codepoints is NULL and boundary_codepoints_len is 0, Ghostty's
+/// default word-boundary codepoints are used. If boundary_codepoints_len is
+/// non-zero, boundary_codepoints must not be NULL.
+///
+/// @ingroup selection
+final class GhosttyTerminalSelectWordOptions extends ffi.Struct {
+  /// Size of this struct in bytes. Must be set to sizeof(GhosttyTerminalSelectWordOptions).
+  @ffi.Size()
+  external int size;
+
+  /// Grid reference under which to derive the word selection.
+  external GhosttyGridRef ref;
+
+  /// Optional word-boundary codepoints as uint32_t scalar values.
+  external ffi.Pointer<ffi.Uint32> boundary_codepoints;
+
+  /// Number of entries in boundary_codepoints.
+  @ffi.Size()
+  external int boundary_codepoints_len;
+}
+
+/// Options for deriving the nearest word selection between two grid references.
+///
+/// This is a sized struct. Use GHOSTTY_INIT_SIZED() to initialize it.
+/// If boundary_codepoints is NULL and boundary_codepoints_len is 0, Ghostty's
+/// default word-boundary codepoints are used. If boundary_codepoints_len is
+/// non-zero, boundary_codepoints must not be NULL.
+///
+/// @ingroup selection
+final class GhosttyTerminalSelectWordBetweenOptions extends ffi.Struct {
+  /// Size of this struct in bytes. Must be set to sizeof(GhosttyTerminalSelectWordBetweenOptions).
+  @ffi.Size()
+  external int size;
+
+  /// Starting grid reference for the inclusive search range.
+  external GhosttyGridRef start;
+
+  /// Ending grid reference for the inclusive search range.
+  external GhosttyGridRef end;
+
+  /// Optional word-boundary codepoints as uint32_t scalar values.
+  external ffi.Pointer<ffi.Uint32> boundary_codepoints;
+
+  /// Number of entries in boundary_codepoints.
+  @ffi.Size()
+  external int boundary_codepoints_len;
+}
+
+/// Options for deriving a line selection from a terminal grid reference.
+///
+/// This is a sized struct. Use GHOSTTY_INIT_SIZED() to initialize it.
+/// If whitespace is NULL and whitespace_len is 0, Ghostty's default line-trim
+/// whitespace codepoints are used. If whitespace_len is non-zero, whitespace
+/// must not be NULL.
+///
+/// @ingroup selection
+final class GhosttyTerminalSelectLineOptions extends ffi.Struct {
+  /// Size of this struct in bytes. Must be set to sizeof(GhosttyTerminalSelectLineOptions).
+  @ffi.Size()
+  external int size;
+
+  /// Grid reference under which to derive the line selection.
+  external GhosttyGridRef ref;
+
+  /// Optional codepoints to trim from the start and end of the line.
+  external ffi.Pointer<ffi.Uint32> whitespace;
+
+  /// Number of entries in whitespace.
+  @ffi.Size()
+  external int whitespace_len;
+
+  /// Whether semantic prompt state changes should bound the line selection.
+  @ffi.Bool()
+  external bool semantic_prompt_boundary;
+}
+
+/// Options for one-shot formatting of a terminal selection.
+///
+/// This is a sized struct. Use GHOSTTY_INIT_SIZED() to initialize it.
+///
+/// If selection is NULL, the terminal's current active selection is used.
+/// If selection is non-NULL, that caller-provided snapshot selection is used.
+///
+/// The selection is formatted from the terminal's active screen using the same
+/// formatting semantics as GhosttyFormatter. For copy/clipboard behavior
+/// matching Ghostty's Screen.selectionString(), use plain output with unwrap
+/// and trim both set to true.
+///
+/// @ingroup selection
+final class GhosttyTerminalSelectionFormatOptions extends ffi.Struct {
+  /// Size of this struct in bytes. Must be set to sizeof(GhosttyTerminalSelectionFormatOptions).
+  @ffi.Size()
+  external int size;
+
+  /// Output format to emit.
+  @ffi.UnsignedInt()
+  external int emitAsInt;
+
+  GhosttyFormatterFormat get emit =>
+      GhosttyFormatterFormat.fromValue(emitAsInt);
+
+  /// Whether to unwrap soft-wrapped lines.
+  @ffi.Bool()
+  external bool unwrap;
+
+  /// Whether to trim trailing whitespace on non-blank lines.
+  @ffi.Bool()
+  external bool trim;
+
+  /// Optional selection to format.
+  ///
+  /// If NULL, the terminal's current active selection is used. If the terminal
+  /// has no active selection, formatting returns GHOSTTY_NO_VALUE.
+  ///
+  /// If non-NULL, the pointed-to selection must be a valid snapshot selection
+  /// for this terminal and must obey GhosttySelection lifetime rules.
+  external ffi.Pointer<GhosttySelection> selection;
+}
+
+/// Ordering of a selection's endpoints in terminal coordinates.
+///
+/// Mirrored orders are only produced by rectangular selections whose start
+/// and end endpoints are on opposite diagonal corners that are not simple
+/// top-left-to-bottom-right or bottom-right-to-top-left orderings.
+///
+/// @ingroup selection
+enum GhosttySelectionOrder {
+  /// Start is before end in top-left to bottom-right order.
+  GHOSTTY_SELECTION_ORDER_FORWARD(0),
+
+  /// End is before start in top-left to bottom-right order.
+  GHOSTTY_SELECTION_ORDER_REVERSE(1),
+
+  /// Rectangular selection from top-right to bottom-left.
+  GHOSTTY_SELECTION_ORDER_MIRRORED_FORWARD(2),
+
+  /// Rectangular selection from bottom-left to top-right.
+  GHOSTTY_SELECTION_ORDER_MIRRORED_REVERSE(3),
+  GHOSTTY_SELECTION_ORDER_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttySelectionOrder(this.value);
+
+  static GhosttySelectionOrder fromValue(int value) => switch (value) {
+    0 => GHOSTTY_SELECTION_ORDER_FORWARD,
+    1 => GHOSTTY_SELECTION_ORDER_REVERSE,
+    2 => GHOSTTY_SELECTION_ORDER_MIRRORED_FORWARD,
+    3 => GHOSTTY_SELECTION_ORDER_MIRRORED_REVERSE,
+    2147483647 => GHOSTTY_SELECTION_ORDER_MAX_VALUE,
+    _ => throw ArgumentError('Unknown value for GhosttySelectionOrder: $value'),
+  };
+}
+
+/// Operation used to adjust a selection endpoint.
+///
+/// Adjustment mutates the selection's logical end endpoint, not whichever
+/// endpoint is visually bottom/right. This preserves keyboard and drag
+/// behavior for both forward and reversed selections.
+///
+/// @ingroup selection
+enum GhosttySelectionAdjust {
+  /// Move left to the previous non-empty cell, wrapping upward.
+  GHOSTTY_SELECTION_ADJUST_LEFT(0),
+
+  /// Move right to the next non-empty cell, wrapping downward.
+  GHOSTTY_SELECTION_ADJUST_RIGHT(1),
+
+  /// Move up one row at the current column, or to the beginning of the
+  /// line if already at the top.
+  GHOSTTY_SELECTION_ADJUST_UP(2),
+
+  /// Move down to the next non-blank row at the current column, or to the
+  /// end of the line if none exists.
+  GHOSTTY_SELECTION_ADJUST_DOWN(3),
+
+  /// Move to the top-left cell of the screen.
+  GHOSTTY_SELECTION_ADJUST_HOME(4),
+
+  /// Move to the right edge of the last non-blank row on the screen.
+  GHOSTTY_SELECTION_ADJUST_END(5),
+
+  /// Move up by one terminal page height, or to home if that would move
+  /// past the top.
+  GHOSTTY_SELECTION_ADJUST_PAGE_UP(6),
+
+  /// Move down by one terminal page height, or to end if that would move
+  /// past the bottom.
+  GHOSTTY_SELECTION_ADJUST_PAGE_DOWN(7),
+
+  /// Move to the left edge of the current line.
+  GHOSTTY_SELECTION_ADJUST_BEGINNING_OF_LINE(8),
+
+  /// Move to the right edge of the current line.
+  GHOSTTY_SELECTION_ADJUST_END_OF_LINE(9),
+  GHOSTTY_SELECTION_ADJUST_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttySelectionAdjust(this.value);
+
+  static GhosttySelectionAdjust fromValue(int value) => switch (value) {
+    0 => GHOSTTY_SELECTION_ADJUST_LEFT,
+    1 => GHOSTTY_SELECTION_ADJUST_RIGHT,
+    2 => GHOSTTY_SELECTION_ADJUST_UP,
+    3 => GHOSTTY_SELECTION_ADJUST_DOWN,
+    4 => GHOSTTY_SELECTION_ADJUST_HOME,
+    5 => GHOSTTY_SELECTION_ADJUST_END,
+    6 => GHOSTTY_SELECTION_ADJUST_PAGE_UP,
+    7 => GHOSTTY_SELECTION_ADJUST_PAGE_DOWN,
+    8 => GHOSTTY_SELECTION_ADJUST_BEGINNING_OF_LINE,
+    9 => GHOSTTY_SELECTION_ADJUST_END_OF_LINE,
+    2147483647 => GHOSTTY_SELECTION_ADJUST_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttySelectionAdjust: $value',
+    ),
+  };
+}
+
+/// Selection behavior chosen for a gesture's click sequence.
+///
+/// @ingroup selection
+enum GhosttySelectionGestureBehavior {
+  /// Cell-granular drag selection.
+  GHOSTTY_SELECTION_GESTURE_BEHAVIOR_CELL(0),
+
+  /// Word selection on press and word-granular drag selection.
+  GHOSTTY_SELECTION_GESTURE_BEHAVIOR_WORD(1),
+
+  /// Line selection on press and line-granular drag selection.
+  GHOSTTY_SELECTION_GESTURE_BEHAVIOR_LINE(2),
+
+  /// Semantic command output selection on press and drag.
+  GHOSTTY_SELECTION_GESTURE_BEHAVIOR_OUTPUT(3),
+  GHOSTTY_SELECTION_GESTURE_BEHAVIOR_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttySelectionGestureBehavior(this.value);
+
+  static GhosttySelectionGestureBehavior fromValue(int value) =>
+      switch (value) {
+        0 => GHOSTTY_SELECTION_GESTURE_BEHAVIOR_CELL,
+        1 => GHOSTTY_SELECTION_GESTURE_BEHAVIOR_WORD,
+        2 => GHOSTTY_SELECTION_GESTURE_BEHAVIOR_LINE,
+        3 => GHOSTTY_SELECTION_GESTURE_BEHAVIOR_OUTPUT,
+        2147483647 => GHOSTTY_SELECTION_GESTURE_BEHAVIOR_MAX_VALUE,
+        _ => throw ArgumentError(
+          'Unknown value for GhosttySelectionGestureBehavior: $value',
+        ),
+      };
+}
+
+/// Selection behaviors for single-, double-, and triple-click gestures.
+///
+/// @ingroup selection
+final class GhosttySelectionGestureBehaviors extends ffi.Struct {
+  /// Behavior for single-click selection gestures.
+  @ffi.UnsignedInt()
+  external int single_clickAsInt;
+
+  GhosttySelectionGestureBehavior get single_click =>
+      GhosttySelectionGestureBehavior.fromValue(single_clickAsInt);
+
+  /// Behavior for double-click selection gestures.
+  @ffi.UnsignedInt()
+  external int double_clickAsInt;
+
+  GhosttySelectionGestureBehavior get double_click =>
+      GhosttySelectionGestureBehavior.fromValue(double_clickAsInt);
+
+  /// Behavior for triple-click selection gestures.
+  @ffi.UnsignedInt()
+  external int triple_clickAsInt;
+
+  GhosttySelectionGestureBehavior get triple_click =>
+      GhosttySelectionGestureBehavior.fromValue(triple_clickAsInt);
+}
+
+/// Display geometry used to interpret selection gesture drag events.
+///
+/// @ingroup selection
+final class GhosttySelectionGestureGeometry extends ffi.Struct {
+  /// Number of columns in the rendered terminal grid. Must be non-zero.
+  @ffi.Uint32()
+  external int columns;
+
+  /// Width of one terminal cell in surface pixels. Must be non-zero.
+  @ffi.Uint32()
+  external int cell_width;
+
+  /// Left padding before the terminal grid begins in surface pixels.
+  @ffi.Uint32()
+  external int padding_left;
+
+  /// Height of the rendered terminal surface in surface pixels. Must be non-zero.
+  @ffi.Uint32()
+  external int screen_height;
+}
+
+/// Current autoscroll direction for an active selection drag gesture.
+///
+/// @ingroup selection
+enum GhosttySelectionGestureAutoscroll {
+  /// No selection autoscroll is requested.
+  GHOSTTY_SELECTION_GESTURE_AUTOSCROLL_NONE(0),
+
+  /// Selection dragging should autoscroll the viewport upward.
+  GHOSTTY_SELECTION_GESTURE_AUTOSCROLL_UP(1),
+
+  /// Selection dragging should autoscroll the viewport downward.
+  GHOSTTY_SELECTION_GESTURE_AUTOSCROLL_DOWN(2),
+  GHOSTTY_SELECTION_GESTURE_AUTOSCROLL_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttySelectionGestureAutoscroll(this.value);
+
+  static GhosttySelectionGestureAutoscroll fromValue(int value) =>
+      switch (value) {
+        0 => GHOSTTY_SELECTION_GESTURE_AUTOSCROLL_NONE,
+        1 => GHOSTTY_SELECTION_GESTURE_AUTOSCROLL_UP,
+        2 => GHOSTTY_SELECTION_GESTURE_AUTOSCROLL_DOWN,
+        2147483647 => GHOSTTY_SELECTION_GESTURE_AUTOSCROLL_MAX_VALUE,
+        _ => throw ArgumentError(
+          'Unknown value for GhosttySelectionGestureAutoscroll: $value',
+        ),
+      };
+}
+
+/// Data fields readable from a selection gesture with
+/// ghostty_selection_gesture_get().
+///
+/// @ingroup selection
+enum GhosttySelectionGestureData {
+  /// Current click count: uint8_t*. 0 means inactive.
+  GHOSTTY_SELECTION_GESTURE_DATA_CLICK_COUNT(0),
+
+  /// Whether the current/last left-click gesture has dragged: bool*.
+  GHOSTTY_SELECTION_GESTURE_DATA_DRAGGED(1),
+
+  /// Current autoscroll request: GhosttySelectionGestureAutoscroll*.
+  GHOSTTY_SELECTION_GESTURE_DATA_AUTOSCROLL(2),
+
+  /// Current gesture behavior: GhosttySelectionGestureBehavior*.
+  GHOSTTY_SELECTION_GESTURE_DATA_BEHAVIOR(3),
+
+  /// Current left-click anchor: GhosttyGridRef*.
+  ///
+  /// Returns GHOSTTY_NO_VALUE if there is no valid active anchor. On success,
+  /// writes an untracked GhosttyGridRef snapshot with normal GhosttyGridRef
+  /// lifetime rules.
+  GHOSTTY_SELECTION_GESTURE_DATA_ANCHOR(4),
+  GHOSTTY_SELECTION_GESTURE_DATA_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttySelectionGestureData(this.value);
+
+  static GhosttySelectionGestureData fromValue(int value) => switch (value) {
+    0 => GHOSTTY_SELECTION_GESTURE_DATA_CLICK_COUNT,
+    1 => GHOSTTY_SELECTION_GESTURE_DATA_DRAGGED,
+    2 => GHOSTTY_SELECTION_GESTURE_DATA_AUTOSCROLL,
+    3 => GHOSTTY_SELECTION_GESTURE_DATA_BEHAVIOR,
+    4 => GHOSTTY_SELECTION_GESTURE_DATA_ANCHOR,
+    2147483647 => GHOSTTY_SELECTION_GESTURE_DATA_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttySelectionGestureData: $value',
+    ),
+  };
+}
+
+/// Selection gesture event type.
+///
+/// The event type is fixed when the event is created. Each event type documents
+/// which options are valid and which options are required by gesture operations.
+///
+/// @ingroup selection
+enum GhosttySelectionGestureEventType {
+  /// Press event for ghostty_selection_gesture_event().
+  GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_PRESS(0),
+
+  /// Release event for ghostty_selection_gesture_event().
+  GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_RELEASE(1),
+
+  /// Drag event for ghostty_selection_gesture_event().
+  GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_DRAG(2),
+
+  /// Autoscroll tick event for ghostty_selection_gesture_event().
+  GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_AUTOSCROLL_TICK(3),
+
+  /// Deep press event for ghostty_selection_gesture_event().
+  GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_DEEP_PRESS(4),
+  GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttySelectionGestureEventType(this.value);
+
+  static GhosttySelectionGestureEventType fromValue(int value) =>
+      switch (value) {
+        0 => GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_PRESS,
+        1 => GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_RELEASE,
+        2 => GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_DRAG,
+        3 => GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_AUTOSCROLL_TICK,
+        4 => GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_DEEP_PRESS,
+        2147483647 => GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_MAX_VALUE,
+        _ => throw ArgumentError(
+          'Unknown value for GhosttySelectionGestureEventType: $value',
+        ),
+      };
+}
+
+/// Options stored on a reusable selection gesture event.
+///
+/// Passing NULL as the value to ghostty_selection_gesture_event_set() clears the
+/// corresponding option.
+///
+/// @ingroup selection
+enum GhosttySelectionGestureEventOption {
+  /// Grid reference under the pointer: GhosttyGridRef*.
+  ///
+  /// Required for PRESS and DRAG events. Optional for RELEASE events; when unset
+  /// or cleared, release records that the pointer did not map to a valid cell.
+  GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REF(0),
+
+  /// Surface-space pointer position: GhosttySurfacePosition*.
+  ///
+  /// Valid for PRESS, DRAG, and AUTOSCROLL_TICK.
+  GHOSTTY_SELECTION_GESTURE_EVENT_OPT_POSITION(1),
+
+  /// Maximum repeat-click distance in pixels: double*.
+  GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REPEAT_DISTANCE(2),
+
+  /// Optional monotonic event time in nanoseconds: uint64_t*.
+  ///
+  /// If unset, press treats the event as untimed and only single-click behavior
+  /// is available.
+  GHOSTTY_SELECTION_GESTURE_EVENT_OPT_TIME_NS(3),
+
+  /// Maximum interval between repeat clicks in nanoseconds: uint64_t*.
+  GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REPEAT_INTERVAL_NS(4),
+
+  /// Word-boundary codepoints: GhosttyCodepoints*.
+  ///
+  /// The codepoints are copied into event-owned storage when set. If unset,
+  /// operations that need word boundaries use Ghostty's defaults.
+  ///
+  /// Valid for PRESS, DRAG, AUTOSCROLL_TICK, and DEEP_PRESS.
+  GHOSTTY_SELECTION_GESTURE_EVENT_OPT_WORD_BOUNDARY_CODEPOINTS(5),
+
+  /// Selection behavior table: GhosttySelectionGestureBehaviors*.
+  ///
+  /// If unset, press uses the default behavior table: cell, word, line.
+  GHOSTTY_SELECTION_GESTURE_EVENT_OPT_BEHAVIORS(6),
+
+  /// Whether a drag or autoscroll tick should produce a rectangular selection: bool*.
+  GHOSTTY_SELECTION_GESTURE_EVENT_OPT_RECTANGLE(7),
+
+  /// Drag display geometry: GhosttySelectionGestureGeometry*. Required for DRAG and AUTOSCROLL_TICK.
+  GHOSTTY_SELECTION_GESTURE_EVENT_OPT_GEOMETRY(8),
+
+  /// Viewport coordinate for an autoscroll tick: GhosttyPointCoordinate*. Required for AUTOSCROLL_TICK.
+  GHOSTTY_SELECTION_GESTURE_EVENT_OPT_VIEWPORT(9),
+  GHOSTTY_SELECTION_GESTURE_EVENT_OPT_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttySelectionGestureEventOption(this.value);
+
+  static GhosttySelectionGestureEventOption fromValue(int value) =>
+      switch (value) {
+        0 => GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REF,
+        1 => GHOSTTY_SELECTION_GESTURE_EVENT_OPT_POSITION,
+        2 => GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REPEAT_DISTANCE,
+        3 => GHOSTTY_SELECTION_GESTURE_EVENT_OPT_TIME_NS,
+        4 => GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REPEAT_INTERVAL_NS,
+        5 => GHOSTTY_SELECTION_GESTURE_EVENT_OPT_WORD_BOUNDARY_CODEPOINTS,
+        6 => GHOSTTY_SELECTION_GESTURE_EVENT_OPT_BEHAVIORS,
+        7 => GHOSTTY_SELECTION_GESTURE_EVENT_OPT_RECTANGLE,
+        8 => GHOSTTY_SELECTION_GESTURE_EVENT_OPT_GEOMETRY,
+        9 => GHOSTTY_SELECTION_GESTURE_EVENT_OPT_VIEWPORT,
+        2147483647 => GHOSTTY_SELECTION_GESTURE_EVENT_OPT_MAX_VALUE,
+        _ => throw ArgumentError(
+          'Unknown value for GhosttySelectionGestureEventOption: $value',
+        ),
+      };
+}
+
+/// A packed 16-bit terminal mode.
+///
+/// Encodes a mode value (bits 0–14) and an ANSI flag (bit 15) into a
+/// single 16-bit integer. Use the inline helper functions to construct
+/// and inspect modes rather than manipulating bits directly.
+typedef GhosttyMode = ffi.Uint16;
+typedef DartGhosttyMode = int;
+
+/// DECRPM report state values.
+///
+/// These correspond to the Ps2 parameter in a DECRPM response
+/// sequence (CSI ? Ps1 ; Ps2 $ y).
+enum GhosttyModeReportState {
+  /// Mode is not recognized
+  GHOSTTY_MODE_REPORT_NOT_RECOGNIZED(0),
+
+  /// Mode is set (enabled)
+  GHOSTTY_MODE_REPORT_SET(1),
+
+  /// Mode is reset (disabled)
+  GHOSTTY_MODE_REPORT_RESET(2),
+
+  /// Mode is permanently set
+  GHOSTTY_MODE_REPORT_PERMANENTLY_SET(3),
+
+  /// Mode is permanently reset
+  GHOSTTY_MODE_REPORT_PERMANENTLY_RESET(4),
+  GHOSTTY_MODE_REPORT_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyModeReportState(this.value);
+
+  static GhosttyModeReportState fromValue(int value) => switch (value) {
+    0 => GHOSTTY_MODE_REPORT_NOT_RECOGNIZED,
+    1 => GHOSTTY_MODE_REPORT_SET,
+    2 => GHOSTTY_MODE_REPORT_RESET,
+    3 => GHOSTTY_MODE_REPORT_PERMANENTLY_SET,
+    4 => GHOSTTY_MODE_REPORT_PERMANENTLY_RESET,
+    2147483647 => GHOSTTY_MODE_REPORT_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyModeReportState: $value',
+    ),
+  };
+}
+
+/// Size report style.
+///
+/// Determines the output format for the terminal size report.
+enum GhosttySizeReportStyle {
+  /// In-band size report (mode 2048): ESC [ 48 ; rows ; cols ; height ; width t
+  GHOSTTY_SIZE_REPORT_MODE_2048(0),
+
+  /// XTWINOPS text area size in pixels: ESC [ 4 ; height ; width t
+  GHOSTTY_SIZE_REPORT_CSI_14_T(1),
+
+  /// XTWINOPS cell size in pixels: ESC [ 6 ; height ; width t
+  GHOSTTY_SIZE_REPORT_CSI_16_T(2),
+
+  /// XTWINOPS text area size in characters: ESC [ 8 ; rows ; cols t
+  GHOSTTY_SIZE_REPORT_CSI_18_T(3),
+  GHOSTTY_SIZE_REPORT_STYLE_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttySizeReportStyle(this.value);
+
+  static GhosttySizeReportStyle fromValue(int value) => switch (value) {
+    0 => GHOSTTY_SIZE_REPORT_MODE_2048,
+    1 => GHOSTTY_SIZE_REPORT_CSI_14_T,
+    2 => GHOSTTY_SIZE_REPORT_CSI_16_T,
+    3 => GHOSTTY_SIZE_REPORT_CSI_18_T,
+    2147483647 => GHOSTTY_SIZE_REPORT_STYLE_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttySizeReportStyle: $value',
+    ),
+  };
+}
+
+/// Terminal size information for encoding size reports.
+final class GhosttySizeReportSize extends ffi.Struct {
+  /// Terminal row count in cells.
   @ffi.Uint16()
   external int rows;
 
-  /// Maximum number of lines to keep in scrollback history.
+  /// Terminal column count in cells.
+  @ffi.Uint16()
+  external int columns;
+
+  /// Width of a single terminal cell in pixels.
+  @ffi.Uint32()
+  external int cell_width;
+
+  /// Height of a single terminal cell in pixels.
+  @ffi.Uint32()
+  external int cell_height;
+}
+
+/// Queryable data kinds for ghostty_kitty_graphics_get().
+///
+/// @ingroup kitty_graphics
+enum GhosttyKittyGraphicsData {
+  /// Invalid / sentinel value.
+  GHOSTTY_KITTY_GRAPHICS_DATA_INVALID(0),
+
+  /// Populate a pre-allocated placement iterator with placement data from
+  /// the storage. Iterator data is only valid as long as the underlying
+  /// terminal is not mutated.
+  ///
+  /// Output type: GhosttyKittyGraphicsPlacementIterator *
+  GHOSTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR(1),
+
+  /// Generation stamp of the last content mutation to this storage:
+  /// any image transmit/replace, placement add, or delete. Zero means
+  /// the storage has never been mutated (and is therefore empty).
+  ///
+  /// If the generation is unchanged since a previous query, the set of
+  /// placements and all image data are identical, so placement iteration
+  /// and image staleness checks can be skipped entirely. Note that
+  /// placement *geometry* may still have changed (scrolling and resizing
+  /// move placements without changing the storage contents), so rendering
+  /// geometry such as ghostty_kitty_graphics_placement_render_info()
+  /// must still be recomputed for frames marked dirty.
+  ///
+  /// Stamps are unique and monotonically increasing process-wide: a
+  /// value observed from any storage never recurs for different content,
+  /// even across screen switches (main vs. alternate screen have
+  /// independent storages) or terminal resets. It is therefore safe to
+  /// key caches on this value alone.
+  ///
+  /// Output type: uint64_t *
+  GHOSTTY_KITTY_GRAPHICS_DATA_GENERATION(2),
+  GHOSTTY_KITTY_GRAPHICS_DATA_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyKittyGraphicsData(this.value);
+
+  static GhosttyKittyGraphicsData fromValue(int value) => switch (value) {
+    0 => GHOSTTY_KITTY_GRAPHICS_DATA_INVALID,
+    1 => GHOSTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR,
+    2 => GHOSTTY_KITTY_GRAPHICS_DATA_GENERATION,
+    2147483647 => GHOSTTY_KITTY_GRAPHICS_DATA_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyKittyGraphicsData: $value',
+    ),
+  };
+}
+
+/// Queryable data kinds for ghostty_kitty_graphics_placement_get().
+///
+/// @ingroup kitty_graphics
+enum GhosttyKittyGraphicsPlacementData {
+  /// Invalid / sentinel value.
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_INVALID(0),
+
+  /// The image ID this placement belongs to.
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID(1),
+
+  /// The placement ID.
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_PLACEMENT_ID(2),
+
+  /// Whether this is a virtual placement (unicode placeholder).
+  ///
+  /// Output type: bool *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IS_VIRTUAL(3),
+
+  /// Pixel offset from the left edge of the cell.
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_X_OFFSET(4),
+
+  /// Pixel offset from the top edge of the cell.
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Y_OFFSET(5),
+
+  /// Source rectangle x origin in pixels.
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_X(6),
+
+  /// Source rectangle y origin in pixels.
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_Y(7),
+
+  /// Source rectangle width in pixels (0 = full image width).
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_WIDTH(8),
+
+  /// Source rectangle height in pixels (0 = full image height).
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_HEIGHT(9),
+
+  /// Number of columns this placement occupies.
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_COLUMNS(10),
+
+  /// Number of rows this placement occupies.
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_ROWS(11),
+
+  /// Z-index for this placement.
+  ///
+  /// Output type: int32_t *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Z(12),
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyKittyGraphicsPlacementData(this.value);
+
+  static GhosttyKittyGraphicsPlacementData fromValue(int value) =>
+      switch (value) {
+        0 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_INVALID,
+        1 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID,
+        2 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_PLACEMENT_ID,
+        3 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IS_VIRTUAL,
+        4 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_X_OFFSET,
+        5 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Y_OFFSET,
+        6 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_X,
+        7 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_Y,
+        8 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_WIDTH,
+        9 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_SOURCE_HEIGHT,
+        10 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_COLUMNS,
+        11 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_ROWS,
+        12 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Z,
+        2147483647 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_MAX_VALUE,
+        _ => throw ArgumentError(
+          'Unknown value for GhosttyKittyGraphicsPlacementData: $value',
+        ),
+      };
+}
+
+/// Z-layer classification for kitty graphics placements.
+///
+/// Based on the kitty protocol z-index conventions:
+/// - BELOW_BG:   z < INT32_MIN/2  (drawn below cell background)
+/// - BELOW_TEXT:  INT32_MIN/2 <= z < 0  (above background, below text)
+/// - ABOVE_TEXT:  z >= 0  (above text)
+/// - ALL:         no filtering (current behavior)
+///
+/// @ingroup kitty_graphics
+enum GhosttyKittyPlacementLayer {
+  GHOSTTY_KITTY_PLACEMENT_LAYER_ALL(0),
+  GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG(1),
+  GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT(2),
+  GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT(3),
+  GHOSTTY_KITTY_PLACEMENT_LAYER_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyKittyPlacementLayer(this.value);
+
+  static GhosttyKittyPlacementLayer fromValue(int value) => switch (value) {
+    0 => GHOSTTY_KITTY_PLACEMENT_LAYER_ALL,
+    1 => GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG,
+    2 => GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT,
+    3 => GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT,
+    2147483647 => GHOSTTY_KITTY_PLACEMENT_LAYER_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyKittyPlacementLayer: $value',
+    ),
+  };
+}
+
+/// Settable options for ghostty_kitty_graphics_placement_iterator_set().
+///
+/// @ingroup kitty_graphics
+enum GhosttyKittyGraphicsPlacementIteratorOption {
+  /// Set the z-layer filter for the iterator.
+  ///
+  /// Input type: GhosttyKittyPlacementLayer *
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER(0),
+  GHOSTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyKittyGraphicsPlacementIteratorOption(this.value);
+
+  static GhosttyKittyGraphicsPlacementIteratorOption fromValue(
+    int value,
+  ) => switch (value) {
+    0 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER,
+    2147483647 => GHOSTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyKittyGraphicsPlacementIteratorOption: $value',
+    ),
+  };
+}
+
+/// Pixel format of a Kitty graphics image.
+///
+/// Note that stored images are always fully decoded:
+/// GHOSTTY_KITTY_IMAGE_FORMAT_PNG is never returned by
+/// ghostty_kitty_graphics_image_get() because PNG payloads are decoded
+/// to GHOSTTY_KITTY_IMAGE_FORMAT_RGBA before storage. The PNG value
+/// exists only for protocol-level completeness.
+///
+/// @ingroup kitty_graphics
+enum GhosttyKittyImageFormat {
+  GHOSTTY_KITTY_IMAGE_FORMAT_RGB(0),
+  GHOSTTY_KITTY_IMAGE_FORMAT_RGBA(1),
+  GHOSTTY_KITTY_IMAGE_FORMAT_PNG(2),
+  GHOSTTY_KITTY_IMAGE_FORMAT_GRAY_ALPHA(3),
+  GHOSTTY_KITTY_IMAGE_FORMAT_GRAY(4),
+  GHOSTTY_KITTY_IMAGE_FORMAT_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyKittyImageFormat(this.value);
+
+  static GhosttyKittyImageFormat fromValue(int value) => switch (value) {
+    0 => GHOSTTY_KITTY_IMAGE_FORMAT_RGB,
+    1 => GHOSTTY_KITTY_IMAGE_FORMAT_RGBA,
+    2 => GHOSTTY_KITTY_IMAGE_FORMAT_PNG,
+    3 => GHOSTTY_KITTY_IMAGE_FORMAT_GRAY_ALPHA,
+    4 => GHOSTTY_KITTY_IMAGE_FORMAT_GRAY,
+    2147483647 => GHOSTTY_KITTY_IMAGE_FORMAT_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyKittyImageFormat: $value',
+    ),
+  };
+}
+
+/// Compression of a Kitty graphics image.
+///
+/// Note that stored images are always decompressed:
+/// GHOSTTY_KITTY_IMAGE_COMPRESSION_ZLIB_DEFLATE payloads are inflated
+/// before storage, so ghostty_kitty_graphics_image_get() always reports
+/// GHOSTTY_KITTY_IMAGE_COMPRESSION_NONE. Consumers never need to
+/// inflate image data themselves.
+///
+/// @ingroup kitty_graphics
+enum GhosttyKittyImageCompression {
+  GHOSTTY_KITTY_IMAGE_COMPRESSION_NONE(0),
+  GHOSTTY_KITTY_IMAGE_COMPRESSION_ZLIB_DEFLATE(1),
+  GHOSTTY_KITTY_IMAGE_COMPRESSION_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyKittyImageCompression(this.value);
+
+  static GhosttyKittyImageCompression fromValue(int value) => switch (value) {
+    0 => GHOSTTY_KITTY_IMAGE_COMPRESSION_NONE,
+    1 => GHOSTTY_KITTY_IMAGE_COMPRESSION_ZLIB_DEFLATE,
+    2147483647 => GHOSTTY_KITTY_IMAGE_COMPRESSION_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyKittyImageCompression: $value',
+    ),
+  };
+}
+
+/// Queryable data kinds for ghostty_kitty_graphics_image_get().
+///
+/// @ingroup kitty_graphics
+enum GhosttyKittyGraphicsImageData {
+  /// Invalid / sentinel value.
+  GHOSTTY_KITTY_IMAGE_DATA_INVALID(0),
+
+  /// The image ID.
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_IMAGE_DATA_ID(1),
+
+  /// The image number.
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_IMAGE_DATA_NUMBER(2),
+
+  /// Image width in pixels.
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_IMAGE_DATA_WIDTH(3),
+
+  /// Image height in pixels.
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_KITTY_IMAGE_DATA_HEIGHT(4),
+
+  /// Pixel format of the image. Never GHOSTTY_KITTY_IMAGE_FORMAT_PNG;
+  /// PNG payloads are decoded to RGBA before storage.
+  ///
+  /// Output type: GhosttyKittyImageFormat *
+  GHOSTTY_KITTY_IMAGE_DATA_FORMAT(5),
+
+  /// Compression of the image. Always
+  /// GHOSTTY_KITTY_IMAGE_COMPRESSION_NONE; compressed payloads are
+  /// inflated before storage.
+  ///
+  /// Output type: GhosttyKittyImageCompression *
+  GHOSTTY_KITTY_IMAGE_DATA_COMPRESSION(6),
+
+  /// Borrowed pointer to the raw pixel data. Valid as long as the
+  /// underlying terminal is not mutated. Returns GHOSTTY_NO_VALUE when
+  /// the image metadata is resident but its pixel payload is pending.
+  ///
+  /// The data is always fully decoded, uncompressed pixels in the
+  /// format reported by GHOSTTY_KITTY_IMAGE_DATA_FORMAT: zlib payloads
+  /// are inflated and PNG payloads are decoded to RGBA at transmission
+  /// time, before the image is stored. Consumers can upload this
+  /// directly to the GPU without any decode step.
+  ///
+  /// For an animated image (Kitty graphics animation, actions a=f/a=a)
+  /// this is the pixel data of the current animation frame. The
+  /// image's GHOSTTY_KITTY_IMAGE_DATA_GENERATION changes whenever the
+  /// current frame changes, so generation-keyed caches remain
+  /// coherent.
+  ///
+  /// Output type: const uint8_t **
+  GHOSTTY_KITTY_IMAGE_DATA_DATA_PTR(7),
+
+  /// Length of the raw pixel data in bytes. Always equal to
+  /// width * height * bytes-per-pixel for the reported format. For a
+  /// pending image, this is the expected length reserved against the
+  /// storage limit even though DATA_PTR is not available yet.
+  ///
+  /// Output type: size_t *
+  GHOSTTY_KITTY_IMAGE_DATA_DATA_LEN(8),
+
+  /// Generation stamp assigned when this image was added to (or
+  /// replaced in) the storage. A changed generation for a given image
+  /// ID means the pixel contents may have changed even when the
+  /// dimensions, format, and data length are identical (e.g. a
+  /// retransmission of the same image ID), so texture caches must key
+  /// staleness on this value rather than on size heuristics.
+  ///
+  /// Stamps are unique and monotonically increasing process-wide and
+  /// are drawn from the same sequence as
+  /// GHOSTTY_KITTY_GRAPHICS_DATA_GENERATION. Never zero for a stored
+  /// image, so zero can be used as an "empty" sentinel by callers. Pending
+  /// payload completion preserves this value to retain image age; consumers
+  /// detect that completion through GHOSTTY_KITTY_GRAPHICS_DATA_GENERATION
+  /// and retry DATA_PTR.
+  ///
+  /// Output type: uint64_t *
+  GHOSTTY_KITTY_IMAGE_DATA_GENERATION(9),
+  GHOSTTY_KITTY_IMAGE_DATA_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyKittyGraphicsImageData(this.value);
+
+  static GhosttyKittyGraphicsImageData fromValue(int value) => switch (value) {
+    0 => GHOSTTY_KITTY_IMAGE_DATA_INVALID,
+    1 => GHOSTTY_KITTY_IMAGE_DATA_ID,
+    2 => GHOSTTY_KITTY_IMAGE_DATA_NUMBER,
+    3 => GHOSTTY_KITTY_IMAGE_DATA_WIDTH,
+    4 => GHOSTTY_KITTY_IMAGE_DATA_HEIGHT,
+    5 => GHOSTTY_KITTY_IMAGE_DATA_FORMAT,
+    6 => GHOSTTY_KITTY_IMAGE_DATA_COMPRESSION,
+    7 => GHOSTTY_KITTY_IMAGE_DATA_DATA_PTR,
+    8 => GHOSTTY_KITTY_IMAGE_DATA_DATA_LEN,
+    9 => GHOSTTY_KITTY_IMAGE_DATA_GENERATION,
+    2147483647 => GHOSTTY_KITTY_IMAGE_DATA_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyKittyGraphicsImageData: $value',
+    ),
+  };
+}
+
+/// Combined rendering geometry for a placement in a single sized struct.
+///
+/// Combines the results of ghostty_kitty_graphics_placement_pixel_size(),
+/// ghostty_kitty_graphics_placement_grid_size(),
+/// ghostty_kitty_graphics_placement_viewport_pos(), and
+/// ghostty_kitty_graphics_placement_source_rect() into one call. This is
+/// an optimization over calling those four functions individually,
+/// particularly useful in environments with high per-call overhead such
+/// as FFI or Cgo.
+///
+/// This struct uses the sized-struct ABI pattern. Initialize with
+/// GHOSTTY_INIT_SIZED(GhosttyKittyGraphicsPlacementRenderInfo) before calling
+/// ghostty_kitty_graphics_placement_render_info().
+///
+/// @ingroup kitty_graphics
+final class GhosttyKittyGraphicsPlacementRenderInfo extends ffi.Struct {
+  /// Size of this struct in bytes. Must be set to sizeof(GhosttyKittyGraphicsPlacementRenderInfo).
   @ffi.Size()
-  external int max_scrollback;
+  external int size;
+
+  /// Rendered width in pixels.
+  @ffi.Uint32()
+  external int pixel_width;
+
+  /// Rendered height in pixels.
+  @ffi.Uint32()
+  external int pixel_height;
+
+  /// Number of grid columns the placement occupies.
+  @ffi.Uint32()
+  external int grid_cols;
+
+  /// Number of grid rows the placement occupies.
+  @ffi.Uint32()
+  external int grid_rows;
+
+  /// Viewport-relative column (may be negative for partially visible placements).
+  @ffi.Int32()
+  external int viewport_col;
+
+  /// Viewport-relative row (may be negative for partially visible placements).
+  @ffi.Int32()
+  external int viewport_row;
+
+  /// False when the placement is fully off-screen or virtual.
+  @ffi.Bool()
+  external bool viewport_visible;
+
+  /// Resolved source rectangle x origin in pixels.
+  @ffi.Uint32()
+  external int source_x;
+
+  /// Resolved source rectangle y origin in pixels.
+  @ffi.Uint32()
+  external int source_y;
+
+  /// Resolved source rectangle width in pixels.
+  @ffi.Uint32()
+  external int source_width;
+
+  /// Resolved source rectangle height in pixels.
+  @ffi.Uint32()
+  external int source_height;
+}
+
+/// Amount of compression work to perform before returning.
+///
+/// @ingroup terminal
+enum GhosttyTerminalCompressionMode {
+  /// Perform one bounded compression step suitable for idle scheduling.
+  GHOSTTY_TERMINAL_COMPRESSION_MODE_INCREMENTAL(0),
+
+  /// Synchronously inspect every currently eligible page.
+  GHOSTTY_TERMINAL_COMPRESSION_MODE_FULL(1),
+  GHOSTTY_TERMINAL_COMPRESSION_MODE_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyTerminalCompressionMode(this.value);
+
+  static GhosttyTerminalCompressionMode fromValue(int value) => switch (value) {
+    0 => GHOSTTY_TERMINAL_COMPRESSION_MODE_INCREMENTAL,
+    1 => GHOSTTY_TERMINAL_COMPRESSION_MODE_FULL,
+    2147483647 => GHOSTTY_TERMINAL_COMPRESSION_MODE_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyTerminalCompressionMode: $value',
+    ),
+  };
+}
+
+/// Scheduling result from terminal compression.
+///
+/// @ingroup terminal
+enum GhosttyTerminalCompressionResult {
+  /// Retained-mapping reclamation is unavailable on this target.
+  GHOSTTY_TERMINAL_COMPRESSION_RESULT_UNSUPPORTED(0),
+
+  /// More incremental compression work remains.
+  GHOSTTY_TERMINAL_COMPRESSION_RESULT_PENDING(1),
+
+  /// The pass has no continuation to schedule.
+  GHOSTTY_TERMINAL_COMPRESSION_RESULT_COMPLETE(2),
+  GHOSTTY_TERMINAL_COMPRESSION_RESULT_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyTerminalCompressionResult(this.value);
+
+  static GhosttyTerminalCompressionResult fromValue(int value) =>
+      switch (value) {
+        0 => GHOSTTY_TERMINAL_COMPRESSION_RESULT_UNSUPPORTED,
+        1 => GHOSTTY_TERMINAL_COMPRESSION_RESULT_PENDING,
+        2 => GHOSTTY_TERMINAL_COMPRESSION_RESULT_COMPLETE,
+        2147483647 => GHOSTTY_TERMINAL_COMPRESSION_RESULT_MAX_VALUE,
+        _ => throw ArgumentError(
+          'Unknown value for GhosttyTerminalCompressionResult: $value',
+        ),
+      };
 }
 
 /// Scroll viewport behavior tag.
@@ -3369,7 +8194,21 @@ enum GhosttyTerminalScrollViewportTag {
   GHOSTTY_SCROLL_VIEWPORT_BOTTOM(1),
 
   /// Scroll by a delta amount (up is negative).
-  GHOSTTY_SCROLL_VIEWPORT_DELTA(2);
+  GHOSTTY_SCROLL_VIEWPORT_DELTA(2),
+
+  /// Scroll to an absolute row offset from the top of the scrollable
+  /// area. Row 0 is the top of the scrollback and the requested row
+  /// becomes the first visible row of the viewport. The value is
+  /// clamped so the viewport never scrolls beyond the top of the
+  /// active area. If the terminal has no scrollback (e.g. the
+  /// alternate screen is active), the viewport always remains on the
+  /// active area.
+  ///
+  /// This is the same row space as the offset field of
+  /// GhosttyTerminalScrollbar, so a scrollbar position obtained from
+  /// GHOSTTY_TERMINAL_DATA_SCROLLBAR round-trips cleanly.
+  GHOSTTY_SCROLL_VIEWPORT_ROW(3),
+  GHOSTTY_SCROLL_VIEWPORT_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyTerminalScrollViewportTag(this.value);
@@ -3379,6 +8218,8 @@ enum GhosttyTerminalScrollViewportTag {
         0 => GHOSTTY_SCROLL_VIEWPORT_TOP,
         1 => GHOSTTY_SCROLL_VIEWPORT_BOTTOM,
         2 => GHOSTTY_SCROLL_VIEWPORT_DELTA,
+        3 => GHOSTTY_SCROLL_VIEWPORT_ROW,
+        2147483647 => GHOSTTY_SCROLL_VIEWPORT_MAX_VALUE,
         _ => throw ArgumentError(
           'Unknown value for GhosttyTerminalScrollViewportTag: $value',
         ),
@@ -3392,6 +8233,10 @@ final class GhosttyTerminalScrollViewportValue extends ffi.Union {
   /// Scroll delta (only used with GHOSTTY_SCROLL_VIEWPORT_DELTA). Up is negative.
   @ffi.IntPtr()
   external int delta;
+
+  /// Absolute row offset (only used with GHOSTTY_SCROLL_VIEWPORT_ROW).
+  @ffi.Size()
+  external int row;
 
   /// Padding for ABI compatibility. Do not use.
   @ffi.Array.multi([2])
@@ -3421,7 +8266,8 @@ enum GhosttyTerminalScreen {
   GHOSTTY_TERMINAL_SCREEN_PRIMARY(0),
 
   /// The alternate screen.
-  GHOSTTY_TERMINAL_SCREEN_ALTERNATE(1);
+  GHOSTTY_TERMINAL_SCREEN_ALTERNATE(1),
+  GHOSTTY_TERMINAL_SCREEN_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyTerminalScreen(this.value);
@@ -3429,7 +8275,40 @@ enum GhosttyTerminalScreen {
   static GhosttyTerminalScreen fromValue(int value) => switch (value) {
     0 => GHOSTTY_TERMINAL_SCREEN_PRIMARY,
     1 => GHOSTTY_TERMINAL_SCREEN_ALTERNATE,
+    2147483647 => GHOSTTY_TERMINAL_SCREEN_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyTerminalScreen: $value'),
+  };
+}
+
+/// Visual style of the terminal cursor.
+///
+/// @ingroup terminal
+enum GhosttyTerminalCursorStyle {
+  /// Bar cursor (DECSCUSR 5, 6).
+  GHOSTTY_TERMINAL_CURSOR_STYLE_BAR(0),
+
+  /// Block cursor (DECSCUSR 1, 2).
+  GHOSTTY_TERMINAL_CURSOR_STYLE_BLOCK(1),
+
+  /// Underline cursor (DECSCUSR 3, 4).
+  GHOSTTY_TERMINAL_CURSOR_STYLE_UNDERLINE(2),
+
+  /// Hollow block cursor.
+  GHOSTTY_TERMINAL_CURSOR_STYLE_BLOCK_HOLLOW(3),
+  GHOSTTY_TERMINAL_CURSOR_STYLE_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyTerminalCursorStyle(this.value);
+
+  static GhosttyTerminalCursorStyle fromValue(int value) => switch (value) {
+    0 => GHOSTTY_TERMINAL_CURSOR_STYLE_BAR,
+    1 => GHOSTTY_TERMINAL_CURSOR_STYLE_BLOCK,
+    2 => GHOSTTY_TERMINAL_CURSOR_STYLE_UNDERLINE,
+    3 => GHOSTTY_TERMINAL_CURSOR_STYLE_BLOCK_HOLLOW,
+    2147483647 => GHOSTTY_TERMINAL_CURSOR_STYLE_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyTerminalCursorStyle: $value',
+    ),
   };
 }
 
@@ -3452,10 +8331,14 @@ final class GhosttyTerminalScrollbar extends ffi.Struct {
   external int len;
 }
 
-typedef GhosttyTerminalBellFnFunction =
-    ffi.Void Function(GhosttyTerminal terminal, ffi.Pointer<ffi.Void> userdata);
-typedef DartGhosttyTerminalBellFnFunction =
-    void Function(GhosttyTerminal terminal, ffi.Pointer<ffi.Void> userdata);
+typedef GhosttyTerminalBellFnFunction = ffi.Void Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+);
+typedef DartGhosttyTerminalBellFnFunction = void Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+);
 
 /// Callback function type for bell.
 ///
@@ -3467,18 +8350,694 @@ typedef DartGhosttyTerminalBellFnFunction =
 /// @ingroup terminal
 typedef GhosttyTerminalBellFn =
     ffi.Pointer<ffi.NativeFunction<GhosttyTerminalBellFnFunction>>;
-typedef GhosttyTerminalColorSchemeFnFunction =
-    ffi.Bool Function(
-      GhosttyTerminal terminal,
-      ffi.Pointer<ffi.Void> userdata,
-      ffi.Pointer<ffi.UnsignedInt> out_scheme,
-    );
-typedef DartGhosttyTerminalColorSchemeFnFunction =
-    bool Function(
-      GhosttyTerminal terminal,
-      ffi.Pointer<ffi.Void> userdata,
-      ffi.Pointer<ffi.UnsignedInt> out_scheme,
-    );
+
+/// Unsupported terminal sequence tags.
+///
+/// Only APC sequences are currently reported. Additional sequence types may
+/// be added without changing the callback shape.
+///
+/// @ingroup terminal
+enum GhosttyTerminalUnknownSequenceTag {
+  /// Application Program Command (APC).
+  GHOSTTY_TERMINAL_UNKNOWN_SEQUENCE_APC(0),
+  GHOSTTY_TERMINAL_UNKNOWN_SEQUENCE_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyTerminalUnknownSequenceTag(this.value);
+
+  static GhosttyTerminalUnknownSequenceTag fromValue(int value) =>
+      switch (value) {
+        0 => GHOSTTY_TERMINAL_UNKNOWN_SEQUENCE_APC,
+        2147483647 => GHOSTTY_TERMINAL_UNKNOWN_SEQUENCE_MAX_VALUE,
+        _ => throw ArgumentError(
+          'Unknown value for GhosttyTerminalUnknownSequenceTag: $value',
+        ),
+      };
+}
+
+/// An unsupported string terminal sequence.
+///
+/// The content is borrowed and valid only for the callback duration. It
+/// contains the bytes between the sequence introducer and terminator, may
+/// contain arbitrary binary data, and is not null-terminated.
+///
+/// @ingroup terminal
+final class GhosttyTerminalUnknownStringSequence extends ffi.Struct {
+  /// Whether content was shortened by the byte limit or allocation failure.
+  @ffi.Bool()
+  external bool truncated;
+
+  /// Retained sequence content.
+  external GhosttyString content;
+}
+
+/// Unsupported terminal sequence value.
+///
+/// @ingroup terminal
+final class GhosttyTerminalUnknownSequenceValue extends ffi.Union {
+  /// Application Program Command (APC).
+  external GhosttyTerminalUnknownStringSequence apc;
+
+  /// Padding for ABI compatibility. Do not use.
+  ///
+  /// 128 bytes leaves room for future structured sequence payloads, such as
+  /// CSI with borrowed parameter, separator, and intermediate arrays, without
+  /// changing the tagged union's ABI.
+  @ffi.Array.multi([16])
+  external ffi.Array<ffi.Uint64> _padding;
+}
+
+/// An unsupported terminal sequence.
+///
+/// @ingroup terminal
+final class GhosttyTerminalUnknownSequence extends ffi.Struct {
+  @ffi.UnsignedInt()
+  external int tagAsInt;
+
+  GhosttyTerminalUnknownSequenceTag get tag =>
+      GhosttyTerminalUnknownSequenceTag.fromValue(tagAsInt);
+
+  external GhosttyTerminalUnknownSequenceValue value;
+}
+
+typedef GhosttyTerminalUnknownSequenceFnFunction = ffi.Void Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<GhosttyTerminalUnknownSequence> sequence,
+);
+typedef DartGhosttyTerminalUnknownSequenceFnFunction = void Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<GhosttyTerminalUnknownSequence> sequence,
+);
+
+/// Callback function type for unsupported terminal sequences.
+///
+/// Called synchronously for normally terminated sequences whose identifier is
+/// not supported by the active terminal handler. Aborted sequences, malformed
+/// recognized commands, and explicitly disabled known protocols are ignored.
+///
+/// Capture must also be enabled with a nonzero
+/// GHOSTTY_TERMINAL_OPT_UNKNOWN_MAX_BYTES value. Installing this callback alone
+/// does not retain sequence content or allocate memory.
+///
+/// @param terminal The terminal handle
+/// @param userdata The userdata pointer set via GHOSTTY_TERMINAL_OPT_USERDATA
+/// @param sequence Borrowed unsupported sequence
+///
+/// @ingroup terminal
+typedef GhosttyTerminalUnknownSequenceFn =
+    ffi.Pointer<ffi.NativeFunction<GhosttyTerminalUnknownSequenceFnFunction>>;
+
+/// Clipboard destination for a clipboard write.
+///
+/// Protocol-specific destination identifiers are normalized to these values
+/// before the clipboard write callback is invoked.
+///
+/// @ingroup terminal
+enum GhosttyClipboardLocation {
+  /// The standard system clipboard.
+  GHOSTTY_CLIPBOARD_LOCATION_STANDARD(0),
+
+  /// The selection clipboard.
+  GHOSTTY_CLIPBOARD_LOCATION_SELECTION(1),
+
+  /// The primary selection clipboard.
+  GHOSTTY_CLIPBOARD_LOCATION_PRIMARY(2),
+  GHOSTTY_CLIPBOARD_LOCATION_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyClipboardLocation(this.value);
+
+  static GhosttyClipboardLocation fromValue(int value) => switch (value) {
+    0 => GHOSTTY_CLIPBOARD_LOCATION_STANDARD,
+    1 => GHOSTTY_CLIPBOARD_LOCATION_SELECTION,
+    2 => GHOSTTY_CLIPBOARD_LOCATION_PRIMARY,
+    2147483647 => GHOSTTY_CLIPBOARD_LOCATION_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyClipboardLocation: $value',
+    ),
+  };
+}
+
+/// One MIME representation in a clipboard write.
+///
+/// Both strings are borrowed and valid only for the duration of the callback.
+/// The data is binary-safe and has already been decoded from any protocol-level
+/// encoding. A zero-length data string is an explicit empty representation; it
+/// does not clear the clipboard.
+///
+/// This struct has a frozen layout and will not gain fields in future versions.
+///
+/// @ingroup terminal
+final class GhosttyClipboardContent extends ffi.Struct {
+  /// MIME type of the representation.
+  external GhosttyString mime;
+
+  /// Decoded, binary-safe representation data.
+  external GhosttyString data;
+}
+
+/// Result of a clipboard write reply.
+///
+/// @ingroup terminal
+enum GhosttyClipboardWriteResult {
+  /// The clipboard write completed successfully.
+  GHOSTTY_CLIPBOARD_WRITE_RESULT_SUCCESS(0),
+
+  /// The clipboard write was denied by policy or the user.
+  GHOSTTY_CLIPBOARD_WRITE_RESULT_DENIED(1),
+
+  /// The destination or one or more representations are unsupported.
+  GHOSTTY_CLIPBOARD_WRITE_RESULT_UNSUPPORTED(2),
+
+  /// The clipboard is temporarily unavailable.
+  GHOSTTY_CLIPBOARD_WRITE_RESULT_BUSY(3),
+
+  /// One or more representations contain invalid data.
+  GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA(4),
+
+  /// The clipboard write failed due to an I/O error.
+  GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR(5),
+  GHOSTTY_CLIPBOARD_WRITE_RESULT_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyClipboardWriteResult(this.value);
+
+  static GhosttyClipboardWriteResult fromValue(int value) => switch (value) {
+    0 => GHOSTTY_CLIPBOARD_WRITE_RESULT_SUCCESS,
+    1 => GHOSTTY_CLIPBOARD_WRITE_RESULT_DENIED,
+    2 => GHOSTTY_CLIPBOARD_WRITE_RESULT_UNSUPPORTED,
+    3 => GHOSTTY_CLIPBOARD_WRITE_RESULT_BUSY,
+    4 => GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA,
+    5 => GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR,
+    2147483647 => GHOSTTY_CLIPBOARD_WRITE_RESULT_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyClipboardWriteResult: $value',
+    ),
+  };
+}
+
+/// The reply to a clipboard write request.
+///
+/// This is a sized struct; set `size` to `sizeof(GhosttyClipboardWriteReply)`.
+/// The reply is borrowed only for the duration of the reply call and may be
+/// freed as soon as it returns.
+///
+/// The result answers the program with the matching protocol status for
+/// protocols with a write acknowledgement (OSC 5522: DONE, EPERM, ENOSYS,
+/// EBUSY, EINVAL, EIO); protocols without one (OSC 52, OSC 1337 Copy)
+/// discard the reply. `remember` is ignored on any result other than
+/// GHOSTTY_CLIPBOARD_WRITE_RESULT_SUCCESS.
+///
+/// @ingroup terminal
+final class GhosttyClipboardWriteReply extends ffi.Struct {
+  /// Size of this struct in bytes.
+  @ffi.Size()
+  external int size;
+
+  /// Outcome of the write.
+  @ffi.UnsignedInt()
+  external int resultAsInt;
+
+  GhosttyClipboardWriteResult get result =>
+      GhosttyClipboardWriteResult.fromValue(resultAsInt);
+
+  /// Record a session grant so future requests from the same program skip
+  /// the permission prompt. Only honored on success when
+  /// GhosttyClipboardWrite::can_remember is set.
+  @ffi.Bool()
+  external bool remember;
+}
+
+typedef GhosttyClipboardWriteReplyFnFunction = ffi.Void Function(
+  ffi.Pointer<GhosttyClipboardWrite> write,
+  ffi.Pointer<GhosttyClipboardWriteReply> reply,
+);
+typedef DartGhosttyClipboardWriteReplyFnFunction = void Function(
+  ffi.Pointer<GhosttyClipboardWrite> write,
+  ffi.Pointer<GhosttyClipboardWriteReply> reply,
+);
+
+/// Function type used to answer a clipboard write request. Obtained from
+/// GhosttyClipboardWrite::reply; see that struct for the contract.
+///
+/// @param write The request being answered
+/// @param reply The reply, borrowed only for the duration of this call
+///
+/// @ingroup terminal
+typedef GhosttyClipboardWriteReplyFn =
+    ffi.Pointer<ffi.NativeFunction<GhosttyClipboardWriteReplyFnFunction>>;
+
+/// A synchronous request to write clipboard contents.
+///
+/// This is a sized struct. The callback must only access fields present in the
+/// size reported by `size`. The request, contents array, MIME strings, and
+/// data strings are all borrowed and valid only for the callback duration.
+///
+/// All entries in `contents` are representations of the same logical value
+/// and must be committed atomically. A `contents_len` of zero requests that
+/// the destination be cleared. This is distinct from a content entry whose data
+/// has zero length.
+///
+/// The write is answered by calling `reply` with this request and a
+/// GhosttyClipboardWriteReply. This must happen within the clipboard write
+/// request callback. This struct is only valid during that time. Calling
+/// `reply` more than once is safely ignored. Returning without replying
+/// denies the write.
+///
+/// @ingroup terminal
+final class GhosttyClipboardWrite extends ffi.Struct {
+  /// Size of this struct in bytes.
+  @ffi.Size()
+  external int size;
+
+  /// Clipboard destination.
+  @ffi.UnsignedInt()
+  external int locationAsInt;
+
+  GhosttyClipboardLocation get location =>
+      GhosttyClipboardLocation.fromValue(locationAsInt);
+
+  /// Borrowed array of MIME representations.
+  external ffi.Pointer<GhosttyClipboardContent> contents;
+
+  /// Number of entries in contents; zero means clear the destination.
+  @ffi.Size()
+  external int contents_len;
+
+  /// Name of the writing program for permission prompts, if the protocol
+  /// carries one. Empty otherwise.
+  external GhosttyString name;
+
+  /// True if the terminal already holds a session grant for this request
+  /// The embedder should skip any permission prompt and perform the write.
+  @ffi.Bool()
+  external bool granted;
+
+  /// True if the program supplied a session password, so the embedder may
+  /// offer to remember the user's decision through
+  /// GhosttyClipboardWriteReply::remember. When false, remember is ignored.
+  @ffi.Bool()
+  external bool can_remember;
+
+  /// Terminal-owned reply state. Do not access.
+  external ffi.Pointer<ffi.Void> ctx;
+
+  /// Answer the write; see the struct documentation.
+  external GhosttyClipboardWriteReplyFn reply;
+}
+
+typedef GhosttyTerminalClipboardWriteFnFunction = ffi.Void Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<GhosttyClipboardWrite> write,
+);
+typedef DartGhosttyTerminalClipboardWriteFnFunction = void Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<GhosttyClipboardWrite> write,
+);
+
+/// Callback function type for clipboard_write.
+///
+/// The embedder may ask for permission to write or perform the write
+/// async, but the callback itself is synchronous and the reply function
+/// must be called during the lifetime of this function. While this callback
+/// is active the VT stream is paused.
+///
+/// Answer by calling `write->reply(write, &reply)` before returning. See
+/// GhosttyClipboardWrite for the full contract.
+///
+/// The request may carry an optional program name requesting the write
+/// and the state of prior permission granted. If `can_remember` is set
+/// the response may set the `remember` flag and future requests from this
+/// same program will be "granted" and the embedder can skip permission
+/// requests.
+///
+/// Clipboard read requests (OSC 52 "?" and OSC 5522 reads) are delivered
+/// to GhosttyTerminalClipboardReadFn instead.
+///
+/// @param terminal The terminal handle
+/// @param userdata The userdata pointer set via GHOSTTY_TERMINAL_OPT_USERDATA
+/// @param write Borrowed atomic clipboard write request
+///
+/// @ingroup terminal
+typedef GhosttyTerminalClipboardWriteFn =
+    ffi.Pointer<ffi.NativeFunction<GhosttyTerminalClipboardWriteFnFunction>>;
+
+/// Result of a clipboard read reply.
+///
+/// @ingroup terminal
+enum GhosttyClipboardReadResult {
+  /// The clipboard was read; the reply carries its contents.
+  GHOSTTY_CLIPBOARD_READ_RESULT_SUCCESS(0),
+
+  /// The clipboard read was denied by policy or the user.
+  GHOSTTY_CLIPBOARD_READ_RESULT_DENIED(1),
+
+  /// The embedder cannot read this clipboard.
+  GHOSTTY_CLIPBOARD_READ_RESULT_UNSUPPORTED(2),
+
+  /// The clipboard is temporarily unavailable.
+  GHOSTTY_CLIPBOARD_READ_RESULT_BUSY(3),
+
+  /// Reading the clipboard failed due to an I/O error.
+  GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR(4),
+  GHOSTTY_CLIPBOARD_READ_RESULT_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyClipboardReadResult(this.value);
+
+  static GhosttyClipboardReadResult fromValue(int value) => switch (value) {
+    0 => GHOSTTY_CLIPBOARD_READ_RESULT_SUCCESS,
+    1 => GHOSTTY_CLIPBOARD_READ_RESULT_DENIED,
+    2 => GHOSTTY_CLIPBOARD_READ_RESULT_UNSUPPORTED,
+    3 => GHOSTTY_CLIPBOARD_READ_RESULT_BUSY,
+    4 => GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR,
+    2147483647 => GHOSTTY_CLIPBOARD_READ_RESULT_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyClipboardReadResult: $value',
+    ),
+  };
+}
+
+/// The reply to a clipboard read request.
+///
+/// This is a sized struct; set `size` to `sizeof(GhosttyClipboardReadReply)`.
+/// All arrays and the strings they point to are borrowed only for the
+/// duration of the reply call and may be freed as soon as it returns.
+///
+/// Any result other than GHOSTTY_CLIPBOARD_READ_RESULT_SUCCESS answers the
+/// program with an empty clipboard (OSC 52) or the matching protocol status
+/// (OSC 5522: EPERM, ENOSYS, EBUSY, EIO); the other fields are ignored in
+/// that case. On success, `contents` should carry one representation per
+/// requested MIME type (GhosttyClipboardRead::mimes) that the clipboard
+/// has; unrequested representations are ignored. Protocols that carry a
+/// single text value (OSC 52) use the first entry with a text MIME type
+/// such as "text/plain".
+///
+/// @ingroup terminal
+final class GhosttyClipboardReadReply extends ffi.Struct {
+  /// Size of this struct in bytes.
+  @ffi.Size()
+  external int size;
+
+  /// Outcome of the read.
+  @ffi.UnsignedInt()
+  external int resultAsInt;
+
+  GhosttyClipboardReadResult get result =>
+      GhosttyClipboardReadResult.fromValue(resultAsInt);
+
+  /// Borrowed array of MIME representations of the clipboard contents.
+  external ffi.Pointer<GhosttyClipboardContent> contents;
+
+  /// Number of entries in contents.
+  @ffi.Size()
+  external int contents_len;
+
+  /// Borrowed array of all MIME types available on the clipboard. Only
+  /// used when GhosttyClipboardRead::list is set; may be NULL otherwise.
+  external ffi.Pointer<GhosttyString> available;
+
+  /// Number of entries in available.
+  @ffi.Size()
+  external int available_len;
+
+  /// Record a session grant so future requests from the same program skip
+  /// the permission prompt. Only honored on success when
+  /// GhosttyClipboardRead::can_remember is set.
+  @ffi.Bool()
+  external bool remember;
+}
+
+typedef GhosttyClipboardReadReplyFnFunction = ffi.Void Function(
+  ffi.Pointer<GhosttyClipboardRead> read,
+  ffi.Pointer<GhosttyClipboardReadReply> reply,
+);
+typedef DartGhosttyClipboardReadReplyFnFunction = void Function(
+  ffi.Pointer<GhosttyClipboardRead> read,
+  ffi.Pointer<GhosttyClipboardReadReply> reply,
+);
+
+/// Function type used to answer a clipboard read request. Obtained from
+/// GhosttyClipboardRead::reply; see that struct for the contract.
+///
+/// @param read The request being answered
+/// @param reply The reply, borrowed only for the duration of this call
+///
+/// @ingroup terminal
+typedef GhosttyClipboardReadReplyFn =
+    ffi.Pointer<ffi.NativeFunction<GhosttyClipboardReadReplyFnFunction>>;
+
+/// A synchronous request to read clipboard contents.
+///
+/// This is a sized struct. The callback must only access fields present in the
+/// size reported by `size`. The request is borrowed and valid only for the
+/// callback duration.
+///
+/// The read is answered by calling `reply` with this request and a
+/// GhosttyClipboardReadReply. This must happen before the callback returns;
+/// the request is invalid afterwards. Calling `reply` more than once is
+/// ignored. Returning without replying answers the program with an empty
+/// clipboard (OSC 52) or EPERM (OSC 5522).
+///
+/// @ingroup terminal
+final class GhosttyClipboardRead extends ffi.Struct {
+  /// Size of this struct in bytes.
+  @ffi.Size()
+  external int size;
+
+  /// Clipboard to read.
+  @ffi.UnsignedInt()
+  external int locationAsInt;
+
+  GhosttyClipboardLocation get location =>
+      GhosttyClipboardLocation.fromValue(locationAsInt);
+
+  /// Borrowed array of the MIME types the program wants, in order of
+  /// preference. Protocols that only carry text (OSC 52) request
+  /// "text/plain". NULL when mimes_len is zero.
+  external ffi.Pointer<GhosttyString> mimes;
+
+  /// Number of entries in mimes.
+  @ffi.Size()
+  external int mimes_len;
+
+  /// True if the program also wants the list of MIME types available on the
+  /// clipboard, delivered through GhosttyClipboardReadReply::available.
+  @ffi.Bool()
+  external bool list;
+
+  /// Name of the requesting program for permission prompts, if the protocol
+  /// carries one. Empty otherwise.
+  external GhosttyString name;
+
+  /// True if the terminal already holds a session grant for this request
+  /// (kitty clipboard protocol passwords). The embedder should skip any
+  /// permission prompt and serve the read.
+  ///
+  /// Always false when mimes_len is zero: such a request is served
+  /// without a prompt (see the callback docs), so the terminal never
+  /// consults grants for it and a one-time password is preserved for
+  /// the follow-up data read.
+  @ffi.Bool()
+  external bool granted;
+
+  /// True if the program supplied a session password, so the embedder may
+  /// offer to remember the user's decision through
+  /// GhosttyClipboardReadReply::remember. When false, remember is ignored.
+  @ffi.Bool()
+  external bool can_remember;
+
+  /// Terminal-owned reply state. Do not access.
+  external ffi.Pointer<ffi.Void> ctx;
+
+  /// Answer the read; see the struct documentation.
+  external GhosttyClipboardReadReplyFn reply;
+}
+
+typedef GhosttyTerminalClipboardReadFnFunction = ffi.Void Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<GhosttyClipboardRead> read,
+);
+typedef DartGhosttyTerminalClipboardReadFnFunction = void Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<GhosttyClipboardRead> read,
+);
+
+/// Callback function type for clipboard_read.
+///
+/// Called synchronously when the running program requests clipboard contents
+/// via OSC 52 with a "?" payload or a Kitty clipboard (OSC 5522) read.
+/// Answering lets the program read the user's clipboard, so the embedder is
+/// expected to mediate consent. Because the read is synchronous, an embedder
+/// that needs to ask the user must block (for example by running a modal
+/// prompt) until it has an answer; the VT stream waits until the callback
+/// returns.
+///
+/// Answer by calling `read->reply(read, &reply)` before returning. See
+/// GhosttyClipboardRead for the full contract.
+///
+/// OSC 5522 requests carry the program's MIME list, name, and password grant
+/// state; a reply that sets `remember` records a session grant so later
+/// requests with the same password arrive with `granted` set. Kitty itself
+/// serves a request for only the targets listing (`list` with no `mimes`)
+/// without prompting, and embedders are expected to do the same; the
+/// terminal never consults grants for such requests (`granted` is false
+/// and one-time passwords are not consumed).
+///
+/// Installing this callback also enables Kitty paste events (mode 5522):
+/// ghostty_terminal_paste() sends the program an event instead of the text,
+/// and the program's follow-up read arrives here with `granted` set since
+/// the user already pasted. See ghostty_terminal_paste().
+///
+/// @param terminal The terminal handle
+/// @param userdata The userdata pointer set via GHOSTTY_TERMINAL_OPT_USERDATA
+/// @param read Borrowed clipboard read request
+///
+/// @ingroup terminal
+typedef GhosttyTerminalClipboardReadFn =
+    ffi.Pointer<ffi.NativeFunction<GhosttyTerminalClipboardReadFnFunction>>;
+
+/// A request to show a desktop notification.
+///
+/// This is a sized struct. The callback must only access fields present in the
+/// size reported by `size`. Both strings are borrowed and valid only for the
+/// duration of the callback.
+///
+/// @ingroup terminal
+final class GhosttyTerminalDesktopNotification extends ffi.Struct {
+  /// Size of this struct in bytes.
+  @ffi.Size()
+  external int size;
+
+  /// Notification title, or an empty string when the protocol omits it.
+  external GhosttyString title;
+
+  /// Notification body.
+  external GhosttyString body;
+}
+
+typedef GhosttyTerminalDesktopNotificationFnFunction = ffi.Void Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<GhosttyTerminalDesktopNotification> notification,
+);
+typedef DartGhosttyTerminalDesktopNotificationFnFunction = void Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<GhosttyTerminalDesktopNotification> notification,
+);
+
+/// Callback function type for desktop notifications.
+///
+/// Called synchronously when the terminal receives OSC 9 or OSC 777.
+///
+/// @param terminal The terminal handle
+/// @param userdata The userdata pointer set via GHOSTTY_TERMINAL_OPT_USERDATA
+/// @param notification Borrowed desktop notification request
+///
+/// @ingroup terminal
+typedef GhosttyTerminalDesktopNotificationFn =
+    ffi.Pointer<
+      ffi.NativeFunction<GhosttyTerminalDesktopNotificationFnFunction>
+    >;
+
+/// State of a terminal progress report.
+///
+/// @ingroup terminal
+enum GhosttyTerminalProgressState {
+  /// Remove any visible progress indication.
+  GHOSTTY_TERMINAL_PROGRESS_STATE_REMOVE(0),
+
+  /// Show determinate progress.
+  GHOSTTY_TERMINAL_PROGRESS_STATE_SET(1),
+
+  /// Show a failed progress state.
+  GHOSTTY_TERMINAL_PROGRESS_STATE_ERROR(2),
+
+  /// Show indeterminate progress.
+  GHOSTTY_TERMINAL_PROGRESS_STATE_INDETERMINATE(3),
+
+  /// Show paused progress.
+  GHOSTTY_TERMINAL_PROGRESS_STATE_PAUSE(4),
+  GHOSTTY_TERMINAL_PROGRESS_STATE_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyTerminalProgressState(this.value);
+
+  static GhosttyTerminalProgressState fromValue(int value) => switch (value) {
+    0 => GHOSTTY_TERMINAL_PROGRESS_STATE_REMOVE,
+    1 => GHOSTTY_TERMINAL_PROGRESS_STATE_SET,
+    2 => GHOSTTY_TERMINAL_PROGRESS_STATE_ERROR,
+    3 => GHOSTTY_TERMINAL_PROGRESS_STATE_INDETERMINATE,
+    4 => GHOSTTY_TERMINAL_PROGRESS_STATE_PAUSE,
+    2147483647 => GHOSTTY_TERMINAL_PROGRESS_STATE_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttyTerminalProgressState: $value',
+    ),
+  };
+}
+
+/// A progress report emitted by the running program.
+///
+/// This is a sized struct. The callback must only access fields present in the
+/// size reported by `size`.
+///
+/// @ingroup terminal
+final class GhosttyTerminalProgressReport extends ffi.Struct {
+  /// Size of this struct in bytes.
+  @ffi.Size()
+  external int size;
+
+  /// Literal progress state reported by the running program.
+  @ffi.UnsignedInt()
+  external int stateAsInt;
+
+  GhosttyTerminalProgressState get state =>
+      GhosttyTerminalProgressState.fromValue(stateAsInt);
+
+  /// Progress percentage from 0 through 100, or -1 when omitted.
+  @ffi.Int8()
+  external int progress;
+}
+
+typedef GhosttyTerminalProgressReportFnFunction = ffi.Void Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<GhosttyTerminalProgressReport> report,
+);
+typedef DartGhosttyTerminalProgressReportFnFunction = void Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<GhosttyTerminalProgressReport> report,
+);
+
+/// Callback function type for progress reports.
+///
+/// Called synchronously when the terminal receives OSC 9;4.
+///
+/// @param terminal The terminal handle
+/// @param userdata The userdata pointer set via GHOSTTY_TERMINAL_OPT_USERDATA
+/// @param report Borrowed progress report
+///
+/// @ingroup terminal
+typedef GhosttyTerminalProgressReportFn =
+    ffi.Pointer<ffi.NativeFunction<GhosttyTerminalProgressReportFnFunction>>;
+typedef GhosttyTerminalColorSchemeFnFunction = ffi.Bool Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<ffi.UnsignedInt> out_scheme,
+);
+typedef DartGhosttyTerminalColorSchemeFnFunction = bool Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<ffi.UnsignedInt> out_scheme,
+);
 
 /// Callback function type for color scheme queries (CSI ? 996 n).
 ///
@@ -3494,18 +9053,16 @@ typedef DartGhosttyTerminalColorSchemeFnFunction =
 /// @ingroup terminal
 typedef GhosttyTerminalColorSchemeFn =
     ffi.Pointer<ffi.NativeFunction<GhosttyTerminalColorSchemeFnFunction>>;
-typedef GhosttyTerminalDeviceAttributesFnFunction =
-    ffi.Bool Function(
-      GhosttyTerminal terminal,
-      ffi.Pointer<ffi.Void> userdata,
-      ffi.Pointer<GhosttyDeviceAttributes> out_attrs,
-    );
-typedef DartGhosttyTerminalDeviceAttributesFnFunction =
-    bool Function(
-      GhosttyTerminal terminal,
-      ffi.Pointer<ffi.Void> userdata,
-      ffi.Pointer<GhosttyDeviceAttributes> out_attrs,
-    );
+typedef GhosttyTerminalDeviceAttributesFnFunction = ffi.Bool Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<GhosttyDeviceAttributes> out_attrs,
+);
+typedef DartGhosttyTerminalDeviceAttributesFnFunction = bool Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<GhosttyDeviceAttributes> out_attrs,
+);
 
 /// Callback function type for device attributes queries (DA1/DA2/DA3).
 ///
@@ -3524,11 +9081,10 @@ typedef DartGhosttyTerminalDeviceAttributesFnFunction =
 /// @ingroup terminal
 typedef GhosttyTerminalDeviceAttributesFn =
     ffi.Pointer<ffi.NativeFunction<GhosttyTerminalDeviceAttributesFnFunction>>;
-typedef GhosttyTerminalEnquiryFnFunction =
-    GhosttyString Function(
-      GhosttyTerminal terminal,
-      ffi.Pointer<ffi.Void> userdata,
-    );
+typedef GhosttyTerminalEnquiryFnFunction = GhosttyString Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+);
 
 /// Callback function type for enquiry (ENQ, 0x05).
 ///
@@ -3544,37 +9100,41 @@ typedef GhosttyTerminalEnquiryFnFunction =
 /// @ingroup terminal
 typedef GhosttyTerminalEnquiryFn =
     ffi.Pointer<ffi.NativeFunction<GhosttyTerminalEnquiryFnFunction>>;
-typedef GhosttyTerminalSizeFnFunction =
-    ffi.Bool Function(
-      GhosttyTerminal terminal,
-      ffi.Pointer<ffi.Void> userdata,
-      ffi.Pointer<GhosttySizeReportSize> out_size,
-    );
-typedef DartGhosttyTerminalSizeFnFunction =
-    bool Function(
-      GhosttyTerminal terminal,
-      ffi.Pointer<ffi.Void> userdata,
-      ffi.Pointer<GhosttySizeReportSize> out_size,
-    );
+typedef GhosttyTerminalSizeFnFunction = ffi.Bool Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<GhosttySizeReportSize> out_size,
+);
+typedef DartGhosttyTerminalSizeFnFunction = bool Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<GhosttySizeReportSize> out_size,
+);
 
-/// Callback function type for size queries (XTWINOPS).
+/// Callback function type for terminal size reports.
 ///
-/// Called in response to XTWINOPS size queries (CSI 14/16/18 t).
+/// Called in response to XTWINOPS size queries (CSI 14/16/18 t) and when VT
+/// input enables in-band size reports (mode 2048).
 /// Return true and fill *out_size with the current terminal geometry,
-/// or return false to silently ignore the query.
+/// or return false to suppress the report.
 ///
 /// @param terminal The terminal handle
 /// @param userdata The userdata pointer set via GHOSTTY_TERMINAL_OPT_USERDATA
 /// @param[out] out_size Pointer to store the terminal size information
-/// @return true if size was filled, false to ignore the query
+/// @return true if size was filled, false to suppress the XTWINOPS response or
+/// mode 2048 report
 ///
 /// @ingroup terminal
 typedef GhosttyTerminalSizeFn =
     ffi.Pointer<ffi.NativeFunction<GhosttyTerminalSizeFnFunction>>;
-typedef GhosttyTerminalTitleChangedFnFunction =
-    ffi.Void Function(GhosttyTerminal terminal, ffi.Pointer<ffi.Void> userdata);
-typedef DartGhosttyTerminalTitleChangedFnFunction =
-    void Function(GhosttyTerminal terminal, ffi.Pointer<ffi.Void> userdata);
+typedef GhosttyTerminalTitleChangedFnFunction = ffi.Void Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+);
+typedef DartGhosttyTerminalTitleChangedFnFunction = void Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+);
 
 /// Callback function type for title_changed.
 ///
@@ -3588,27 +9148,56 @@ typedef DartGhosttyTerminalTitleChangedFnFunction =
 /// @ingroup terminal
 typedef GhosttyTerminalTitleChangedFn =
     ffi.Pointer<ffi.NativeFunction<GhosttyTerminalTitleChangedFnFunction>>;
-typedef GhosttyTerminalWritePtyFnFunction =
-    ffi.Void Function(
-      GhosttyTerminal terminal,
-      ffi.Pointer<ffi.Void> userdata,
-      ffi.Pointer<ffi.Uint8> data,
-      ffi.Size len,
-    );
-typedef DartGhosttyTerminalWritePtyFnFunction =
-    void Function(
-      GhosttyTerminal terminal,
-      ffi.Pointer<ffi.Void> userdata,
-      ffi.Pointer<ffi.Uint8> data,
-      int len,
-    );
+typedef GhosttyTerminalPwdChangedFnFunction = ffi.Void Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+);
+typedef DartGhosttyTerminalPwdChangedFnFunction = void Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+);
+
+/// Callback function type for pwd_changed.
+///
+/// Called when the terminal pwd (current working directory) changes via
+/// escape sequences: OSC 7 (file:// URI), OSC 9 (ConEmu CurrentDir), or
+/// OSC 1337 CurrentDir (iTerm2). Use ghostty_terminal_get() with
+/// GHOSTTY_TERMINAL_DATA_PWD inside the callback to read the new value.
+///
+/// The terminal stores whatever bytes the shell emitted, without parsing.
+/// That means for OSC 7 the value is the raw URI (typically file://...);
+/// for OSC 9/OSC 1337 it is typically a bare path. The embedder is
+/// responsible for decoding any URI scheme or host if it cares about them.
+///
+/// The callback also fires when the shell clears the pwd (e.g. an empty
+/// OSC 7). In that case GHOSTTY_TERMINAL_DATA_PWD returns a zero-length
+/// string.
+///
+/// @param terminal The terminal handle
+/// @param userdata The userdata pointer set via GHOSTTY_TERMINAL_OPT_USERDATA
+///
+/// @ingroup terminal
+typedef GhosttyTerminalPwdChangedFn =
+    ffi.Pointer<ffi.NativeFunction<GhosttyTerminalPwdChangedFnFunction>>;
+typedef GhosttyTerminalWritePtyFnFunction = ffi.Void Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<ffi.Uint8> data,
+  ffi.Size len,
+);
+typedef DartGhosttyTerminalWritePtyFnFunction = void Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<ffi.Uint8> data,
+  int len,
+);
 
 /// Callback function type for write_pty.
 ///
 /// Called when the terminal needs to write data back to the pty, for
-/// example in response to a device status report or mode query. The
-/// data is only valid for the duration of the call; callers must copy
-/// it if it needs to persist.
+/// example in response to a device status report, mode query, or VT-driven
+/// mode 2048 enable. The data is only valid for the duration of the call;
+/// callers must copy it if it needs to persist.
 ///
 /// @param terminal The terminal handle
 /// @param userdata The userdata pointer set via GHOSTTY_TERMINAL_OPT_USERDATA
@@ -3618,11 +9207,10 @@ typedef DartGhosttyTerminalWritePtyFnFunction =
 /// @ingroup terminal
 typedef GhosttyTerminalWritePtyFn =
     ffi.Pointer<ffi.NativeFunction<GhosttyTerminalWritePtyFnFunction>>;
-typedef GhosttyTerminalXtversionFnFunction =
-    GhosttyString Function(
-      GhosttyTerminal terminal,
-      ffi.Pointer<ffi.Void> userdata,
-    );
+typedef GhosttyTerminalXtversionFnFunction = GhosttyString Function(
+  GhosttyTerminal terminal,
+  ffi.Pointer<ffi.Void> userdata,
+);
 
 /// Callback function type for XTVERSION.
 ///
@@ -3639,6 +9227,24 @@ typedef GhosttyTerminalXtversionFnFunction =
 typedef GhosttyTerminalXtversionFn =
     ffi.Pointer<ffi.NativeFunction<GhosttyTerminalXtversionFnFunction>>;
 
+/// A terminal mode and boolean value used for mode configuration and queries.
+///
+/// For GHOSTTY_TERMINAL_DATA_MODE, initialize `mode` before calling
+/// ghostty_terminal_get(). On success, `value` contains the current mode value.
+///
+/// This struct has a frozen layout and will not gain fields in future versions.
+///
+/// @ingroup terminal
+final class GhosttyTerminalModeConfig extends ffi.Struct {
+  /// Mode to configure or query.
+  @GhosttyMode()
+  external int mode;
+
+  /// Value to set, or the current value returned by a query.
+  @ffi.Bool()
+  external bool value;
+}
+
 /// Terminal option identifiers.
 ///
 /// These values are used with ghostty_terminal_set() to configure
@@ -3652,8 +9258,9 @@ enum GhosttyTerminalOption {
   GHOSTTY_TERMINAL_OPT_USERDATA(0),
 
   /// Callback invoked when the terminal needs to write data back
-  /// to the pty (e.g. in response to a DECRQM query or device
-  /// status report). Set to NULL to ignore such sequences.
+  /// to the pty (e.g. in response to a DECRQM query, device status
+  /// report, or VT-driven mode 2048 enable). Set to NULL to ignore such
+  /// sequences.
   ///
   /// Input type: GhosttyTerminalWritePtyFn
   GHOSTTY_TERMINAL_OPT_WRITE_PTY(1),
@@ -3748,7 +9355,278 @@ enum GhosttyTerminalOption {
   /// A NULL value pointer resets to the built-in default palette.
   ///
   /// Input type: `GhosttyColorRgb[256]`*
-  GHOSTTY_TERMINAL_OPT_COLOR_PALETTE(14);
+  GHOSTTY_TERMINAL_OPT_COLOR_PALETTE(14),
+
+  /// Set the Kitty image storage limit in bytes.
+  ///
+  /// Applied to all initialized screens (primary and alternate).
+  /// A value of zero disables the Kitty graphics protocol entirely,
+  /// deleting all stored images and placements. A NULL value pointer
+  /// is equivalent to zero (disables). Has no effect when Kitty graphics
+  /// are disabled at build time.
+  ///
+  /// Input type: uint64_t*
+  GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT(15),
+
+  /// Enable or disable Kitty image loading via the file medium.
+  ///
+  /// A NULL value pointer is a no-op. Has no effect when Kitty graphics
+  /// are disabled at build time.
+  ///
+  /// Input type: bool*
+  GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_FILE(16),
+
+  /// Enable Kitty image loading via the temporary file medium, restricted to
+  /// the provided directory. The string data is copied into the terminal.
+  ///
+  /// A NULL value pointer disables the temporary file medium. Has no effect
+  /// when Kitty graphics are disabled at build time.
+  ///
+  /// Input type: GhosttyString*
+  GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE(17),
+
+  /// Enable or disable Kitty image loading via the shared memory medium.
+  ///
+  /// A NULL value pointer is a no-op. Has no effect when Kitty graphics
+  /// are disabled at build time.
+  ///
+  /// Input type: bool*
+  GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_SHARED_MEM(18),
+
+  /// Set the maximum bytes the APC handler will buffer for all protocols.
+  /// This prevents malicious input from causing unbounded memory allocation.
+  /// A NULL value pointer removes all overrides, reverting to the built-in
+  /// defaults.
+  ///
+  /// Input type: size_t*
+  GHOSTTY_TERMINAL_OPT_APC_MAX_BYTES(19),
+
+  /// Set the maximum bytes the APC handler will buffer for Kitty graphics
+  /// protocol data. A NULL value pointer removes the override, reverting
+  /// to the built-in default.
+  ///
+  /// Input type: size_t*
+  GHOSTTY_TERMINAL_OPT_APC_MAX_BYTES_KITTY(20),
+
+  /// Set the active screen selection.
+  ///
+  /// The value must point to a GhosttySelection whose grid references are
+  /// valid for this terminal's active screen at the time of the call. The
+  /// terminal copies the selection immediately and converts it to
+  /// terminal-owned tracked state, so the GhosttySelection struct and its
+  /// untracked grid references do not need to outlive this call.
+  ///
+  /// Passing NULL clears the active screen selection.
+  ///
+  /// Input type: GhosttySelection*
+  GHOSTTY_TERMINAL_OPT_SELECTION(21),
+
+  /// Set the default cursor style used by DECSCUSR reset (CSI 0 q).
+  ///
+  /// A NULL value pointer resets to the built-in default block cursor.
+  ///
+  /// Input type: GhosttyTerminalCursorStyle*
+  GHOSTTY_TERMINAL_OPT_DEFAULT_CURSOR_STYLE(22),
+
+  /// Set whether the default cursor should blink when reset by DECSCUSR
+  /// (CSI 0 q).
+  ///
+  /// A NULL value pointer resets to the built-in default of not blinking.
+  ///
+  /// Input type: bool*
+  GHOSTTY_TERMINAL_OPT_DEFAULT_CURSOR_BLINK(23),
+
+  /// Enable or disable Glyph Protocol APC handling.
+  ///
+  /// When disabled, Glyph Protocol APC sequences are ignored and no
+  /// support/query/register/clear responses are emitted. Disabling also clears
+  /// the terminal session's glyph glossary. A NULL value pointer is a no-op.
+  ///
+  /// Input type: bool*
+  GHOSTTY_TERMINAL_OPT_GLYPH_PROTOCOL(24),
+
+  /// Callback invoked when the terminal pwd changes via escape
+  /// sequences (OSC 7, OSC 9, or OSC 1337 CurrentDir). Set to NULL
+  /// to ignore pwd change events.
+  ///
+  /// Input type: GhosttyTerminalPwdChangedFn
+  GHOSTTY_TERMINAL_OPT_PWD_CHANGED(25),
+
+  /// Callback invoked when the running program performs a clipboard write.
+  /// OSC 52, iTerm2 OSC 1337 Copy, and Kitty clipboard (OSC 5522) writes
+  /// are normalized to an atomic set of decoded MIME representations. Set
+  /// to NULL to ignore clipboard writes (Kitty clipboard writes are then
+  /// refused with ENOSYS). Clipboard read requests are delivered to
+  /// GHOSTTY_TERMINAL_OPT_CLIPBOARD_READ instead.
+  ///
+  /// Input type: GhosttyTerminalClipboardWriteFn
+  GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE(26),
+
+  /// Set the maximum scrollback allocation in bytes.
+  ///
+  /// This is an estimate. Internally, libghostty only prunes bytes up
+  /// to a "page"-granularity. A page is the minimum allocated unit of
+  /// grid space within Ghostty. A page at the time of writing these docs
+  /// is about 400KB, so the byte limit will be within this delta.
+  ///
+  /// This works alongside the line limit configuration. If both are set,
+  /// the first-reached limit is used first. Both limits are dependent
+  /// on external state (byte limit can be reached with less lines if
+  /// more styles are used for example, line limit can be reached with
+  /// a narrower terminal viewport). So, they are useful together.
+  ///
+  /// Lowering the limit immediately removes eligible complete historical
+  /// pages. A value of zero disables scrollback and erases retained history.
+  /// A NULL value pointer removes the byte limit.
+  ///
+  /// Input type: size_t*
+  GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES(27),
+
+  /// Set the maximum number of physical lines retained in scrollback.
+  ///
+  /// This is an estimate. Internally, libghostty only prunes lines up
+  /// to a "page"-granularity. A page is the minimum allocated unit of
+  /// grid space within Ghostty. As a result, the actual available scrollback
+  /// lines will almost always be higher than configured. The magnitude
+  /// of the difference depends on the number of used styles, graphemes, etc.
+  /// since the row-count in a page is dynamic based on that. In general,
+  /// it ranges from dozens to a hundred or so lines.
+  ///
+  /// This works alongside the line limit configuration. If both are set,
+  /// the first-reached limit is used first. Both limits are dependent
+  /// on external state (byte limit can be reached with less lines if
+  /// more styles are used for example, line limit can be reached with
+  /// a narrower terminal viewport). So, they are useful together.
+  ///
+  /// Lowering the limit immediately removes eligible complete historical
+  /// pages. A NULL value pointer removes the line limit.
+  ///
+  /// Input type: size_t*
+  GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_LINES(28),
+
+  /// Callback invoked when the running program requests a desktop
+  /// notification via OSC 9 or OSC 777. Set to NULL to ignore desktop
+  /// notification requests.
+  ///
+  /// Input type: GhosttyTerminalDesktopNotificationFn
+  GHOSTTY_TERMINAL_OPT_DESKTOP_NOTIFICATION(29),
+
+  /// Callback invoked when the running program reports progress via OSC 9;4.
+  /// Set to NULL to ignore progress reports.
+  ///
+  /// Input type: GhosttyTerminalProgressReportFn
+  GHOSTTY_TERMINAL_OPT_PROGRESS_REPORT(30),
+
+  /// Set the maximum number of replay-safe VT continuation bytes retained.
+  ///
+  /// Continuation bytes reconstruct an escape sequence or UTF-8 codepoint
+  /// which was unfinished at the end of the most recent
+  /// VT write call. They are used automatically by terminal snapshots and may
+  /// also be exported directly with the continuation APIs.
+  ///
+  /// Tracking is disabled by default. A nonzero value enables tracking and
+  /// sets its byte limit. Passing NULL or a pointer to zero disables tracking.
+  /// Lowering the limit below an already-retained
+  /// continuation, or enabling tracking while the parser is already
+  /// unfinished, makes the current continuation unavailable because earlier
+  /// bytes cannot be reconstructed. Tracking recovers automatically after a
+  /// later write reaches the ground state or contains a fresh replay start.
+  ///
+  /// Input type: size_t*
+  GHOSTTY_TERMINAL_OPT_CONTINUATION_MAX_BYTES(31),
+
+  /// Enable window title reports in response to CSI 21 t.
+  ///
+  /// This is disabled by default because a running program can set a title and
+  /// query it back into the pty input stream, potentially injecting commands
+  /// that execute after user interaction. Passing NULL or a pointer to false
+  /// disables title reporting.
+  ///
+  /// Input type: bool*
+  GHOSTTY_TERMINAL_OPT_TITLE_REPORT(32),
+
+  /// Set the reset default for a terminal mode.
+  ///
+  /// This unconditionally updates both the current value and the value restored
+  /// by a full terminal reset (RIS).
+  ///
+  /// Some recognized modes represent transitions or mirror additional terminal
+  /// state and cannot safely be configured as reset defaults. Those modes return
+  /// GHOSTTY_INVALID_VALUE. A NULL value pointer also returns
+  /// GHOSTTY_INVALID_VALUE.
+  ///
+  /// Input type: GhosttyTerminalModeConfig*
+  GHOSTTY_TERMINAL_OPT_MODE_DEFAULT(33),
+
+  /// Set the current value of a terminal mode.
+  ///
+  /// This does not change the value restored by a full terminal reset (RIS).
+  /// A NULL value pointer or unknown mode returns GHOSTTY_INVALID_VALUE.
+  ///
+  /// Input type: GhosttyTerminalModeConfig*
+  GHOSTTY_TERMINAL_OPT_MODE(34),
+
+  /// Callback invoked for unsupported terminal sequence identifiers. Set to
+  /// NULL to ignore unsupported sequences. Capture must also be enabled with
+  /// GHOSTTY_TERMINAL_OPT_UNKNOWN_MAX_BYTES.
+  ///
+  /// Input type: GhosttyTerminalUnknownSequenceFn
+  GHOSTTY_TERMINAL_OPT_UNKNOWN_SEQUENCE(35),
+
+  /// Set the maximum content bytes retained for each unsupported terminal
+  /// sequence. A NULL value pointer or zero disables capture and prevents
+  /// unknown-sequence callbacks.
+  ///
+  /// When this limit is hit, the unknown sequence callback will still
+  /// be invoked but `truncated` will be set to true.
+  ///
+  /// Input type: size_t*
+  GHOSTTY_TERMINAL_OPT_UNKNOWN_MAX_BYTES(36),
+
+  /// Set the name of the terminfo entry this terminal runs as, reported
+  /// in response to an XTGETTCAP query for "TN" (e.g. "xterm-256color").
+  ///
+  /// The string data is copied into the terminal. A NULL value pointer
+  /// clears the name (equivalent to setting an empty string). A name
+  /// longer than 128 bytes returns GHOSTTY_INVALID_VALUE.
+  ///
+  /// If this is unset then we don't report anything for an XTGETTCAP
+  /// TN query, because we don't know what the embedding terminal around
+  /// libghostty is advertising itself as.
+  ///
+  /// Input type: GhosttyString*
+  GHOSTTY_TERMINAL_OPT_TERMINFO_NAME(37),
+
+  /// Callback invoked when the running program requests clipboard contents
+  /// via OSC 52 with a "?" payload or a Kitty clipboard (OSC 5522) read. The
+  /// read is synchronous and must be answered before the callback returns.
+  /// Set to NULL (the default) to ignore OSC 52 read requests and refuse
+  /// OSC 5522 reads with EPERM.
+  ///
+  /// Input type: GhosttyTerminalClipboardReadFn
+  GHOSTTY_TERMINAL_OPT_CLIPBOARD_READ(38),
+
+  /// Set the maximum total decoded bytes a single Kitty clipboard protocol
+  /// (OSC 5522) write transaction may accumulate. The limit is captured
+  /// when a transaction begins; an in-flight transaction keeps the limit
+  /// it started with.
+  ///
+  /// Data beyond the limit fails the whole transaction with EFBIG. The
+  /// transaction is discarded, later write-related packets are ignored
+  /// until a new write begins, and nothing reaches the clipboard write
+  /// callback.
+  ///
+  /// Transactions are buffered in memory, so this limit bounds how much
+  /// memory a single write can make the terminal allocate. Pass SIZE_MAX
+  /// to remove the limit. A NULL value pointer reverts to the built-in
+  /// default of 64MiB, the minimum required by the protocol.
+  ///
+  /// This limit doesn't apply to OSC 52 writes, which are bounded by the
+  /// maximum length of an escape sequence instead.
+  ///
+  /// Input type: size_t*
+  GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE_MAX_BYTES(39),
+  GHOSTTY_TERMINAL_OPT_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyTerminalOption(this.value);
@@ -3769,6 +9647,32 @@ enum GhosttyTerminalOption {
     12 => GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND,
     13 => GHOSTTY_TERMINAL_OPT_COLOR_CURSOR,
     14 => GHOSTTY_TERMINAL_OPT_COLOR_PALETTE,
+    15 => GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT,
+    16 => GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_FILE,
+    17 => GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE,
+    18 => GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_SHARED_MEM,
+    19 => GHOSTTY_TERMINAL_OPT_APC_MAX_BYTES,
+    20 => GHOSTTY_TERMINAL_OPT_APC_MAX_BYTES_KITTY,
+    21 => GHOSTTY_TERMINAL_OPT_SELECTION,
+    22 => GHOSTTY_TERMINAL_OPT_DEFAULT_CURSOR_STYLE,
+    23 => GHOSTTY_TERMINAL_OPT_DEFAULT_CURSOR_BLINK,
+    24 => GHOSTTY_TERMINAL_OPT_GLYPH_PROTOCOL,
+    25 => GHOSTTY_TERMINAL_OPT_PWD_CHANGED,
+    26 => GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE,
+    27 => GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES,
+    28 => GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_LINES,
+    29 => GHOSTTY_TERMINAL_OPT_DESKTOP_NOTIFICATION,
+    30 => GHOSTTY_TERMINAL_OPT_PROGRESS_REPORT,
+    31 => GHOSTTY_TERMINAL_OPT_CONTINUATION_MAX_BYTES,
+    32 => GHOSTTY_TERMINAL_OPT_TITLE_REPORT,
+    33 => GHOSTTY_TERMINAL_OPT_MODE_DEFAULT,
+    34 => GHOSTTY_TERMINAL_OPT_MODE,
+    35 => GHOSTTY_TERMINAL_OPT_UNKNOWN_SEQUENCE,
+    36 => GHOSTTY_TERMINAL_OPT_UNKNOWN_MAX_BYTES,
+    37 => GHOSTTY_TERMINAL_OPT_TERMINFO_NAME,
+    38 => GHOSTTY_TERMINAL_OPT_CLIPBOARD_READ,
+    39 => GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE_MAX_BYTES,
+    2147483647 => GHOSTTY_TERMINAL_OPT_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyTerminalOption: $value'),
   };
 }
@@ -3825,9 +9729,16 @@ enum GhosttyTerminalData {
 
   /// Scrollbar state for the terminal viewport.
   ///
-  /// This may be expensive to calculate depending on where the viewport
-  /// is (arbitrary pins are expensive). The caller should take care to only
-  /// call this as needed and not too frequently.
+  /// This is amortized O(1): the total is maintained incrementally as
+  /// the terminal is modified and the viewport offset is cached. The
+  /// first read after the viewport moves to an arbitrary position that
+  /// isn't an absolute row (e.g. scrolling to a selection) may cost
+  /// O(pages) to compute the offset, after which it is cached again.
+  ///
+  /// There is intentionally no change notification for scroll state.
+  /// Callers building scrollbars should poll this once per frame or
+  /// per write batch and diff the result to detect changes; this is
+  /// what Ghostty's own renderer does.
   ///
   /// Output type: GhosttyTerminalScrollbar *
   GHOSTTY_TERMINAL_DATA_SCROLLBAR(9),
@@ -3849,9 +9760,9 @@ enum GhosttyTerminalData {
 
   /// The terminal title as set by escape sequences (e.g. OSC 0/2).
   ///
-  /// Returns a borrowed string. The pointer is valid until the next call
-  /// to ghostty_terminal_vt_write() or ghostty_terminal_reset(). An empty
-  /// string (len=0) is returned when no title has been set.
+  /// Returns a borrowed string. The pointer is valid until the next mutating
+  /// terminal call. An empty string (len=0) is returned when no title has been
+  /// set.
   ///
   /// Output type: GhosttyString *
   GHOSTTY_TERMINAL_DATA_TITLE(12),
@@ -3859,9 +9770,9 @@ enum GhosttyTerminalData {
   /// The terminal's current working directory as set by escape sequences
   /// (e.g. OSC 7).
   ///
-  /// Returns a borrowed string. The pointer is valid until the next call
-  /// to ghostty_terminal_vt_write() or ghostty_terminal_reset(). An empty
-  /// string (len=0) is returned when no pwd has been set.
+  /// Returns a borrowed string. The pointer is valid until the next mutating
+  /// terminal call. An empty string (len=0) is returned when no pwd has been
+  /// set.
   ///
   /// Output type: GhosttyString *
   GHOSTTY_TERMINAL_DATA_PWD(13),
@@ -3940,7 +9851,154 @@ enum GhosttyTerminalData {
   /// The default 256-color palette (ignoring any OSC overrides).
   ///
   /// Output type: `GhosttyColorRgb[256]` *
-  GHOSTTY_TERMINAL_DATA_COLOR_PALETTE_DEFAULT(25);
+  GHOSTTY_TERMINAL_DATA_COLOR_PALETTE_DEFAULT(25),
+
+  /// The Kitty image storage limit in bytes for the active screen.
+  ///
+  /// A value of zero means the Kitty graphics protocol is disabled.
+  /// Returns GHOSTTY_NO_VALUE when Kitty graphics are disabled at build time.
+  ///
+  /// Output type: uint64_t *
+  GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_STORAGE_LIMIT(26),
+
+  /// Whether the file medium is enabled for Kitty image loading on the
+  /// active screen.
+  ///
+  /// Returns GHOSTTY_NO_VALUE when Kitty graphics are disabled at build time.
+  ///
+  /// Output type: bool *
+  GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_FILE(27),
+
+  /// The directory allowed for Kitty image loading via the temporary file
+  /// medium on the active screen. The string is empty when the medium is
+  /// disabled.
+  ///
+  /// Returns GHOSTTY_NO_VALUE when Kitty graphics are disabled at build time.
+  ///
+  /// Output type: GhosttyString *
+  GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_TEMP_FILE(28),
+
+  /// Whether the shared memory medium is enabled for Kitty image loading
+  /// on the active screen.
+  ///
+  /// Returns GHOSTTY_NO_VALUE when Kitty graphics are disabled at build time.
+  ///
+  /// Output type: bool *
+  GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_SHARED_MEM(29),
+
+  /// The Kitty graphics image storage for the active screen.
+  ///
+  /// Returns a borrowed pointer to the image storage. The pointer is valid
+  /// until the next mutating terminal call (e.g. ghostty_terminal_vt_write()
+  /// or ghostty_terminal_reset()).
+  ///
+  /// Returns GHOSTTY_NO_VALUE when Kitty graphics are disabled at build time.
+  ///
+  /// Output type: GhosttyKittyGraphics *
+  GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS(30),
+
+  /// The active screen's current selection.
+  ///
+  /// On success, writes an untracked snapshot of the terminal-owned selection
+  /// to the caller-provided GhosttySelection. The GhosttySelection struct is
+  /// caller-owned and may be kept, but the grid references inside it are
+  /// untracked borrowed references into the active screen. They are only valid
+  /// until the next mutating terminal call, such as ghostty_terminal_set(),
+  /// ghostty_terminal_vt_write(), ghostty_terminal_resize(), or
+  /// ghostty_terminal_reset().
+  ///
+  /// Returns GHOSTTY_NO_VALUE when there is no active selection.
+  ///
+  /// Output type: GhosttySelection *
+  GHOSTTY_TERMINAL_DATA_SELECTION(31),
+
+  /// Whether the viewport is currently pinned to the active area.
+  ///
+  /// This is true when the viewport is following the active terminal area,
+  /// and false when the user has scrolled into history.
+  ///
+  /// Output type: bool *
+  GHOSTTY_TERMINAL_DATA_VIEWPORT_ACTIVE(32),
+
+  /// Whether VT processing encountered a non-gracefully handled error that may
+  /// have prevented a terminal-owned semantic update.
+  ///
+  /// Processing remains best-effort, and ghostty_terminal_reset() does not
+  /// clear it. Gracefully handled protocol failures, configured limits,
+  /// malformed or unsupported input, and failures limited to external effects
+  /// or query responses do not set it.
+  ///
+  /// This can't currently be unset. This is purely informational to consumers
+  /// if there was some error that happened at some point during VT processing.
+  ///
+  /// Output type: bool *
+  GHOSTTY_TERMINAL_DATA_VT_PROCESSING_ERROR(33),
+
+  /// The configured maximum scrollback allocation in bytes.
+  ///
+  /// This always reports the primary screen's configured value, including
+  /// while an alternate screen is active. Returns GHOSTTY_NO_VALUE when the
+  /// configured byte limit is unlimited.
+  ///
+  /// Output type: size_t *
+  GHOSTTY_TERMINAL_DATA_SCROLLBACK_MAX_BYTES(34),
+
+  /// The configured maximum number of physical scrollback lines.
+  ///
+  /// This always reports the primary screen's configured value, including
+  /// while an alternate screen is active. Returns GHOSTTY_NO_VALUE when the
+  /// configured line limit is unlimited.
+  ///
+  /// Output type: size_t *
+  GHOSTTY_TERMINAL_DATA_SCROLLBACK_MAX_LINES(35),
+
+  /// The configured maximum retained VT continuation size in bytes.
+  ///
+  /// A value of zero means continuation tracking is disabled. This reports the
+  /// configured limit even when a current unfinished continuation is
+  /// temporarily unavailable.
+  ///
+  /// Output type: size_t *
+  GHOSTTY_TERMINAL_DATA_CONTINUATION_MAX_BYTES(36),
+
+  /// Get the current value of a terminal mode.
+  ///
+  /// The caller must initialize the `mode` field. On success, the `value` field
+  /// is updated with the current value. A NULL pointer or unknown mode returns
+  /// GHOSTTY_INVALID_VALUE.
+  ///
+  /// Input/output type: GhosttyTerminalModeConfig *
+  GHOSTTY_TERMINAL_DATA_MODE(37),
+
+  /// Whether VT processing is at ground.
+  ///
+  /// Ground is when the stream isn't in the middle of any type of sequence:
+  /// UTF-8, ESC, CSI, OSC, etc. It is the stateless point of the stream.
+  ///
+  /// This is useful to know because it is a point at which you can
+  /// safely insert out-of-band VT sequences. For example, while reading
+  /// from a pty if you want to make your own changes, you can wait until
+  /// the pty input reaches ground, then write yours.
+  ///
+  /// Output type: bool *
+  GHOSTTY_TERMINAL_DATA_VT_GROUND(38),
+
+  /// Whether the cursor is currently at a semantic shell prompt or input area.
+  ///
+  /// This depends on semantic prompt markers such as OSC 133. Returns false
+  /// when semantic prompt information is unavailable or the alternate screen
+  /// is active.
+  ///
+  /// Output type: bool *
+  GHOSTTY_TERMINAL_DATA_CURSOR_AT_PROMPT(39),
+
+  /// The configured maximum decoded bytes per Kitty clipboard protocol
+  /// (OSC 5522) write transaction. See
+  /// GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE_MAX_BYTES.
+  ///
+  /// Output type: size_t *
+  GHOSTTY_TERMINAL_DATA_CLIPBOARD_WRITE_MAX_BYTES(40),
+  GHOSTTY_TERMINAL_DATA_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyTerminalData(this.value);
@@ -3972,33 +10030,23 @@ enum GhosttyTerminalData {
     23 => GHOSTTY_TERMINAL_DATA_COLOR_BACKGROUND_DEFAULT,
     24 => GHOSTTY_TERMINAL_DATA_COLOR_CURSOR_DEFAULT,
     25 => GHOSTTY_TERMINAL_DATA_COLOR_PALETTE_DEFAULT,
+    26 => GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_STORAGE_LIMIT,
+    27 => GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_FILE,
+    28 => GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_TEMP_FILE,
+    29 => GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_SHARED_MEM,
+    30 => GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS,
+    31 => GHOSTTY_TERMINAL_DATA_SELECTION,
+    32 => GHOSTTY_TERMINAL_DATA_VIEWPORT_ACTIVE,
+    33 => GHOSTTY_TERMINAL_DATA_VT_PROCESSING_ERROR,
+    34 => GHOSTTY_TERMINAL_DATA_SCROLLBACK_MAX_BYTES,
+    35 => GHOSTTY_TERMINAL_DATA_SCROLLBACK_MAX_LINES,
+    36 => GHOSTTY_TERMINAL_DATA_CONTINUATION_MAX_BYTES,
+    37 => GHOSTTY_TERMINAL_DATA_MODE,
+    38 => GHOSTTY_TERMINAL_DATA_VT_GROUND,
+    39 => GHOSTTY_TERMINAL_DATA_CURSOR_AT_PROMPT,
+    40 => GHOSTTY_TERMINAL_DATA_CLIPBOARD_WRITE_MAX_BYTES,
+    2147483647 => GHOSTTY_TERMINAL_DATA_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyTerminalData: $value'),
-  };
-}
-
-/// Output format.
-///
-/// @ingroup formatter
-enum GhosttyFormatterFormat {
-  /// Plain text (no escape sequences).
-  GHOSTTY_FORMATTER_FORMAT_PLAIN(0),
-
-  /// VT sequences preserving colors, styles, URLs, etc.
-  GHOSTTY_FORMATTER_FORMAT_VT(1),
-
-  /// HTML with inline styles.
-  GHOSTTY_FORMATTER_FORMAT_HTML(2);
-
-  final int value;
-  const GhosttyFormatterFormat(this.value);
-
-  static GhosttyFormatterFormat fromValue(int value) => switch (value) {
-    0 => GHOSTTY_FORMATTER_FORMAT_PLAIN,
-    1 => GHOSTTY_FORMATTER_FORMAT_VT,
-    2 => GHOSTTY_FORMATTER_FORMAT_HTML,
-    _ => throw ArgumentError(
-      'Unknown value for GhosttyFormatterFormat: $value',
-    ),
   };
 }
 
@@ -4071,13 +10119,6 @@ final class GhosttyFormatterTerminalExtra extends ffi.Struct {
   external GhosttyFormatterScreenExtra screen;
 }
 
-final class GhosttyFormatterImpl extends ffi.Opaque {}
-
-/// Opaque handle to a formatter instance.
-///
-/// @ingroup formatter
-typedef GhosttyFormatter = ffi.Pointer<GhosttyFormatterImpl>;
-
 /// Options for creating a terminal formatter.
 ///
 /// @ingroup formatter
@@ -4103,30 +10144,11 @@ final class GhosttyFormatterTerminalOptions extends ffi.Struct {
 
   /// Extra terminal state to include in styled output.
   external GhosttyFormatterTerminalExtra extra;
+
+  /// Optional selection to restrict output to a range.
+  /// If NULL, the entire screen is formatted.
+  external ffi.Pointer<GhosttySelection> selection;
 }
-
-final class GhosttyRenderStateImpl extends ffi.Opaque {}
-
-/// Opaque handle to a render state instance.
-///
-/// @ingroup render
-typedef GhosttyRenderState = ffi.Pointer<GhosttyRenderStateImpl>;
-
-final class GhosttyRenderStateRowIteratorImpl extends ffi.Opaque {}
-
-/// Opaque handle to a render-state row iterator.
-///
-/// @ingroup render
-typedef GhosttyRenderStateRowIterator =
-    ffi.Pointer<GhosttyRenderStateRowIteratorImpl>;
-
-final class GhosttyRenderStateRowCellsImpl extends ffi.Opaque {}
-
-/// Opaque handle to render-state row cells.
-///
-/// @ingroup render
-typedef GhosttyRenderStateRowCells =
-    ffi.Pointer<GhosttyRenderStateRowCellsImpl>;
 
 /// Dirty state of a render state after update.
 ///
@@ -4139,7 +10161,8 @@ enum GhosttyRenderStateDirty {
   GHOSTTY_RENDER_STATE_DIRTY_PARTIAL(1),
 
   /// Global state changed; renderer should redraw everything.
-  GHOSTTY_RENDER_STATE_DIRTY_FULL(2);
+  GHOSTTY_RENDER_STATE_DIRTY_FULL(2),
+  GHOSTTY_RENDER_STATE_DIRTY_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyRenderStateDirty(this.value);
@@ -4148,6 +10171,7 @@ enum GhosttyRenderStateDirty {
     0 => GHOSTTY_RENDER_STATE_DIRTY_FALSE,
     1 => GHOSTTY_RENDER_STATE_DIRTY_PARTIAL,
     2 => GHOSTTY_RENDER_STATE_DIRTY_FULL,
+    2147483647 => GHOSTTY_RENDER_STATE_DIRTY_MAX_VALUE,
     _ => throw ArgumentError(
       'Unknown value for GhosttyRenderStateDirty: $value',
     ),
@@ -4168,7 +10192,8 @@ enum GhosttyRenderStateCursorVisualStyle {
   GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE(2),
 
   /// Hollow block cursor.
-  GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW(3);
+  GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW(3),
+  GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyRenderStateCursorVisualStyle(this.value);
@@ -4179,6 +10204,7 @@ enum GhosttyRenderStateCursorVisualStyle {
         1 => GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK,
         2 => GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE,
         3 => GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW,
+        2147483647 => GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_MAX_VALUE,
         _ => throw ArgumentError(
           'Unknown value for GhosttyRenderStateCursorVisualStyle: $value',
         ),
@@ -4250,7 +10276,16 @@ enum GhosttyRenderStateData {
 
   /// Whether the cursor is on the tail of a wide character (bool).
   /// Only valid when CURSOR_VIEWPORT_HAS_VALUE is true.
-  GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL(17);
+  GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL(17),
+
+  /// All cursor state in one sized struct (GhosttyRenderStateCursor).
+  /// Initialize the output with GHOSTTY_INIT_SIZED before querying.
+  GHOSTTY_RENDER_STATE_DATA_CURSOR(18),
+
+  /// All render-state colors in one sized struct (GhosttyRenderStateColors).
+  /// Initialize the output with GHOSTTY_INIT_SIZED before querying.
+  GHOSTTY_RENDER_STATE_DATA_COLORS(19),
+  GHOSTTY_RENDER_STATE_DATA_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyRenderStateData(this.value);
@@ -4274,6 +10309,9 @@ enum GhosttyRenderStateData {
     15 => GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X,
     16 => GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y,
     17 => GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL,
+    18 => GHOSTTY_RENDER_STATE_DATA_CURSOR,
+    19 => GHOSTTY_RENDER_STATE_DATA_COLORS,
+    2147483647 => GHOSTTY_RENDER_STATE_DATA_MAX_VALUE,
     _ => throw ArgumentError(
       'Unknown value for GhosttyRenderStateData: $value',
     ),
@@ -4285,13 +10323,15 @@ enum GhosttyRenderStateData {
 /// @ingroup render
 enum GhosttyRenderStateOption {
   /// Set dirty state (GhosttyRenderStateDirty).
-  GHOSTTY_RENDER_STATE_OPTION_DIRTY(0);
+  GHOSTTY_RENDER_STATE_OPTION_DIRTY(0),
+  GHOSTTY_RENDER_STATE_OPTION_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyRenderStateOption(this.value);
 
   static GhosttyRenderStateOption fromValue(int value) => switch (value) {
     0 => GHOSTTY_RENDER_STATE_OPTION_DIRTY,
+    2147483647 => GHOSTTY_RENDER_STATE_OPTION_MAX_VALUE,
     _ => throw ArgumentError(
       'Unknown value for GhosttyRenderStateOption: $value',
     ),
@@ -4315,7 +10355,26 @@ enum GhosttyRenderStateRowData {
   /// the current row (GhosttyRenderStateRowCells). Cell data is only
   /// valid as long as the underlying render state is not updated.
   /// It is unsafe to use cell data after updating the render state.
-  GHOSTTY_RENDER_STATE_ROW_DATA_CELLS(3);
+  GHOSTTY_RENDER_STATE_ROW_DATA_CELLS(3),
+
+  /// Row-local selected cell range (GhosttyRenderStateRowSelection).
+  GHOSTTY_RENDER_STATE_ROW_DATA_SELECTION(4),
+
+  /// A borrowed view of the raw cell values for the current row
+  /// (GhosttyCellsView). One value per column, identical to querying
+  /// GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW for each cell. The view
+  /// is only valid as long as the underlying render state is not
+  /// updated; it is unsafe to use after updating the render state.
+  ///
+  /// This is the bulk alternative to iterating cells one at a time.
+  /// It lets callers with expensive call boundaries (e.g. WebAssembly
+  /// embedders) read an entire row with a single call.
+  ///
+  /// Bit positions aren't protected by ABI, so callers should parse them
+  /// out of the manifest from `ghostty_type_json`. Callers with access
+  /// to the C header or without high FFI costs should use `ghostty_cell_get`.
+  GHOSTTY_RENDER_STATE_ROW_DATA_CELLS_RAW(5),
+  GHOSTTY_RENDER_STATE_ROW_DATA_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyRenderStateRowData(this.value);
@@ -4325,6 +10384,9 @@ enum GhosttyRenderStateRowData {
     1 => GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY,
     2 => GHOSTTY_RENDER_STATE_ROW_DATA_RAW,
     3 => GHOSTTY_RENDER_STATE_ROW_DATA_CELLS,
+    4 => GHOSTTY_RENDER_STATE_ROW_DATA_SELECTION,
+    5 => GHOSTTY_RENDER_STATE_ROW_DATA_CELLS_RAW,
+    2147483647 => GHOSTTY_RENDER_STATE_ROW_DATA_MAX_VALUE,
     _ => throw ArgumentError(
       'Unknown value for GhosttyRenderStateRowData: $value',
     ),
@@ -4336,29 +10398,107 @@ enum GhosttyRenderStateRowData {
 /// @ingroup render
 enum GhosttyRenderStateRowOption {
   /// Set dirty state for the current row (bool).
-  GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY(0);
+  GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY(0),
+  GHOSTTY_RENDER_STATE_ROW_OPTION_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyRenderStateRowOption(this.value);
 
   static GhosttyRenderStateRowOption fromValue(int value) => switch (value) {
     0 => GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY,
+    2147483647 => GHOSTTY_RENDER_STATE_ROW_OPTION_MAX_VALUE,
     _ => throw ArgumentError(
       'Unknown value for GhosttyRenderStateRowOption: $value',
     ),
   };
 }
 
+/// Row-local selection range.
+///
+/// This struct uses the sized-struct ABI pattern. Initialize with
+/// GHOSTTY_INIT_SIZED(GhosttyRenderStateRowSelection) before querying
+/// GHOSTTY_RENDER_STATE_ROW_DATA_SELECTION.
+///
+/// Querying GHOSTTY_RENDER_STATE_ROW_DATA_SELECTION returns GHOSTTY_NO_VALUE
+/// if the current row does not intersect the current selection.
+///
+/// @ingroup render
+final class GhosttyRenderStateRowSelection extends ffi.Struct {
+  /// Size of this struct in bytes. Must be set to sizeof(GhosttyRenderStateRowSelection).
+  @ffi.Size()
+  external int size;
+
+  /// Start column of the row-local selection range, inclusive.
+  @ffi.Uint16()
+  external int start_x;
+
+  /// End column of the row-local selection range, inclusive.
+  @ffi.Uint16()
+  external int end_x;
+}
+
+/// Render-state cursor information.
+///
+/// This struct uses the sized-struct ABI pattern. Initialize with
+/// GHOSTTY_INIT_SIZED(GhosttyRenderStateCursor) before querying
+/// GHOSTTY_RENDER_STATE_DATA_CURSOR.
+///
+/// When viewport_has_value is false, viewport_x, viewport_y, and wide_tail
+/// contain undefined data and must not be read.
+///
+/// @ingroup render
+final class GhosttyRenderStateCursor extends ffi.Struct {
+  /// Size of this struct in bytes. Must be set to sizeof(GhosttyRenderStateCursor).
+  @ffi.Size()
+  external int size;
+
+  /// Whether the cursor is visible within the viewport.
+  @ffi.Bool()
+  external bool viewport_has_value;
+
+  /// Cursor viewport x position in cells.
+  @ffi.Uint16()
+  external int viewport_x;
+
+  /// Cursor viewport y position in cells.
+  @ffi.Uint16()
+  external int viewport_y;
+
+  /// Whether the cursor is on the tail of a wide character.
+  @ffi.Bool()
+  external bool wide_tail;
+
+  /// Whether the cursor is visible based on terminal modes.
+  @ffi.Bool()
+  external bool visible;
+
+  /// Whether the cursor should blink based on terminal modes.
+  @ffi.Bool()
+  external bool blinking;
+
+  /// Whether the cursor is at a password input field.
+  @ffi.Bool()
+  external bool password_input;
+
+  /// The visual style of the cursor.
+  @ffi.UnsignedInt()
+  external int visual_styleAsInt;
+
+  GhosttyRenderStateCursorVisualStyle get visual_style =>
+      GhosttyRenderStateCursorVisualStyle.fromValue(visual_styleAsInt);
+}
+
 /// Render-state color information.
 ///
 /// This struct uses the sized-struct ABI pattern. Initialize with
-/// GHOSTTY_INIT_SIZED(GhosttyRenderStateColors) before calling
-/// ghostty_render_state_colors_get().
+/// GHOSTTY_INIT_SIZED(GhosttyRenderStateColors) before querying
+/// GHOSTTY_RENDER_STATE_DATA_COLORS.
 ///
 /// Example:
 /// @code
 /// GhosttyRenderStateColors colors = GHOSTTY_INIT_SIZED(GhosttyRenderStateColors);
-/// GhosttyResult result = ghostty_render_state_colors_get(state, &colors);
+/// GhosttyResult result = ghostty_render_state_get(
+/// state, GHOSTTY_RENDER_STATE_DATA_COLORS, &colors);
 /// @endcode
 ///
 /// @ingroup render
@@ -4423,7 +10563,36 @@ enum GhosttyRenderStateRowCellsData {
   /// Returns GHOSTTY_INVALID_VALUE if the cell has no explicit foreground
   /// color, in which case the caller should use whatever default foreground
   /// color it wants (e.g. the terminal foreground).
-  GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR(6);
+  GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR(6),
+
+  /// Whether the cell is contained within the current selection (bool).
+  /// This returns true when the cell's column is within the current row's
+  /// row-local selection range, and false otherwise. Rendering policy for
+  /// selected cells (colors, inversion, etc.) is left to the caller.
+  ///
+  /// Renderers that can draw cells in spans may be more efficient querying
+  /// GHOSTTY_RENDER_STATE_ROW_DATA_SELECTION once per row and applying that
+  /// range directly, avoiding one C API call per cell for selection state.
+  GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_SELECTED(7),
+
+  /// Whether the cell has any explicit styling (bool).
+  /// This is equivalent to querying the raw cell's
+  /// GHOSTTY_CELL_DATA_HAS_STYLING value, but avoids materializing the raw
+  /// GhosttyCell for renderers that only need to know whether fetching the
+  /// full style is necessary.
+  GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_HAS_STYLING(8),
+
+  /// Encode the current cell's full grapheme cluster as UTF-8 into a
+  /// caller-provided buffer (GhosttyBuffer).
+  ///
+  /// The base codepoint is encoded first, followed by any extra grapheme
+  /// codepoints. Returns GHOSTTY_SUCCESS with len=0 when the cell has no text.
+  ///
+  /// If ptr is NULL or cap is too small for a non-empty cell, returns
+  /// GHOSTTY_OUT_OF_SPACE without writing any bytes and sets len to the required
+  /// buffer size in bytes.
+  GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8(9),
+  GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyRenderStateRowCellsData(this.value);
@@ -4436,31 +10605,15 @@ enum GhosttyRenderStateRowCellsData {
     4 => GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF,
     5 => GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR,
     6 => GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR,
+    7 => GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_SELECTED,
+    8 => GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_HAS_STYLING,
+    9 => GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8,
+    2147483647 => GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_MAX_VALUE,
     _ => throw ArgumentError(
       'Unknown value for GhosttyRenderStateRowCellsData: $value',
     ),
   };
 }
-
-final class GhosttyOscParserImpl extends ffi.Opaque {}
-
-/// Opaque handle to an OSC parser instance.
-///
-/// This handle represents an OSC (Operating System Command) parser that can
-/// be used to parse the contents of OSC sequences.
-///
-/// @ingroup osc
-typedef GhosttyOscParser = ffi.Pointer<GhosttyOscParserImpl>;
-
-final class GhosttyOscCommandImpl extends ffi.Opaque {}
-
-/// Opaque handle to a single OSC command.
-///
-/// This handle represents a parsed OSC (Operating System Command) command.
-/// The command can be queried for its type and associated data.
-///
-/// @ingroup osc
-typedef GhosttyOscCommand = ffi.Pointer<GhosttyOscCommandImpl>;
 
 /// OSC command types.
 ///
@@ -4488,7 +10641,12 @@ enum GhosttyOscCommandType {
   GHOSTTY_OSC_COMMAND_CONEMU_OUTPUT_ENVIRONMENT_VARIABLE(19),
   GHOSTTY_OSC_COMMAND_CONEMU_XTERM_EMULATION(20),
   GHOSTTY_OSC_COMMAND_CONEMU_COMMENT(21),
-  GHOSTTY_OSC_COMMAND_KITTY_TEXT_SIZING(22);
+  GHOSTTY_OSC_COMMAND_KITTY_TEXT_SIZING(22),
+  GHOSTTY_OSC_COMMAND_KITTY_CLIPBOARD_PROTOCOL(23),
+  GHOSTTY_OSC_COMMAND_KITTY_DND_PROTOCOL(24),
+  GHOSTTY_OSC_COMMAND_CONTEXT_SIGNAL(25),
+  GHOSTTY_OSC_COMMAND_KITTY_DESKTOP_NOTIFICATION(26),
+  GHOSTTY_OSC_COMMAND_TYPE_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyOscCommandType(this.value);
@@ -4517,6 +10675,11 @@ enum GhosttyOscCommandType {
     20 => GHOSTTY_OSC_COMMAND_CONEMU_XTERM_EMULATION,
     21 => GHOSTTY_OSC_COMMAND_CONEMU_COMMENT,
     22 => GHOSTTY_OSC_COMMAND_KITTY_TEXT_SIZING,
+    23 => GHOSTTY_OSC_COMMAND_KITTY_CLIPBOARD_PROTOCOL,
+    24 => GHOSTTY_OSC_COMMAND_KITTY_DND_PROTOCOL,
+    25 => GHOSTTY_OSC_COMMAND_CONTEXT_SIGNAL,
+    26 => GHOSTTY_OSC_COMMAND_KITTY_DESKTOP_NOTIFICATION,
+    2147483647 => GHOSTTY_OSC_COMMAND_TYPE_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyOscCommandType: $value'),
   };
 }
@@ -4539,7 +10702,8 @@ enum GhosttyOscCommandData {
   ///
   /// Lifetime: Valid until the next call to any ghostty_osc_* function with
   /// the same parser instance. Memory is owned by the parser.
-  GHOSTTY_OSC_DATA_CHANGE_WINDOW_TITLE_STR(1);
+  GHOSTTY_OSC_DATA_CHANGE_WINDOW_TITLE_STR(1),
+  GHOSTTY_OSC_DATA_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyOscCommandData(this.value);
@@ -4547,19 +10711,10 @@ enum GhosttyOscCommandData {
   static GhosttyOscCommandData fromValue(int value) => switch (value) {
     0 => GHOSTTY_OSC_DATA_INVALID,
     1 => GHOSTTY_OSC_DATA_CHANGE_WINDOW_TITLE_STR,
+    2147483647 => GHOSTTY_OSC_DATA_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyOscCommandData: $value'),
   };
 }
-
-final class GhosttySgrParserImpl extends ffi.Opaque {}
-
-/// Opaque handle to an SGR parser instance.
-///
-/// This handle represents an SGR (Select Graphic Rendition) parser that can
-/// be used to parse SGR sequences and extract individual text attributes.
-///
-/// @ingroup sgr
-typedef GhosttySgrParser = ffi.Pointer<GhosttySgrParserImpl>;
 
 /// SGR attribute tags.
 ///
@@ -4598,7 +10753,8 @@ enum GhosttySgrAttributeTag {
   GHOSTTY_SGR_ATTR_BRIGHT_BG_8(27),
   GHOSTTY_SGR_ATTR_BRIGHT_FG_8(28),
   GHOSTTY_SGR_ATTR_BG_256(29),
-  GHOSTTY_SGR_ATTR_FG_256(30);
+  GHOSTTY_SGR_ATTR_FG_256(30),
+  GHOSTTY_SGR_ATTR_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttySgrAttributeTag(this.value);
@@ -4635,6 +10791,7 @@ enum GhosttySgrAttributeTag {
     28 => GHOSTTY_SGR_ATTR_BRIGHT_FG_8,
     29 => GHOSTTY_SGR_ATTR_BG_256,
     30 => GHOSTTY_SGR_ATTR_FG_256,
+    2147483647 => GHOSTTY_SGR_ATTR_MAX_VALUE,
     _ => throw ArgumentError(
       'Unknown value for GhosttySgrAttributeTag: $value',
     ),
@@ -4650,7 +10807,8 @@ enum GhosttySgrUnderline {
   GHOSTTY_SGR_UNDERLINE_DOUBLE(2),
   GHOSTTY_SGR_UNDERLINE_CURLY(3),
   GHOSTTY_SGR_UNDERLINE_DOTTED(4),
-  GHOSTTY_SGR_UNDERLINE_DASHED(5);
+  GHOSTTY_SGR_UNDERLINE_DASHED(5),
+  GHOSTTY_SGR_UNDERLINE_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttySgrUnderline(this.value);
@@ -4662,6 +10820,7 @@ enum GhosttySgrUnderline {
     3 => GHOSTTY_SGR_UNDERLINE_CURLY,
     4 => GHOSTTY_SGR_UNDERLINE_DOTTED,
     5 => GHOSTTY_SGR_UNDERLINE_DASHED,
+    2147483647 => GHOSTTY_SGR_UNDERLINE_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttySgrUnderline: $value'),
   };
 }
@@ -4750,6 +10909,201 @@ final class GhosttySgrAttribute extends ffi.Struct {
   external GhosttySgrAttributeValue value;
 }
 
+/// Result of decoding an image.
+///
+/// The `data` buffer must be allocated through the allocator provided to
+/// the decode callback. The library takes ownership and will free it
+/// with the same allocator.
+final class GhosttySysImage extends ffi.Struct {
+  /// Image width in pixels.
+  @ffi.Uint32()
+  external int width;
+
+  /// Image height in pixels.
+  @ffi.Uint32()
+  external int height;
+
+  /// Pointer to the decoded RGBA pixel data.
+  external ffi.Pointer<ffi.Uint8> data;
+
+  /// Length of the pixel data in bytes.
+  @ffi.Size()
+  external int data_len;
+}
+
+/// Log severity levels for the log callback.
+enum GhosttySysLogLevel {
+  GHOSTTY_SYS_LOG_LEVEL_ERROR(0),
+  GHOSTTY_SYS_LOG_LEVEL_WARNING(1),
+  GHOSTTY_SYS_LOG_LEVEL_INFO(2),
+  GHOSTTY_SYS_LOG_LEVEL_DEBUG(3),
+  GHOSTTY_SYS_LOG_LEVEL_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttySysLogLevel(this.value);
+
+  static GhosttySysLogLevel fromValue(int value) => switch (value) {
+    0 => GHOSTTY_SYS_LOG_LEVEL_ERROR,
+    1 => GHOSTTY_SYS_LOG_LEVEL_WARNING,
+    2 => GHOSTTY_SYS_LOG_LEVEL_INFO,
+    3 => GHOSTTY_SYS_LOG_LEVEL_DEBUG,
+    2147483647 => GHOSTTY_SYS_LOG_LEVEL_MAX_VALUE,
+    _ => throw ArgumentError('Unknown value for GhosttySysLogLevel: $value'),
+  };
+}
+
+typedef GhosttySysLogFnFunction = ffi.Void Function(
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.UnsignedInt level,
+  ffi.Pointer<ffi.Uint8> scope,
+  ffi.Size scope_len,
+  ffi.Pointer<ffi.Uint8> message,
+  ffi.Size message_len,
+);
+typedef DartGhosttySysLogFnFunction = void Function(
+  ffi.Pointer<ffi.Void> userdata,
+  GhosttySysLogLevel level,
+  ffi.Pointer<ffi.Uint8> scope,
+  int scope_len,
+  ffi.Pointer<ffi.Uint8> message,
+  int message_len,
+);
+
+/// Callback type for logging.
+///
+/// When installed, internal library log messages are delivered through
+/// this callback instead of being discarded. The embedder is responsible
+/// for formatting and routing log output.
+///
+/// @p scope is the log scope name as UTF-8 bytes (e.g. "osc", "kitty").
+/// When the log is unscoped (default scope), @p scope_len is 0.
+///
+/// All pointer arguments are only valid for the duration of the callback.
+/// The callback must be safe to call from any thread.
+///
+/// @param userdata    The userdata pointer set via GHOSTTY_SYS_OPT_USERDATA
+/// @param level       The severity level of the log message
+/// @param scope       Pointer to the scope name bytes
+/// @param scope_len   Length of the scope name in bytes
+/// @param message     Pointer to the log message bytes
+/// @param message_len Length of the log message in bytes
+typedef GhosttySysLogFn =
+    ffi.Pointer<ffi.NativeFunction<GhosttySysLogFnFunction>>;
+typedef GhosttySysDecodePngFnFunction = ffi.Bool Function(
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<GhosttyAllocator> allocator,
+  ffi.Pointer<ffi.Uint8> data,
+  ffi.Size data_len,
+  ffi.Pointer<GhosttySysImage> out,
+);
+typedef DartGhosttySysDecodePngFnFunction = bool Function(
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<GhosttyAllocator> allocator,
+  ffi.Pointer<ffi.Uint8> data,
+  int data_len,
+  ffi.Pointer<GhosttySysImage> out,
+);
+
+/// Callback type for PNG decoding.
+///
+/// Decodes raw PNG data into RGBA pixels. The output pixel data must be
+/// allocated through the provided allocator. The library takes ownership
+/// of the buffer and will free it with the same allocator.
+///
+/// @param userdata  The userdata pointer set via GHOSTTY_SYS_OPT_USERDATA
+/// @param allocator The allocator to use for the output pixel buffer
+/// @param data      Pointer to the raw PNG data
+/// @param data_len  Length of the raw PNG data in bytes
+/// @param[out] out  On success, filled with the decoded image
+/// @return true on success, false on failure
+typedef GhosttySysDecodePngFn =
+    ffi.Pointer<ffi.NativeFunction<GhosttySysDecodePngFnFunction>>;
+typedef GhosttySysRandomSecureFnFunction = ffi.Bool Function(
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<ffi.Uint8> buf,
+  ffi.Size len,
+);
+typedef DartGhosttySysRandomSecureFnFunction = bool Function(
+  ffi.Pointer<ffi.Void> userdata,
+  ffi.Pointer<ffi.Uint8> buf,
+  int len,
+);
+
+/// Callback type for secure random bytes.
+///
+/// Fills @p buf with @p len cryptographically secure random bytes. The
+/// library uses this for secrets, so it must be a real CSPRNG (getrandom,
+/// arc4random_buf, BCryptGenRandom, crypto.getRandomValues, ...); a
+/// predictable source is a security hole.
+///
+/// @param userdata The userdata pointer set via GHOSTTY_SYS_OPT_USERDATA
+/// @param buf      Buffer to fill
+/// @param len      Number of bytes to fill
+/// @return true if the buffer was filled, false if no entropy is available
+typedef GhosttySysRandomSecureFn =
+    ffi.Pointer<ffi.NativeFunction<GhosttySysRandomSecureFnFunction>>;
+
+/// System option identifiers for ghostty_sys_set().
+enum GhosttySysOption {
+  /// Set the userdata pointer passed to all sys callbacks.
+  ///
+  /// Input type: void* (or NULL)
+  GHOSTTY_SYS_OPT_USERDATA(0),
+
+  /// Set the PNG decode function.
+  ///
+  /// When set, the terminal can accept PNG images via the Kitty
+  /// Graphics Protocol. When cleared (NULL value), PNG decoding is
+  /// unsupported and PNG image data will be rejected.
+  ///
+  /// Input type: GhosttySysDecodePngFn (function pointer, or NULL)
+  GHOSTTY_SYS_OPT_DECODE_PNG(1),
+
+  /// Set the log callback.
+  ///
+  /// When set, internal library log messages are delivered to this
+  /// callback. When cleared (NULL value), log messages are silently
+  /// discarded.
+  ///
+  /// Use ghostty_sys_log_stderr as a convenience callback that
+  /// writes formatted messages to stderr.
+  ///
+  /// Which log levels are emitted depends on the build mode of the
+  /// library and is not configurable at runtime. Debug builds emit
+  /// all levels (debug and above). Release builds emit info and
+  /// above; debug-level messages are compiled out entirely and will
+  /// never reach the callback.
+  ///
+  /// Input type: GhosttySysLogFn (function pointer, or NULL)
+  GHOSTTY_SYS_OPT_LOG(2),
+
+  /// Override the secure random source.
+  ///
+  /// By default the library draws secure random bytes from the
+  /// platform (getrandom or arc4random_buf on POSIX, CNG on Windows).
+  /// Targets without one, such as wasm32-freestanding, have no default
+  /// and operations that need entropy fail with GHOSTTY_IO_ERROR until
+  /// this is set. When set,
+  /// it is used instead of the platform source on every target. When
+  /// cleared (NULL value), the platform default is restored.
+  ///
+  /// Input type: GhosttySysRandomSecureFn (function pointer, or NULL)
+  GHOSTTY_SYS_OPT_RANDOM_SECURE(3),
+  GHOSTTY_SYS_OPT_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttySysOption(this.value);
+
+  static GhosttySysOption fromValue(int value) => switch (value) {
+    0 => GHOSTTY_SYS_OPT_USERDATA,
+    1 => GHOSTTY_SYS_OPT_DECODE_PNG,
+    2 => GHOSTTY_SYS_OPT_LOG,
+    3 => GHOSTTY_SYS_OPT_RANDOM_SECURE,
+    2147483647 => GHOSTTY_SYS_OPT_MAX_VALUE,
+    _ => throw ArgumentError('Unknown value for GhosttySysOption: $value'),
+  };
+}
+
 final class GhosttyKeyEventImpl extends ffi.Opaque {}
 
 /// Opaque handle to a key event.
@@ -4771,7 +11125,8 @@ enum GhosttyKeyAction {
   GHOSTTY_KEY_ACTION_PRESS(1),
 
   /// Key is being repeated (held down)
-  GHOSTTY_KEY_ACTION_REPEAT(2);
+  GHOSTTY_KEY_ACTION_REPEAT(2),
+  GHOSTTY_KEY_ACTION_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyKeyAction(this.value);
@@ -4780,6 +11135,7 @@ enum GhosttyKeyAction {
     0 => GHOSTTY_KEY_ACTION_RELEASE,
     1 => GHOSTTY_KEY_ACTION_PRESS,
     2 => GHOSTTY_KEY_ACTION_REPEAT,
+    2147483647 => GHOSTTY_KEY_ACTION_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyKeyAction: $value'),
   };
 }
@@ -5005,7 +11361,8 @@ enum GhosttyKey {
   /// Legacy, Non-standard, and Special Keys (W3C § 3.7)
   GHOSTTY_KEY_COPY(173),
   GHOSTTY_KEY_CUT(174),
-  GHOSTTY_KEY_PASTE(175);
+  GHOSTTY_KEY_PASTE(175),
+  GHOSTTY_KEY_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyKey(this.value);
@@ -5187,6 +11544,7 @@ enum GhosttyKey {
     173 => GHOSTTY_KEY_COPY,
     174 => GHOSTTY_KEY_CUT,
     175 => GHOSTTY_KEY_PASTE,
+    2147483647 => GHOSTTY_KEY_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyKey: $value'),
   };
 }
@@ -5228,7 +11586,8 @@ enum GhosttyOptionAsAlt {
   GHOSTTY_OPTION_AS_ALT_LEFT(2),
 
   /// Only right option key is treated as alt
-  GHOSTTY_OPTION_AS_ALT_RIGHT(3);
+  GHOSTTY_OPTION_AS_ALT_RIGHT(3),
+  GHOSTTY_OPTION_AS_ALT_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyOptionAsAlt(this.value);
@@ -5238,6 +11597,7 @@ enum GhosttyOptionAsAlt {
     1 => GHOSTTY_OPTION_AS_ALT_TRUE,
     2 => GHOSTTY_OPTION_AS_ALT_LEFT,
     3 => GHOSTTY_OPTION_AS_ALT_RIGHT,
+    2147483647 => GHOSTTY_OPTION_AS_ALT_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyOptionAsAlt: $value'),
   };
 }
@@ -5268,7 +11628,14 @@ enum GhosttyKeyEncoderOption {
   GHOSTTY_KEY_ENCODER_OPT_KITTY_FLAGS(5),
 
   /// macOS option-as-alt setting (value: GhosttyOptionAsAlt)
-  GHOSTTY_KEY_ENCODER_OPT_MACOS_OPTION_AS_ALT(6);
+  GHOSTTY_KEY_ENCODER_OPT_MACOS_OPTION_AS_ALT(6),
+
+  /// Backarrow key mode (value: bool)
+  /// See https://vt100.net/dec/ek-vt3xx-tp-002.pdf page 170
+  /// If `false` (the default), `backspace` emits 0x7f
+  /// If `true`, `backspace` emits 0x08
+  GHOSTTY_KEY_ENCODER_OPT_BACKARROW_KEY_MODE(7),
+  GHOSTTY_KEY_ENCODER_OPT_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyKeyEncoderOption(this.value);
@@ -5281,6 +11648,8 @@ enum GhosttyKeyEncoderOption {
     4 => GHOSTTY_KEY_ENCODER_OPT_MODIFY_OTHER_KEYS_STATE_2,
     5 => GHOSTTY_KEY_ENCODER_OPT_KITTY_FLAGS,
     6 => GHOSTTY_KEY_ENCODER_OPT_MACOS_OPTION_AS_ALT,
+    7 => GHOSTTY_KEY_ENCODER_OPT_BACKARROW_KEY_MODE,
+    2147483647 => GHOSTTY_KEY_ENCODER_OPT_MAX_VALUE,
     _ => throw ArgumentError(
       'Unknown value for GhosttyKeyEncoderOption: $value',
     ),
@@ -5308,7 +11677,8 @@ enum GhosttyMouseAction {
   GHOSTTY_MOUSE_ACTION_RELEASE(1),
 
   /// Mouse moved.
-  GHOSTTY_MOUSE_ACTION_MOTION(2);
+  GHOSTTY_MOUSE_ACTION_MOTION(2),
+  GHOSTTY_MOUSE_ACTION_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyMouseAction(this.value);
@@ -5317,6 +11687,7 @@ enum GhosttyMouseAction {
     0 => GHOSTTY_MOUSE_ACTION_PRESS,
     1 => GHOSTTY_MOUSE_ACTION_RELEASE,
     2 => GHOSTTY_MOUSE_ACTION_MOTION,
+    2147483647 => GHOSTTY_MOUSE_ACTION_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyMouseAction: $value'),
   };
 }
@@ -5336,7 +11707,8 @@ enum GhosttyMouseButton {
   GHOSTTY_MOUSE_BUTTON_EIGHT(8),
   GHOSTTY_MOUSE_BUTTON_NINE(9),
   GHOSTTY_MOUSE_BUTTON_TEN(10),
-  GHOSTTY_MOUSE_BUTTON_ELEVEN(11);
+  GHOSTTY_MOUSE_BUTTON_ELEVEN(11),
+  GHOSTTY_MOUSE_BUTTON_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyMouseButton(this.value);
@@ -5354,6 +11726,7 @@ enum GhosttyMouseButton {
     9 => GHOSTTY_MOUSE_BUTTON_NINE,
     10 => GHOSTTY_MOUSE_BUTTON_TEN,
     11 => GHOSTTY_MOUSE_BUTTON_ELEVEN,
+    2147483647 => GHOSTTY_MOUSE_BUTTON_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyMouseButton: $value'),
   };
 }
@@ -5396,7 +11769,8 @@ enum GhosttyMouseTrackingMode {
   GHOSTTY_MOUSE_TRACKING_BUTTON(3),
 
   /// Any-event tracking mode.
-  GHOSTTY_MOUSE_TRACKING_ANY(4);
+  GHOSTTY_MOUSE_TRACKING_ANY(4),
+  GHOSTTY_MOUSE_TRACKING_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyMouseTrackingMode(this.value);
@@ -5407,6 +11781,7 @@ enum GhosttyMouseTrackingMode {
     2 => GHOSTTY_MOUSE_TRACKING_NORMAL,
     3 => GHOSTTY_MOUSE_TRACKING_BUTTON,
     4 => GHOSTTY_MOUSE_TRACKING_ANY,
+    2147483647 => GHOSTTY_MOUSE_TRACKING_MAX_VALUE,
     _ => throw ArgumentError(
       'Unknown value for GhosttyMouseTrackingMode: $value',
     ),
@@ -5421,7 +11796,8 @@ enum GhosttyMouseFormat {
   GHOSTTY_MOUSE_FORMAT_UTF8(1),
   GHOSTTY_MOUSE_FORMAT_SGR(2),
   GHOSTTY_MOUSE_FORMAT_URXVT(3),
-  GHOSTTY_MOUSE_FORMAT_SGR_PIXELS(4);
+  GHOSTTY_MOUSE_FORMAT_SGR_PIXELS(4),
+  GHOSTTY_MOUSE_FORMAT_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyMouseFormat(this.value);
@@ -5432,6 +11808,7 @@ enum GhosttyMouseFormat {
     2 => GHOSTTY_MOUSE_FORMAT_SGR,
     3 => GHOSTTY_MOUSE_FORMAT_URXVT,
     4 => GHOSTTY_MOUSE_FORMAT_SGR_PIXELS,
+    2147483647 => GHOSTTY_MOUSE_FORMAT_MAX_VALUE,
     _ => throw ArgumentError('Unknown value for GhosttyMouseFormat: $value'),
   };
 }
@@ -5500,7 +11877,8 @@ enum GhosttyMouseEncoderOption {
   GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED(3),
 
   /// Whether to enable motion deduplication by last cell (value: bool).
-  GHOSTTY_MOUSE_ENCODER_OPT_TRACK_LAST_CELL(4);
+  GHOSTTY_MOUSE_ENCODER_OPT_TRACK_LAST_CELL(4),
+  GHOSTTY_MOUSE_ENCODER_OPT_MAX_VALUE(2147483647);
 
   final int value;
   const GhosttyMouseEncoderOption(this.value);
@@ -5511,11 +11889,237 @@ enum GhosttyMouseEncoderOption {
     2 => GHOSTTY_MOUSE_ENCODER_OPT_SIZE,
     3 => GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED,
     4 => GHOSTTY_MOUSE_ENCODER_OPT_TRACK_LAST_CELL,
+    2147483647 => GHOSTTY_MOUSE_ENCODER_OPT_MAX_VALUE,
     _ => throw ArgumentError(
       'Unknown value for GhosttyMouseEncoderOption: $value',
     ),
   };
 }
+
+/// Why a paste happened.
+enum GhosttyPasteSource {
+  /// The user pasted from a clipboard: keybind, menu, middle click.
+  GHOSTTY_PASTE_SOURCE_CLIPBOARD(0),
+
+  /// Text inserted some other way: IME commit, drag and drop, scripted
+  /// input. Always written as text, never as a paste event, matching
+  /// kitty. This is not a way to opt out of paste events; an embedder
+  /// that doesn't want them doesn't install a clipboard_read callback.
+  GHOSTTY_PASTE_SOURCE_TEXT(1),
+  GHOSTTY_PASTE_SOURCE_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttyPasteSource(this.value);
+
+  static GhosttyPasteSource fromValue(int value) => switch (value) {
+    0 => GHOSTTY_PASTE_SOURCE_CLIPBOARD,
+    1 => GHOSTTY_PASTE_SOURCE_TEXT,
+    2147483647 => GHOSTTY_PASTE_SOURCE_MAX_VALUE,
+    _ => throw ArgumentError('Unknown value for GhosttyPasteSource: $value'),
+  };
+}
+
+/// A paste of clipboard contents into the terminal.
+///
+/// This is a sized struct; set `size` to `sizeof(GhosttyPaste)`. The
+/// MIME type array and the strings it points to are borrowed only for
+/// the duration of the ghostty_terminal_paste() call, as is everything
+/// the reader produces.
+final class GhosttyPaste extends ffi.Struct {
+  /// Size of this struct in bytes.
+  @ffi.Size()
+  external int size;
+
+  /// The clipboard the contents came from. Reported to the program on a
+  /// paste event (the selection and primary locations are both reported
+  /// as the primary selection, the protocol knows only two); no effect
+  /// on a text paste.
+  @ffi.UnsignedInt()
+  external int locationAsInt;
+
+  GhosttyClipboardLocation get location =>
+      GhosttyClipboardLocation.fromValue(locationAsInt);
+
+  /// Why this paste happened.
+  @ffi.UnsignedInt()
+  external int sourceAsInt;
+
+  GhosttyPasteSource get source => GhosttyPasteSource.fromValue(sourceAsInt);
+
+  /// Borrowed array of the MIME types of the representations available,
+  /// in preferred order. A text paste reads and writes the first entry
+  /// with a text MIME type such as "text/plain" and ignores the rest. A
+  /// paste event lists every entry and reads none. May be NULL when
+  /// mimes_len is zero, which is nothing to paste.
+  external ffi.Pointer<GhosttyString> mimes;
+
+  /// Number of entries in mimes.
+  @ffi.Size()
+  external int mimes_len;
+
+  /// Produces the data of a representation on demand. Required when
+  /// mimes_len is nonzero.
+  ///
+  /// Called at most once per ghostty_terminal_paste() call: for the
+  /// text representation being pasted, never for anything else and
+  /// never for a paste event. The MIME type requested is always an
+  /// entry of `mimes`, passed through exactly as given there (the same
+  /// pointer and length), so the callback may identify the
+  /// representation by pointer or by content. A false return fails the
+  /// paste with GHOSTTY_IO_ERROR.
+  external GhosttyMimeReader reader;
+
+  /// Write text that could inject commands. Call with false, confirm
+  /// with the user on GHOSTTY_REJECTED, and call again with true.
+  @ffi.Bool()
+  external bool allow_unsafe;
+}
+
+/// Configurable snapshot decoder options.
+///
+/// Options may only be changed before decoding starts. Calling
+/// ghostty_snapshot_decoder_set() after ghostty_snapshot_decoder_ready() or
+/// ghostty_snapshot_decoder_decode() returns GHOSTTY_INVALID_VALUE.
+enum GhosttySnapshotDecoderOption {
+  /// Largest non-ground continuation the decoder will accept.
+  ///
+  /// A value of zero accepts only snapshots whose VT parser is in the ground
+  /// state. The decoder default matches the largest built-in APC protocol
+  /// buffer limit, currently 65 MiB.
+  ///
+  /// This is primarily an input validation limit. When
+  /// GHOSTTY_SNAPSHOT_DECODER_OPT_RETAIN_CONTINUATION is true, the same value
+  /// also becomes the continuation tracking limit on the returned terminal.
+  ///
+  /// Input type: size_t *
+  GHOSTTY_SNAPSHOT_DECODER_OPT_MAX_CONTINUATION_BYTES(0),
+
+  /// Retain the decoded continuation on the returned terminal.
+  ///
+  /// When true, terminals returned by ghostty_snapshot_decoder_ready() and
+  /// ghostty_snapshot_decoder_decode() use
+  /// GHOSTTY_SNAPSHOT_DECODER_OPT_MAX_CONTINUATION_BYTES as their continuation
+  /// tracking limit. The existing ghostty_terminal_continuation_* APIs can then
+  /// export the exact unfinished VT or UTF-8 input restored from the snapshot.
+  ///
+  /// This is false by default. A maximum continuation size of zero leaves
+  /// tracking disabled. With a nonzero maximum, tracking remains enabled even
+  /// when the decoded continuation is empty. Exporting an empty continuation
+  /// does not disable it. Callers that do not need ongoing tracking must still
+  /// set GHOSTTY_TERMINAL_OPT_CONTINUATION_MAX_BYTES to zero after export and
+  /// before writing post-snapshot input.
+  ///
+  /// Input type: bool *
+  GHOSTTY_SNAPSHOT_DECODER_OPT_RETAIN_CONTINUATION(1),
+  GHOSTTY_SNAPSHOT_DECODER_OPT_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttySnapshotDecoderOption(this.value);
+
+  static GhosttySnapshotDecoderOption fromValue(int value) => switch (value) {
+    0 => GHOSTTY_SNAPSHOT_DECODER_OPT_MAX_CONTINUATION_BYTES,
+    1 => GHOSTTY_SNAPSHOT_DECODER_OPT_RETAIN_CONTINUATION,
+    2147483647 => GHOSTTY_SNAPSHOT_DECODER_OPT_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttySnapshotDecoderOption: $value',
+    ),
+  };
+}
+
+/// Queryable snapshot decoder data.
+///
+/// Each variant documents the output pointer type expected by
+/// ghostty_snapshot_decoder_get().
+enum GhosttySnapshotDecoderData {
+  /// Invalid data type. Never results in data extraction.
+  GHOSTTY_SNAPSHOT_DECODER_DATA_INVALID(0),
+
+  /// Current maximum accepted continuation size.
+  ///
+  /// This value is available in every non-failed decoder state.
+  ///
+  /// Output type: size_t *
+  GHOSTTY_SNAPSHOT_DECODER_DATA_MAX_CONTINUATION_BYTES(1),
+
+  /// Number of snapshot source bytes consumed so far.
+  ///
+  /// At FINISH this identifies the first byte after the snapshot. Trailing
+  /// bytes are not consumed. This value is unavailable after a decoding error,
+  /// because the decoder can no longer guarantee its source position.
+  ///
+  /// Output type: size_t *
+  GHOSTTY_SNAPSHOT_DECODER_DATA_SOURCE_OFFSET(2),
+
+  /// Advisory complete logical history extent for the primary screen.
+  ///
+  /// The value counts rows before the active area, including any resident
+  /// overlap carried before READY. It becomes available after READY validates.
+  ///
+  /// Output type: uint64_t *
+  GHOSTTY_SNAPSHOT_DECODER_DATA_HISTORY_ROWS_PRIMARY(3),
+
+  /// Advisory complete logical history extent for the alternate screen.
+  ///
+  /// The value has the same semantics and lifetime as
+  /// GHOSTTY_SNAPSHOT_DECODER_DATA_HISTORY_ROWS_PRIMARY. Querying it returns
+  /// GHOSTTY_NO_VALUE when the snapshot does not declare an alternate screen.
+  ///
+  /// Output type: uint64_t *
+  GHOSTTY_SNAPSHOT_DECODER_DATA_HISTORY_ROWS_ALTERNATE(4),
+
+  /// Screen associated with the most recently decoded history page.
+  ///
+  /// This value is available only after ghostty_snapshot_decoder_next()
+  /// returns GHOSTTY_SUCCESS. A later call to next replaces it or clears it
+  /// when FINISH is reached or an error occurs.
+  ///
+  /// Output type: GhosttyTerminalScreen *
+  GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_SCREEN(5),
+
+  /// Rows prepended by the most recently decoded history page.
+  ///
+  /// Zero means the page was consumed and validated but could not be
+  /// applied to the live terminal.
+  ///
+  /// Output type: size_t *
+  GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_ROWS(6),
+
+  /// Page records remaining in the same screen's HISTORY sequence.
+  ///
+  /// This is not a count of all pages remaining in the snapshot.
+  ///
+  /// Output type: uint32_t *
+  GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_REMAINING(7),
+
+  /// Whether decoded continuation tracking is retained on returned terminals.
+  ///
+  /// This value is available in every non-failed decoder state.
+  ///
+  /// Output type: bool *
+  GHOSTTY_SNAPSHOT_DECODER_DATA_RETAIN_CONTINUATION(8),
+  GHOSTTY_SNAPSHOT_DECODER_DATA_MAX_VALUE(2147483647);
+
+  final int value;
+  const GhosttySnapshotDecoderData(this.value);
+
+  static GhosttySnapshotDecoderData fromValue(int value) => switch (value) {
+    0 => GHOSTTY_SNAPSHOT_DECODER_DATA_INVALID,
+    1 => GHOSTTY_SNAPSHOT_DECODER_DATA_MAX_CONTINUATION_BYTES,
+    2 => GHOSTTY_SNAPSHOT_DECODER_DATA_SOURCE_OFFSET,
+    3 => GHOSTTY_SNAPSHOT_DECODER_DATA_HISTORY_ROWS_PRIMARY,
+    4 => GHOSTTY_SNAPSHOT_DECODER_DATA_HISTORY_ROWS_ALTERNATE,
+    5 => GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_SCREEN,
+    6 => GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_ROWS,
+    7 => GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_REMAINING,
+    8 => GHOSTTY_SNAPSHOT_DECODER_DATA_RETAIN_CONTINUATION,
+    2147483647 => GHOSTTY_SNAPSHOT_DECODER_DATA_MAX_VALUE,
+    _ => throw ArgumentError(
+      'Unknown value for GhosttySnapshotDecoderData: $value',
+    ),
+  };
+}
+
+const int GHOSTTY_ENUM_MAX_VALUE = 2147483647;
 
 const int GHOSTTY_COLOR_NAMED_BLACK = 0;
 

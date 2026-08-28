@@ -16,4 +16,12 @@ This header is designed to be consumed by ffigen over on the Dart side.
         .generate()
         .expect("Unable to generate bindings")
         .write_to_file("bindings.h");
+
+    // Android 15+ and Google Play require 64-bit ELF LOAD segments to support
+    // 16 KB pages. Keep the requirement in the crate so every build path,
+    // including native_prebuilt recipes and downstream source builds, gets it.
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
+        println!("cargo::rustc-link-arg-cdylib=-Wl,-z,max-page-size=16384");
+        println!("cargo::rustc-link-arg-cdylib=-Wl,-z,common-page-size=16384");
+    }
 }

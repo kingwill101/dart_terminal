@@ -16,7 +16,7 @@ The example runs five demos, printing results to the console:
 
 ## Prerequisites
 
-- **Dart SDK >= 3.10**
+- **Dart SDK >= 3.13**
 - **Zig** on your `PATH`, or a usable prebuilt `libghostty-vt`
 - Ghostty source available via one of:
   - `GHOSTTY_SRC` environment variable

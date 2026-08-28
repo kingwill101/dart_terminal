@@ -10,13 +10,13 @@ link_mode: dynamic_library
 source:
   type: git
   repository: https://github.com/kingwill101/dart_terminal
-  revision: 6c662511a7de5447c762ef6055cb3fa615eaeaed
+  revision: 2100251eb45083ee35b6eaeac78d49862fb0007b
   subdirectory: pkgs/pty/portable_pty
 
 release:
   provider: github
   repository: kingwill101/dart_terminal
-  tag: portable_pty-v0.0.6
+  tag: portable_pty-v0.0.7-beta.1
 
 variables:
   cargo_manifest: "{{ source.path }}/rust/Cargo.toml"
@@ -54,8 +54,14 @@ build:
           working_directory: "{{ source.path }}/rust"
           commands:
             - [cross, build, --manifest-path, "{{ variables.cargo_manifest }}", --release, --target, "{{ target.rust_target }}"]
+        - id: verify_page_size
+          type: command
+          needs: [build]
+          commands:
+            - [sh, -ceu, "tool=$(command -v readelf || command -v llvm-readelf || true); [ -n \"$tool\" ] || { echo \"readelf or llvm-readelf is required\" >&2; exit 1; }; if ! headers=$(\"$tool\" -lW \"$1\"); then echo \"failed to inspect ELF program headers\" >&2; exit 1; fi; found=0; for alignment in $(printf '%s\\n' \"$headers\" | awk '$1 == \"LOAD\" {print $NF}'); do found=1; if [ $((alignment)) -lt 16384 ]; then echo \"LOAD alignment $alignment is below 0x4000\" >&2; exit 1; fi; done; [ \"$found\" -eq 1 ] || { echo \"no ELF LOAD segments found\" >&2; exit 1; }", sh, "{{ variables.library_path }}"]
         - id: export
           type: export_artifact
+          needs: [verify_page_size]
           artifact: portable_pty_rs
           primary: "{{ variables.library_path }}"
 

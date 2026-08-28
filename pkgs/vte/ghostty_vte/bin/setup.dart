@@ -1,7 +1,7 @@
 /// Downloads the prebuilt ghostty_vte native library for the host platform.
 ///
 /// Usage:
-///   dart run ghostty_vte:setup [--tag ghostty_vte-v0.1.1] [--platform linux-x64]
+///   dart run ghostty_vte:setup [--tag ghostty_vte-v0.2.0-beta.1] [--platform linux-x64]
 ///
 /// The library is placed in `.prebuilt/<platform>/` at the project root,
 /// where the build hook will find it automatically.
@@ -41,6 +41,16 @@ Future<void> main(List<String> args) async {
         );
         return;
     }
+  }
+
+  if (tag == releaseTag && assetHashes.isEmpty) {
+    stderr.writeln(
+      'No verified prebuilt artifacts have been published for $releaseTag.\n'
+      'Build libghostty-vt from source, or pass --tag explicitly for a '
+      'compatible published release.',
+    );
+    exitCode = 1;
+    return;
   }
 
   platform ??= _hostPlatform();

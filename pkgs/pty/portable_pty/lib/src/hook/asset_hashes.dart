@@ -6,7 +6,7 @@
 // dart format off
 
 /// The GitHub release tag from which prebuilt binaries are downloaded.
-const String releaseTag = 'portable_pty-v0.0.6';
+const String releaseTag = 'portable_pty-v0.0.7-beta.1';
 
 /// Maps platform labels to artifact info and SHA256 hashes.
 const Map<String, AssetHash> assetHashes = {
@@ -28,11 +28,11 @@ const Map<String, AssetHash> assetHashes = {
   ),
   'windows-x64': AssetHash(
     tarball: 'pty-windows-x64.tar.gz',
-    hash: 'f526c3f6864ade15c561545d195ff38d0540fc740c9644ee7b76f904caca041d',
+    hash: '55459d86efee5202dfe243addf6ebfb2048f790e71ced7dd15a89cb2975693e5',
   ),
   'windows-arm64': AssetHash(
     tarball: 'pty-windows-arm64.tar.gz',
-    hash: 'b4750a61f114970e0e26da1f0c0413af989fadfbdefd2ca8ec8a24678ff9bb0c',
+    hash: '717ad2c70753bc90ddc8711e4f04558314d2c06cb3c46ce1b82469265e8267d1',
   ),
   'android-arm64': AssetHash(
     tarball: 'pty-android-arm64.tar.gz',

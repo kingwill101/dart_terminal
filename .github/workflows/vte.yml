@@ -7,6 +7,7 @@ on:
       - "pkgs/vte/**"
       - "pubspec.yaml"
       - "tool/apply_ghostty_vte_source_patches.sh"
+      - "tool/verify_android_16kb_page_size.sh"
       - "tool/verify_vte_android_libc.sh"
       - ".github/workflows/vte.yml"
   pull_request:
@@ -15,8 +16,12 @@ on:
       - "pkgs/vte/**"
       - "pubspec.yaml"
       - "tool/apply_ghostty_vte_source_patches.sh"
+      - "tool/verify_android_16kb_page_size.sh"
       - "tool/verify_vte_android_libc.sh"
       - ".github/workflows/vte.yml"
+
+permissions:
+  contents: read
 
 jobs:
   build-vte-artifacts:
@@ -97,6 +102,7 @@ jobs:
           sudo apt-get install -y binutils
 
       - name: Apply bundled Ghostty source patches
+        if: contains(matrix.target, 'android')
         run: ./tool/apply_ghostty_vte_source_patches.sh
 
       - name: Build libghostty-vt (${{ matrix.target }})
@@ -133,6 +139,10 @@ jobs:
       - name: Verify Android libghostty-vt links libc
         if: contains(matrix.target, 'android')
         run: ./tool/verify_vte_android_libc.sh "${{ steps.locate_vte.outputs.path }}"
+
+      - name: Verify Android VTE supports 16 KB pages
+        if: contains(matrix.target, 'android')
+        run: ./tool/verify_android_16kb_page_size.sh "${{ steps.locate_vte.outputs.path }}"
 
       - name: Package VTE artifact
         run: |
@@ -201,6 +211,9 @@ jobs:
         run: |
           ls -lh pkgs/vte/ghostty_vte_flutter/assets/ghostty-vt.wasm
           file pkgs/vte/ghostty_vte_flutter/assets/ghostty-vt.wasm
+
+      - name: Verify WASM ABI
+        run: node tool/verify_ghostty_vte_wasm.mjs
 
       - name: Upload WASM artifact
         uses: actions/upload-artifact@v4

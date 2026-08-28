@@ -94,21 +94,18 @@ void main() {
     },
   );
 
-  test(
-    'printable helper infers unshifted numpad subtract without character metadata',
-    () {
-      final text = ghosttyTerminalPrintableText(
-        const KeyDownEvent(
-          physicalKey: PhysicalKeyboardKey.numpadSubtract,
-          logicalKey: LogicalKeyboardKey.numpadSubtract,
-          timeStamp: Duration.zero,
-        ),
-        modifiers: const GhosttyTerminalModifierState(),
-      );
+  test('printable helper infers unshifted numpad subtract without character metadata', () {
+    final text = ghosttyTerminalPrintableText(
+      const KeyDownEvent(
+        physicalKey: PhysicalKeyboardKey.numpadSubtract,
+        logicalKey: LogicalKeyboardKey.numpadSubtract,
+        timeStamp: Duration.zero,
+      ),
+      modifiers: const GhosttyTerminalModifierState(),
+    );
 
-      expect(text, '-');
-    },
-  );
+    expect(text, '-');
+  });
 
   test('printable helper respects direct printable logical labels', () {
     final text = ghosttyTerminalPrintableText(

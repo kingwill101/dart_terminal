@@ -1,7 +1,7 @@
 diff --git a/src/build/GhosttyLibVt.zig b/src/build/GhosttyLibVt.zig
 --- a/src/build/GhosttyLibVt.zig
 +++ b/src/build/GhosttyLibVt.zig
-@@ -221,6 +221,10 @@ fn initLib(
+@@ -227,6 +227,10 @@ fn initLib(
          .root_module = zig.vt_c,
          .version = zig.version,
      });

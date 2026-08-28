@@ -46,11 +46,30 @@ String? ghosttyTerminalResolveHyperlinkAt<PositionT>(
   return ghosttyTerminalNormalizedHyperlink(resolveUri(position));
 }
 
-/// Opens a terminal hyperlink using a host callback when provided.
+/// Whether [uri] uses an allowed terminal hyperlink scheme.
+///
+/// Terminal-controlled links are restricted to HTTP(S) so escape sequences
+/// cannot launch local files or custom-scheme handlers.
+bool ghosttyTerminalIsAllowedHyperlink(String uri) {
+  final parsed = Uri.tryParse(uri);
+  if (parsed == null || !parsed.hasAuthority || parsed.host.isEmpty) {
+    return false;
+  }
+  final scheme = parsed.scheme.toLowerCase();
+  return scheme == 'http' || scheme == 'https';
+}
+
+/// Opens an HTTP(S) terminal hyperlink using a host callback when provided.
+///
+/// Unsupported or malformed URI schemes are ignored before invoking either
+/// the callback or the platform launcher.
 Future<void> ghosttyTerminalOpenHyperlink(
   String uri, {
   Future<void> Function(String uri)? onOpenHyperlink,
 }) async {
+  if (!ghosttyTerminalIsAllowedHyperlink(uri)) {
+    return;
+  }
   final callback = onOpenHyperlink;
   if (callback != null) {
     await callback(uri);
