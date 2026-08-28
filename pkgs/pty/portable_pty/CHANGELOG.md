@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.7-beta.2
+
+- Enforced 16 KB ELF `LOAD` alignment for Android native libraries.
+- Added Android page-size verification to native source recipes and CI.
+- Updated the verified prebuilt release metadata and checksums to the beta.2
+  artifacts for every supported target.
+
 ## 0.0.7-beta.1
 
 - Updated to `native_prebuilt` 0.5.0, Code Assets 2.0, and Hooks 2.2.
