@@ -483,7 +483,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
     if (widget.autoFollowOnActivity) {
       _jumpToLiveBottom();
     }
-    _syncAnimatedRenderState();
+    _syncAnimatedRenderState(resetBlinkPhase: false);
     setState(() {});
   }
 
@@ -498,7 +498,7 @@ class _GhosttyTerminalViewState extends State<GhosttyTerminalView> {
   void _syncAnimatedRenderState({bool resetBlinkPhase = true}) {
     _syncKittyImages();
     final shouldBlink = _hasBlinkingContent;
-    if (resetBlinkPhase) {
+    if (resetBlinkPhase || (shouldBlink && _blinkTimer == null)) {
       _blinkPhaseVisible = true;
     }
     if (!shouldBlink) {

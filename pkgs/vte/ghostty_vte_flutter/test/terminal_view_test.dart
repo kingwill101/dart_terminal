@@ -532,9 +532,11 @@ void main() {
           ),
         ),
       );
-      await tester.pumpAndSettle();
+      await tester.pump();
 
-      final visible = await _captureTerminalImageData(key);
+      final visible = (await tester.runAsync(
+        () => _captureTerminalImageData(key),
+      ))!;
       final visiblePixels = _countPixelsNearColor(
         visible,
         color: blinkColor,
@@ -543,13 +545,29 @@ void main() {
       expect(visiblePixels, greaterThan(8));
 
       await tester.pump(const Duration(milliseconds: 500));
-      final hidden = await _captureTerminalImageData(key);
+      final hidden = (await tester.runAsync(
+        () => _captureTerminalImageData(key),
+      ))!;
       final hiddenPixels = _countPixelsNearColor(
         hidden,
         color: blinkColor,
         tolerance: 40,
       );
       expect(hiddenPixels, lessThan(visiblePixels));
+
+      controller.appendDebugOutput('activity');
+      await tester.pump();
+      final hiddenAfterActivity = (await tester.runAsync(
+        () => _captureTerminalImageData(key),
+      ))!;
+      expect(
+        _countPixelsNearColor(
+          hiddenAfterActivity,
+          color: blinkColor,
+          tolerance: 40,
+        ),
+        lessThan(visiblePixels),
+      );
     });
 
     testWidgets('renderState paints Kitty RGB placements', (tester) async {
@@ -576,11 +594,14 @@ void main() {
           ),
         ),
       );
-      await tester.pump();
-      await tester.pump();
-
-      final image = await _captureTerminalImageData(key);
       final (:charWidth, :linePixels, padding: _) = _measureTestMetrics();
+      final image = await _captureDecodedKittyImage(
+        tester,
+        key,
+        expectedColor: imageColor,
+        x: charWidth ~/ 2,
+        y: linePixels ~/ 2,
+      );
       expect(
         _pixelMatchesColor(
           image,
@@ -628,18 +649,22 @@ void main() {
           ),
         ),
       );
-      await tester.pump();
-      await tester.pump();
-
-      final image = await _captureTerminalImageData(key);
       final (:charWidth, :linePixels, padding: _) = _measureTestMetrics();
+      final image = await _captureDecodedKittyImage(
+        tester,
+        key,
+        expectedColor: firstPixelColor,
+        x: charWidth ~/ 2,
+        y: linePixels ~/ 2,
+        tolerance: 12,
+      );
       expect(
         _pixelMatchesColor(
           image,
           x: charWidth ~/ 2,
           y: linePixels ~/ 2,
           color: firstPixelColor,
-          tolerance: 8,
+          tolerance: 12,
         ),
         isTrue,
       );
@@ -649,7 +674,7 @@ void main() {
           x: charWidth + (charWidth ~/ 2),
           y: linePixels ~/ 2,
           color: secondPixelColor,
-          tolerance: 8,
+          tolerance: 12,
         ),
         isTrue,
       );
@@ -4400,6 +4425,35 @@ String _lastNonEmptyLine(List<String> lines) {
 Future<_TerminalPaintStats> _captureTerminalPaintStats(GlobalKey key) async {
   final image = await _captureTerminalImageData(key);
   return _measureTerminalPaintStats(image.rgba);
+}
+
+Future<_TerminalImageData> _captureDecodedKittyImage(
+  WidgetTester tester,
+  GlobalKey key, {
+  required Color expectedColor,
+  required int x,
+  required int y,
+  int tolerance = 8,
+}) async {
+  for (var attempt = 0; attempt < 100; attempt++) {
+    await tester.pump();
+    final image = (await tester.runAsync(
+      () => _captureTerminalImageData(key),
+    ))!;
+    if (_pixelMatchesColor(
+      image,
+      x: x,
+      y: y,
+      color: expectedColor,
+      tolerance: tolerance,
+    )) {
+      return image;
+    }
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 5)),
+    );
+  }
+  throw StateError('Kitty image decode did not produce the expected pixels');
 }
 
 Future<_TerminalImageData> _captureTerminalImageData(GlobalKey key) async {

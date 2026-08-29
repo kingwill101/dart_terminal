@@ -1106,6 +1106,8 @@ _snapshotKittyGraphics(
                 imageId: imageId,
                 imageGeneration: generation,
                 placementId: placement.placementId,
+                layer: flutterLayer,
+                z: placement.z,
                 columns: placement.columns,
                 rows: placement.rows,
               ),
@@ -1183,6 +1185,8 @@ final class _KittyVirtualPlacementSpec {
     required this.imageId,
     required this.imageGeneration,
     required this.placementId,
+    required this.layer,
+    required this.z,
     required this.columns,
     required this.rows,
   });
@@ -1190,6 +1194,8 @@ final class _KittyVirtualPlacementSpec {
   final int imageId;
   final int imageGeneration;
   final int placementId;
+  final GhosttyTerminalKittyPlacementLayer layer;
+  final int z;
   final int columns;
   final int rows;
 }
@@ -1253,8 +1259,8 @@ _snapshotKittyVirtualPlacements(
         imageId: spec.imageId,
         imageGeneration: spec.imageGeneration,
         placementId: spec.placementId,
-        layer: GhosttyTerminalKittyPlacementLayer.belowText,
-        z: -1,
+        layer: spec.layer,
+        z: spec.z,
         viewportCol: run.viewportCol,
         viewportRow: viewportRow,
         gridCols: run.width,

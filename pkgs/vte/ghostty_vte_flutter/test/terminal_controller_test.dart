@@ -336,6 +336,8 @@ void main() {
     expect(placement.isVirtual, isTrue);
     expect(placement.imageId, 3);
     expect(placement.placementId, 3);
+    expect(placement.layer, GhosttyTerminalKittyPlacementLayer.aboveText);
+    expect(placement.z, 0);
     expect(placement.viewportCol, 0);
     expect(placement.viewportRow, 0);
     expect(placement.virtualSourceCol, 0);
