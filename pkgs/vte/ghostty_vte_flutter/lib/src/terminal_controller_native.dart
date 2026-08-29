@@ -5,12 +5,30 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 import 'package:ghostty_vte/ghostty_vte.dart';
+import 'package:image/image.dart' as image;
 
+import 'kitty_virtual_placeholder.dart';
 import 'pty_session.dart';
 import 'shell_launch.dart';
 import 'terminal_render_model.dart';
 import 'terminal_snapshot.dart';
 import 'terminal_surface_contract.dart';
+
+Object? _ghosttyPngDecoderHandle;
+
+void _ensureGhosttyPngDecoderInstalled() {
+  _ghosttyPngDecoderHandle ??= GhosttyVt.installPngDecoder((pngData) {
+    final decoded = image.decodePng(pngData);
+    if (decoded == null) {
+      return null;
+    }
+    return VtDecodedImage(
+      width: decoded.width,
+      height: decoded.height,
+      pixels: decoded.getBytes(order: image.ChannelOrder.rgba),
+    );
+  });
+}
 
 /// Controller for a terminal session backed by a subprocess.
 ///
@@ -183,6 +201,7 @@ class GhosttyTerminalController extends ChangeNotifier
       return existing;
     }
 
+    _ensureGhosttyPngDecoderInstalled();
     final terminal = GhosttyVt.newTerminal(
       cols: _cols,
       rows: _rows,
@@ -759,7 +778,11 @@ class GhosttyTerminalController extends ChangeNotifier
       wrappedRows: wrappedRows,
     );
     renderState.update();
-    _renderSnapshot = _toRenderSnapshot(renderState.snapshot());
+    _renderSnapshot = _toRenderSnapshot(
+      renderState.snapshot(),
+      terminal: _terminal!,
+      previousImages: _renderSnapshot?.kittyImages,
+    );
   }
 
   /// Computes the set of zero-based row indices (within [wrappedLines]) that
@@ -896,7 +919,11 @@ class GhosttyTerminalController extends ChangeNotifier
   }
 }
 
-GhosttyTerminalRenderSnapshot _toRenderSnapshot(VtRenderSnapshot snapshot) {
+GhosttyTerminalRenderSnapshot _toRenderSnapshot(
+  VtRenderSnapshot snapshot, {
+  required VtTerminal terminal,
+  Map<int, GhosttyTerminalKittyImage>? previousImages,
+}) {
   Color toColor(VtRgbColor color) =>
       Color.fromARGB(0xFF, color.r, color.g, color.b);
 
@@ -948,7 +975,9 @@ GhosttyTerminalRenderSnapshot _toRenderSnapshot(VtRenderSnapshot snapshot) {
               )
               .map(
                 (cell) => GhosttyTerminalRenderCell(
-                  text: cell.graphemes,
+                  text: cell.raw.codepoint == kittyUnicodePlaceholderCodepoint
+                      ? ''
+                      : cell.graphemes,
                   width: switch (cell.raw.wide) {
                     GhosttyCellWide.GHOSTTY_CELL_WIDE_WIDE => 2,
                     _ => 1,
@@ -983,6 +1012,12 @@ GhosttyTerminalRenderSnapshot _toRenderSnapshot(VtRenderSnapshot snapshot) {
       )
       .toList(growable: false);
 
+  final kitty = _snapshotKittyGraphics(
+    terminal,
+    snapshot: snapshot,
+    previousImages: previousImages,
+  );
+
   return GhosttyTerminalRenderSnapshot(
     cols: snapshot.cols,
     rows: snapshot.rows,
@@ -1001,5 +1036,337 @@ GhosttyTerminalRenderSnapshot _toRenderSnapshot(VtRenderSnapshot snapshot) {
       color: cursorColor,
     ),
     rowsData: rows,
+    kittyImages: kitty.images,
+    kittyPlacements: kitty.placements,
+    hasUnresolvedKittyVirtualPlacements: kitty.hasUnresolvedVirtualPlacements,
   );
+}
+
+({
+  Map<int, GhosttyTerminalKittyImage> images,
+  List<GhosttyTerminalKittyPlacement> placements,
+  bool hasUnresolvedVirtualPlacements,
+})
+_snapshotKittyGraphics(
+  VtTerminal terminal, {
+  required VtRenderSnapshot snapshot,
+  Map<int, GhosttyTerminalKittyImage>? previousImages,
+}) {
+  final graphics = terminal.kittyGraphics;
+  if (graphics == null || !graphics.isValid) {
+    return (
+      images: const <int, GhosttyTerminalKittyImage>{},
+      placements: const <GhosttyTerminalKittyPlacement>[],
+      hasUnresolvedVirtualPlacements: false,
+    );
+  }
+
+  final images = <int, GhosttyTerminalKittyImage>{};
+  final placements = <GhosttyTerminalKittyPlacement>[];
+  final virtualSpecs = <_KittyVirtualPlacementSpec>[];
+
+  void collectLayer(
+    GhosttyKittyPlacementLayer nativeLayer,
+    GhosttyTerminalKittyPlacementLayer flutterLayer,
+  ) {
+    final iterator = graphics.iteratePlacements(layer: nativeLayer);
+    try {
+      while (iterator.moveNext()) {
+        final placement = iterator.current;
+        final nativeImage = placement.image;
+        if (nativeImage == null || !nativeImage.isValid) {
+          continue;
+        }
+
+        final imageId = nativeImage.id;
+        final generation = nativeImage.generation;
+        var copiedImage = previousImages?[imageId];
+        if (copiedImage == null || copiedImage.generation != generation) {
+          final rgba = _copyKittyRgbaPixels(nativeImage);
+          if (rgba == null) {
+            continue;
+          }
+          copiedImage = GhosttyTerminalKittyImage(
+            id: imageId,
+            generation: generation,
+            width: nativeImage.width,
+            height: nativeImage.height,
+            rgba: rgba,
+          );
+        }
+        images[imageId] = copiedImage;
+        if (placement.isVirtual) {
+          if (!virtualSpecs.any(
+            (spec) =>
+                spec.imageId == imageId &&
+                spec.placementId == placement.placementId,
+          )) {
+            virtualSpecs.add(
+              _KittyVirtualPlacementSpec(
+                imageId: imageId,
+                imageGeneration: generation,
+                placementId: placement.placementId,
+                layer: flutterLayer,
+                z: placement.z,
+                columns: placement.columns,
+                rows: placement.rows,
+              ),
+            );
+          }
+          continue;
+        }
+
+        final info = placement.renderInfo();
+        if (info == null || !info.viewportVisible) {
+          continue;
+        }
+        placements.add(
+          GhosttyTerminalKittyPlacement(
+            imageId: imageId,
+            imageGeneration: generation,
+            placementId: placement.placementId,
+            layer: flutterLayer,
+            z: placement.z,
+            viewportCol: info.viewportCol,
+            viewportRow: info.viewportRow,
+            gridCols: info.gridCols,
+            gridRows: info.gridRows,
+            sourceX: info.sourceX,
+            sourceY: info.sourceY,
+            sourceWidth: info.sourceWidth,
+            sourceHeight: info.sourceHeight,
+          ),
+        );
+      }
+    } finally {
+      iterator.close();
+    }
+  }
+
+  collectLayer(
+    GhosttyKittyPlacementLayer.GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG,
+    GhosttyTerminalKittyPlacementLayer.belowBackground,
+  );
+  collectLayer(
+    GhosttyKittyPlacementLayer.GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT,
+    GhosttyTerminalKittyPlacementLayer.belowText,
+  );
+  collectLayer(
+    GhosttyKittyPlacementLayer.GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT,
+    GhosttyTerminalKittyPlacementLayer.aboveText,
+  );
+
+  final virtualResult = _snapshotKittyVirtualPlacements(
+    snapshot,
+    specs: virtualSpecs,
+    images: images,
+  );
+  placements.addAll(virtualResult.placements);
+
+  placements.sort((a, b) {
+    final layer = a.layer.index.compareTo(b.layer.index);
+    if (layer != 0) return layer;
+    final z = a.z.compareTo(b.z);
+    if (z != 0) return z;
+    final image = a.imageId.compareTo(b.imageId);
+    if (image != 0) return image;
+    return a.placementId.compareTo(b.placementId);
+  });
+
+  return (
+    images: Map<int, GhosttyTerminalKittyImage>.unmodifiable(images),
+    placements: List<GhosttyTerminalKittyPlacement>.unmodifiable(placements),
+    hasUnresolvedVirtualPlacements: virtualResult.hasUnresolvedPlacements,
+  );
+}
+
+final class _KittyVirtualPlacementSpec {
+  const _KittyVirtualPlacementSpec({
+    required this.imageId,
+    required this.imageGeneration,
+    required this.placementId,
+    required this.layer,
+    required this.z,
+    required this.columns,
+    required this.rows,
+  });
+
+  final int imageId;
+  final int imageGeneration;
+  final int placementId;
+  final GhosttyTerminalKittyPlacementLayer layer;
+  final int z;
+  final int columns;
+  final int rows;
+}
+
+final class _KittyVirtualRun {
+  _KittyVirtualRun({
+    required this.viewportCol,
+    required this.imageIdLow,
+    required this.imageIdHigh,
+    required this.placementId,
+    required this.sourceRow,
+    required this.sourceCol,
+  });
+
+  final int viewportCol;
+  final int imageIdLow;
+  final int? imageIdHigh;
+  final int? placementId;
+  final int sourceRow;
+  final int sourceCol;
+  int width = 1;
+
+  int get imageId => imageIdLow | ((imageIdHigh ?? 0) << 24);
+
+  bool canAppend(KittyVirtualPlaceholderCell cell) =>
+      imageIdLow == cell.imageIdLow &&
+      placementId == cell.placementId &&
+      (cell.row == null || cell.row == sourceRow) &&
+      (cell.col == null || cell.col == sourceCol + width) &&
+      (cell.imageIdHigh == null || cell.imageIdHigh == imageIdHigh);
+}
+
+({List<GhosttyTerminalKittyPlacement> placements, bool hasUnresolvedPlacements})
+_snapshotKittyVirtualPlacements(
+  VtRenderSnapshot snapshot, {
+  required List<_KittyVirtualPlacementSpec> specs,
+  required Map<int, GhosttyTerminalKittyImage> images,
+}) {
+  final placements = <GhosttyTerminalKittyPlacement>[];
+  var hasUnresolvedPlacements = false;
+
+  _KittyVirtualPlacementSpec? resolveSpec(_KittyVirtualRun run) {
+    for (final spec in specs) {
+      if (spec.imageId == run.imageId &&
+          (run.placementId == null || spec.placementId == run.placementId)) {
+        return spec;
+      }
+    }
+    return null;
+  }
+
+  void completeRun(_KittyVirtualRun run, int viewportRow) {
+    final spec = resolveSpec(run);
+    final kittyImage = images[run.imageId];
+    if (spec == null || kittyImage == null) {
+      hasUnresolvedPlacements = true;
+      return;
+    }
+    placements.add(
+      GhosttyTerminalKittyPlacement(
+        imageId: spec.imageId,
+        imageGeneration: spec.imageGeneration,
+        placementId: spec.placementId,
+        layer: spec.layer,
+        z: spec.z,
+        viewportCol: run.viewportCol,
+        viewportRow: viewportRow,
+        gridCols: run.width,
+        gridRows: 1,
+        sourceX: 0,
+        sourceY: 0,
+        sourceWidth: kittyImage.width,
+        sourceHeight: kittyImage.height,
+        isVirtual: true,
+        virtualSourceCol: run.sourceCol,
+        virtualSourceRow: run.sourceRow,
+        virtualPlacementCols: spec.columns,
+        virtualPlacementRows: spec.rows,
+      ),
+    );
+  }
+
+  for (var rowIndex = 0; rowIndex < snapshot.rowsData.length; rowIndex++) {
+    final row = snapshot.rowsData[rowIndex];
+    if (!row.raw.kittyVirtualPlaceholder) {
+      continue;
+    }
+    _KittyVirtualRun? run;
+    for (var col = 0; col < row.cells.length; col++) {
+      final parsed = parseKittyVirtualPlaceholderCell(row.cells[col]);
+      if (parsed == null) {
+        if (run != null) {
+          completeRun(run, rowIndex);
+          run = null;
+        }
+        continue;
+      }
+      if (run != null && run.canAppend(parsed)) {
+        run.width++;
+        continue;
+      }
+      if (run != null) {
+        completeRun(run, rowIndex);
+      }
+      run = _KittyVirtualRun(
+        viewportCol: col,
+        imageIdLow: parsed.imageIdLow,
+        imageIdHigh: parsed.imageIdHigh,
+        placementId: parsed.placementId,
+        sourceRow: parsed.row ?? 0,
+        sourceCol: parsed.col ?? 0,
+      );
+    }
+    if (run != null) {
+      completeRun(run, rowIndex);
+    }
+  }
+
+  return (
+    placements: placements,
+    hasUnresolvedPlacements: hasUnresolvedPlacements,
+  );
+}
+
+Uint8List? _copyKittyRgbaPixels(VtKittyGraphicsImage image) {
+  final source = image.rawPixelDataOrNull;
+  if (source == null || image.width <= 0 || image.height <= 0) {
+    return null;
+  }
+  final pixelCount = image.width * image.height;
+  final rgba = Uint8List(pixelCount * 4);
+
+  switch (image.format) {
+    case GhosttyKittyImageFormat.GHOSTTY_KITTY_IMAGE_FORMAT_RGBA:
+      if (source.length != rgba.length) return null;
+      rgba.setAll(0, source);
+    case GhosttyKittyImageFormat.GHOSTTY_KITTY_IMAGE_FORMAT_RGB:
+      if (source.length != pixelCount * 3) return null;
+      for (var pixel = 0; pixel < pixelCount; pixel++) {
+        final sourceOffset = pixel * 3;
+        final targetOffset = pixel * 4;
+        rgba[targetOffset] = source[sourceOffset];
+        rgba[targetOffset + 1] = source[sourceOffset + 1];
+        rgba[targetOffset + 2] = source[sourceOffset + 2];
+        rgba[targetOffset + 3] = 0xFF;
+      }
+    case GhosttyKittyImageFormat.GHOSTTY_KITTY_IMAGE_FORMAT_GRAY_ALPHA:
+      if (source.length != pixelCount * 2) return null;
+      for (var pixel = 0; pixel < pixelCount; pixel++) {
+        final sourceOffset = pixel * 2;
+        final targetOffset = pixel * 4;
+        final gray = source[sourceOffset];
+        rgba[targetOffset] = gray;
+        rgba[targetOffset + 1] = gray;
+        rgba[targetOffset + 2] = gray;
+        rgba[targetOffset + 3] = source[sourceOffset + 1];
+      }
+    case GhosttyKittyImageFormat.GHOSTTY_KITTY_IMAGE_FORMAT_GRAY:
+      if (source.length != pixelCount) return null;
+      for (var pixel = 0; pixel < pixelCount; pixel++) {
+        final targetOffset = pixel * 4;
+        final gray = source[pixel];
+        rgba[targetOffset] = gray;
+        rgba[targetOffset + 1] = gray;
+        rgba[targetOffset + 2] = gray;
+        rgba[targetOffset + 3] = 0xFF;
+      }
+    case GhosttyKittyImageFormat.GHOSTTY_KITTY_IMAGE_FORMAT_PNG:
+    case GhosttyKittyImageFormat.GHOSTTY_KITTY_IMAGE_FORMAT_MAX_VALUE:
+      // Stored PNG images are decoded to RGBA by Ghostty before exposure.
+      return null;
+  }
+  return rgba;
 }

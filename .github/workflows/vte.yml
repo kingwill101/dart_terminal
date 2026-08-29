@@ -239,6 +239,10 @@ jobs:
       - name: Run ghostty_vte_flutter tests
         run: flutter test pkgs/vte/ghostty_vte_flutter/test
 
+      - name: Run ghostty_vte_flutter web tests
+        working-directory: pkgs/vte/ghostty_vte_flutter
+        run: flutter test --platform chrome test
+
   # ── Android integration tests ──────────────────────────────────────
   test-flutter-android-integration:
     runs-on: ubuntu-latest

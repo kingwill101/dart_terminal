@@ -73,6 +73,7 @@ void main() {
       Color? backgroundColor,
       Color? foregroundColor,
       Color? cursorColor,
+      bool honorNativeCursorColor = false,
       Color? hyperlinkColor,
       Color? selectionColor,
       double? fontSize,
@@ -110,7 +111,9 @@ void main() {
               focusNode: focusNode,
               backgroundColor: backgroundColor ?? const Color(0xFF0A0F14),
               foregroundColor: foregroundColor ?? const Color(0xFFE6EDF3),
-              cursorColor: cursorColor ?? const Color(0xFF9AD1C0),
+              cursorColor: honorNativeCursorColor
+                  ? cursorColor
+                  : cursorColor ?? const Color(0xFF9AD1C0),
               hyperlinkColor: hyperlinkColor ?? const Color(0xFF61AFEF),
               selectionColor: selectionColor ?? const Color(0x665DA9FF),
               fontSize: fontSize ?? 14,
@@ -461,6 +464,286 @@ void main() {
         isTrue,
       );
     });
+
+    testWidgets(
+      'renderState uses the native cursor color without an override',
+      (tester) async {
+        if (!_hasNativeTerminal) {
+          return;
+        }
+
+        const nativeCursor = Color(0xFFF04A7F);
+        controller.appendDebugOutput('\x1b]12;#f04a7f\x07abc');
+        expect(controller.renderSnapshot?.cursor.color, nativeCursor);
+
+        final key = GlobalKey();
+        await tester.pumpWidget(
+          RepaintBoundary(
+            key: key,
+            child: buildView(
+              showHeader: false,
+              autofocus: true,
+              renderer: GhosttyTerminalRendererMode.renderState,
+              backgroundColor: const Color(0xFF112233),
+              honorNativeCursorColor: true,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final image = await _captureTerminalImageData(key);
+        final (:charWidth, :linePixels, :padding) = _measureTestMetrics();
+        expect(
+          _pixelMatchesColor(
+            image,
+            x: padding + (3 * charWidth) + (charWidth ~/ 2),
+            y: padding + (linePixels ~/ 2),
+            color: nativeCursor,
+            tolerance: 24,
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    testWidgets('renderState blinks native cursor and styled text', (
+      tester,
+    ) async {
+      if (!_hasNativeTerminal) {
+        return;
+      }
+
+      const blinkColor = Color(0xFF22CC66);
+      controller.appendDebugOutput(
+        '\x1b[38;2;34;204;102;5mX\x1b[0m'
+        '\x1b]12;#22cc66\x07\x1b[1 q',
+      );
+
+      final key = GlobalKey();
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: key,
+          child: buildView(
+            showHeader: false,
+            autofocus: true,
+            renderer: GhosttyTerminalRendererMode.renderState,
+            backgroundColor: const Color(0xFF000000),
+            honorNativeCursorColor: true,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final visible = (await tester.runAsync(
+        () => _captureTerminalImageData(key),
+      ))!;
+      final visiblePixels = _countPixelsNearColor(
+        visible,
+        color: blinkColor,
+        tolerance: 40,
+      );
+      expect(visiblePixels, greaterThan(8));
+
+      await tester.pump(const Duration(milliseconds: 500));
+      final hidden = (await tester.runAsync(
+        () => _captureTerminalImageData(key),
+      ))!;
+      final hiddenPixels = _countPixelsNearColor(
+        hidden,
+        color: blinkColor,
+        tolerance: 40,
+      );
+      expect(hiddenPixels, lessThan(visiblePixels));
+
+      controller.appendDebugOutput('activity');
+      await tester.pump();
+      final hiddenAfterActivity = (await tester.runAsync(
+        () => _captureTerminalImageData(key),
+      ))!;
+      expect(
+        _countPixelsNearColor(
+          hiddenAfterActivity,
+          color: blinkColor,
+          tolerance: 40,
+        ),
+        lessThan(visiblePixels),
+      );
+    });
+
+    testWidgets('renderState paints Kitty RGB placements', (tester) async {
+      if (!_hasNativeTerminal || !controller.buildInfo.kittyGraphics) {
+        return;
+      }
+
+      const imageColor = Color(0xFFFF0000);
+      controller.appendDebugOutput(
+        '\x1b_Ga=T,t=d,f=24,i=8,p=8,s=1,v=1,c=1,r=1;/wAA\x1b\\'
+        '\x1b[?25l',
+      );
+      expect(controller.renderSnapshot?.kittyPlacements, hasLength(1));
+
+      final key = GlobalKey();
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: key,
+          child: buildView(
+            showHeader: false,
+            renderer: GhosttyTerminalRendererMode.renderState,
+            backgroundColor: const Color(0xFF000000),
+            padding: EdgeInsets.zero,
+          ),
+        ),
+      );
+      final (:charWidth, :linePixels, padding: _) = _measureTestMetrics();
+      final image = await _captureDecodedKittyImage(
+        tester,
+        key,
+        expectedColor: imageColor,
+        x: charWidth ~/ 2,
+        y: linePixels ~/ 2,
+      );
+      expect(
+        _pixelMatchesColor(
+          image,
+          x: charWidth ~/ 2,
+          y: linePixels ~/ 2,
+          color: imageColor,
+          tolerance: 8,
+        ),
+        isTrue,
+      );
+    });
+
+    testWidgets('renderState paints Kitty Unicode virtual placements', (
+      tester,
+    ) async {
+      if (!_hasNativeTerminal || !controller.buildInfo.kittyGraphics) {
+        return;
+      }
+
+      const firstPixelColor = Color(0xFFFF0000);
+      const secondPixelColor = Color(0xFF0000FF);
+      controller.appendDebugOutput(
+        '\x1b_Ga=t,t=d,f=24,i=9,s=2,v=1;/wAAAAD/\x1b\\'
+        '\x1b_Ga=p,i=9,p=9,U=1,c=2,r=1\x1b\\'
+        '\x1b[38;5;9m'
+        '\u{10EEEE}\u0305\u0305'
+        '\u{10EEEE}\u0305\u030D'
+        '\x1b[39m\x1b[?25l',
+      );
+      expect(controller.renderSnapshot?.kittyPlacements, hasLength(1));
+      expect(
+        controller.renderSnapshot?.kittyPlacements.single.isVirtual,
+        isTrue,
+      );
+
+      final key = GlobalKey();
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: key,
+          child: buildView(
+            showHeader: false,
+            renderer: GhosttyTerminalRendererMode.renderState,
+            backgroundColor: const Color(0xFF000000),
+            padding: EdgeInsets.zero,
+          ),
+        ),
+      );
+      final (:charWidth, :linePixels, padding: _) = _measureTestMetrics();
+      final image = await _captureDecodedKittyImage(
+        tester,
+        key,
+        expectedColor: firstPixelColor,
+        x: charWidth ~/ 2,
+        y: linePixels ~/ 2,
+        tolerance: 12,
+      );
+      expect(
+        _pixelMatchesColor(
+          image,
+          x: charWidth ~/ 2,
+          y: linePixels ~/ 2,
+          color: firstPixelColor,
+          tolerance: 12,
+        ),
+        isTrue,
+      );
+      expect(
+        _pixelMatchesColor(
+          image,
+          x: charWidth + (charWidth ~/ 2),
+          y: linePixels ~/ 2,
+          color: secondPixelColor,
+          tolerance: 12,
+        ),
+        isTrue,
+      );
+    });
+
+    testWidgets(
+      'renderState paints fractional Kitty virtual tiles across a line wrap',
+      (tester) async {
+        if (!_hasNativeTerminal || !controller.buildInfo.kittyGraphics) {
+          return;
+        }
+
+        const imageColor = Color(0xFFFF0000);
+        final key = GlobalKey();
+        await tester.pumpWidget(
+          RepaintBoundary(
+            key: key,
+            child: buildView(
+              showHeader: false,
+              renderer: GhosttyTerminalRendererMode.renderState,
+              backgroundColor: const Color(0xFF000000),
+              padding: EdgeInsets.zero,
+            ),
+          ),
+        );
+
+        final (:charWidth, :linePixels, padding: _) = _measureTestMetrics();
+        controller.appendDebugOutput(
+          '\x1b_Ga=t,t=d,f=24,i=10,s=1,v=1;/wAA\x1b\\'
+          '\x1b_Ga=p,i=10,p=10,U=1,c=2,r=1\x1b\\'
+          '\x1b[38;5;10m'
+          '\x1b[${controller.cols}G'
+          '\u{10EEEE}\u0305\u0305'
+          '\u{10EEEE}\u0305\u030D'
+          '\x1b[39m\x1b[?25l',
+        );
+        await tester.pump();
+        expect(controller.renderSnapshot?.kittyPlacements, hasLength(2));
+
+        final image = await _captureDecodedKittyImage(
+          tester,
+          key,
+          expectedColor: imageColor,
+          x: ((controller.cols - 1) * charWidth) + (charWidth ~/ 2),
+          y: linePixels ~/ 2,
+          tolerance: 12,
+        );
+        expect(
+          _pixelMatchesColor(
+            image,
+            x: ((controller.cols - 1) * charWidth) + (charWidth ~/ 2),
+            y: linePixels ~/ 2,
+            color: imageColor,
+            tolerance: 12,
+          ),
+          isTrue,
+        );
+        expect(
+          _pixelMatchesColor(
+            image,
+            x: charWidth ~/ 2,
+            y: linePixels + (linePixels ~/ 2),
+            color: imageColor,
+            tolerance: 12,
+          ),
+          isTrue,
+        );
+      },
+    );
 
     testWidgets('formatter prefers the native cursor position when available', (
       tester,
@@ -4207,6 +4490,35 @@ String _lastNonEmptyLine(List<String> lines) {
 Future<_TerminalPaintStats> _captureTerminalPaintStats(GlobalKey key) async {
   final image = await _captureTerminalImageData(key);
   return _measureTerminalPaintStats(image.rgba);
+}
+
+Future<_TerminalImageData> _captureDecodedKittyImage(
+  WidgetTester tester,
+  GlobalKey key, {
+  required Color expectedColor,
+  required int x,
+  required int y,
+  int tolerance = 8,
+}) async {
+  for (var attempt = 0; attempt < 100; attempt++) {
+    await tester.pump();
+    final image = (await tester.runAsync(
+      () => _captureTerminalImageData(key),
+    ))!;
+    if (_pixelMatchesColor(
+      image,
+      x: x,
+      y: y,
+      color: expectedColor,
+      tolerance: tolerance,
+    )) {
+      return image;
+    }
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 5)),
+    );
+  }
+  throw StateError('Kitty image decode did not produce the expected pixels');
 }
 
 Future<_TerminalImageData> _captureTerminalImageData(GlobalKey key) async {

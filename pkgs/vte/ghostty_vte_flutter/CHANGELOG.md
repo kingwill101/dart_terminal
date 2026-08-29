@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0-beta.2
+
+- Updated `ghostty_vte` to `^0.2.0-beta.2` and `portable_pty` to
+  `^0.0.7-beta.2`, using their hosted native-prebuilt release assets.
+- Added native Kitty Graphics rendering for direct and Unicode virtual
+  placements, including synchronous PNG decoding, copied RGBA snapshots,
+  generation-aware Flutter image caching, virtual-placeholder reconstruction,
+  source cropping, and Ghostty-compatible paint layers.
+- Honored Ghostty's native cursor color when `cursorColor` is not overridden,
+  and added cursor and styled-text blinking.
+- Aligned the initial web title with native behavior and added the complete
+  Chrome test suite to CI.
+
 ## 0.2.0-beta.1
 
 - Raised the minimum Dart SDK to 3.13.
