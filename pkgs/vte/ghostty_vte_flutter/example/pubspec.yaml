@@ -31,7 +31,7 @@ resolution: workspace
 dependencies:
   flutter:
     sdk: flutter
-  ghostty_vte: ^0.2.0-beta.1
+  ghostty_vte: ^0.2.0-beta.2
   ghostty_vte_flutter:
     path: ../
   google_fonts: ^8.2.1

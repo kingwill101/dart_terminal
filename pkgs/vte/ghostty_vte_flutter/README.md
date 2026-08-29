@@ -37,7 +37,7 @@ single import.
 
 ```yaml
 dependencies:
-  ghostty_vte_flutter: ^0.1.3
+  ghostty_vte_flutter: ^0.2.0-beta.2
 ```
 
 No separate `ghostty_vte` dependency is needed — it's re-exported
@@ -437,7 +437,7 @@ GhosttyTerminalView(
 | `cellWidthScale` | `double` | `1` | Manual terminal cell width tuning for prompt glyph alignment |
 | `padding` | `EdgeInsets` | `all(12)` | Content padding |
 | `palette` | `GhosttyTerminalPalette` | `xterm` | Color palette for indexed ANSI colors |
-| `cursorColor` | `Color` | `#9AD1C0` | Cursor fill color |
+| `cursorColor` | `Color?` | `null` | Cursor override; native Ghostty color or `#9AD1C0` fallback when unset |
 | `selectionColor` | `Color` | `#665DA9FF` | Selection highlight color |
 | `hyperlinkColor` | `Color` | `#61AFEF` | Detected hyperlink text color |
 | `renderer` | `GhosttyTerminalRendererMode` | `formatter` | Choose formatter or native render-state painting |
@@ -480,12 +480,23 @@ GhosttyTerminalView(
   renderer: GhosttyTerminalRendererMode.formatter,
 )
 
-// Render-state mode: native cell-level data, incremental dirty tracking
+// Render-state mode: high-fidelity native cell and image data
 GhosttyTerminalView(
   controller: ctrl,
   renderer: GhosttyTerminalRendererMode.renderState,
 )
 ```
+
+On native platforms, render-state mode also paints direct and Unicode virtual
+Kitty Graphics placements with Ghostty-compatible background/text/foreground
+layer ordering, aspect-fit cropping, and image generation invalidation. PNG
+payloads are decoded synchronously as Ghostty ingests them. Cursor colors and
+cursor/text blink state also come from the native snapshot unless the widget
+supplies an override. Malformed or unmatched virtual placeholders are skipped
+and reported by `hasUnresolvedKittyVirtualPlacements`.
+
+On web, where the native render-state API is unavailable, the widget
+automatically uses formatter mode.
 
 ### Interaction policies
 
@@ -689,39 +700,33 @@ them through a package such as `google_fonts` to avoid platform fallback.
 
 ## Web setup
 
-1. **Build the wasm module:**
-
-   ```bash
-   cd pkgs/vte/ghostty_vte
-   dart run tool/build_wasm.dart
-   ```
-
-   This produces `ghostty-vt.wasm` in the Flutter assets directory.
-
-2. **Initialise before `runApp`:**
+1. **Initialise before `runApp`:**
 
    ```dart
    await initializeGhosttyVteWeb();
    ```
 
-   This is a no-op on native platforms.
+   The published package includes `ghostty-vt.wasm`; the initializer loads it
+   from Flutter assets and is a no-op on native platforms.
 
-3. **Build for web:**
+2. **Build for web:**
 
    ```bash
    flutter build web --wasm
    ```
 
+Maintainers regenerating the bundled module from a source checkout can run
+`dart run tool/build_wasm.dart` from `pkgs/vte/ghostty_vte`.
+
 ## Native setup
 
-No manual steps needed. The `ghostty_vte` build hook runs automatically
-during `flutter run` and `flutter build`, producing the correct native
-library for your target. Just make sure **Zig** and the **Ghostty source**
-are available — see the
-[`ghostty_vte` README](https://pub.dev/packages/ghostty_vte) for details.
+No manual steps are needed. The `ghostty_vte` and `portable_pty` build hooks
+automatically select, download, and verify the matching published native
+prebuilt during `flutter run` and `flutter build`.
 
-Or download [prebuilt libraries](https://github.com/kingwill101/dart_terminal/releases)
-to skip the Zig requirement entirely.
+Zig and a Ghostty source checkout are only needed by maintainers building or
+regenerating native artifacts. See the
+[`ghostty_vte` README](https://pub.dev/packages/ghostty_vte) for that workflow.
 
 ## Related packages
 

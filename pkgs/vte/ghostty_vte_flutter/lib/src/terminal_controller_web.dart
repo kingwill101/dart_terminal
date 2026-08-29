@@ -62,7 +62,7 @@ class GhosttyTerminalController extends ChangeNotifier
   final List<String> _lines = <String>[''];
   String _plainText = '';
   GhosttyTerminalSnapshot _snapshot = const GhosttyTerminalSnapshot.empty();
-  String _title = 'Terminal (Web)';
+  String _title = 'Terminal';
   bool _running = false;
   int _revision = 0;
   int _cols;

@@ -4,6 +4,7 @@ A full-featured Flutter app that showcases every major API from `ghostty_vte` an
 `ghostty_vte_flutter`. Use it as a reference or playground.
 
 The terminal pane now includes:
+
 - shell profile selection (`Auto`, `Bash`, `Zsh`, `User Shell`)
 - terminal font family override
 - cell width scale tuning for prompt glyph alignment
@@ -24,13 +25,14 @@ All tabs include presets, live updating, and an activity log.
 ## Prerequisites
 
 - **Flutter SDK**
-- **Zig** on your `PATH`
-- Ghostty source available (see the main [ghostty_vte README](../../ghostty_vte/README.md#ghostty-source-location))
+
+Published native prebuilts and the bundled wasm asset are used automatically.
+Zig and a Ghostty source checkout are only needed when regenerating artifacts.
 
 ## Run on desktop (native)
 
 ```bash
-cd pkgs/ghostty_vte_flutter/example
+cd pkgs/vte/ghostty_vte_flutter/example
 flutter run
 ```
 
@@ -39,16 +41,10 @@ with it directly.
 
 ## Run on web
 
-Build the wasm module first from the workspace root:
+The package already includes the wasm module:
 
 ```bash
-task wasm
-```
-
-Then:
-
-```bash
-cd pkgs/ghostty_vte_flutter/example
+cd pkgs/vte/ghostty_vte_flutter/example
 flutter run -d chrome
 ```
 
