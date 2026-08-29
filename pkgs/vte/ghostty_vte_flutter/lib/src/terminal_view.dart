@@ -3689,12 +3689,7 @@ class _GhosttyTerminalPainter extends CustomPainter {
     }
 
     return (
-      source: Rect.fromLTWH(
-        sourceX.roundToDouble(),
-        sourceY.roundToDouble(),
-        sourceWidth.roundToDouble(),
-        sourceHeight.roundToDouble(),
-      ),
+      source: Rect.fromLTWH(sourceX, sourceY, sourceWidth, sourceHeight),
       destination: Rect.fromLTWH(
         (placement.viewportCol * charWidth) +
             destinationOffsetX.roundToDouble(),

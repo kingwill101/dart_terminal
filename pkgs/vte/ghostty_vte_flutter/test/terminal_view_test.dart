@@ -680,6 +680,71 @@ void main() {
       );
     });
 
+    testWidgets(
+      'renderState paints fractional Kitty virtual tiles across a line wrap',
+      (tester) async {
+        if (!_hasNativeTerminal || !controller.buildInfo.kittyGraphics) {
+          return;
+        }
+
+        const imageColor = Color(0xFFFF0000);
+        final key = GlobalKey();
+        await tester.pumpWidget(
+          RepaintBoundary(
+            key: key,
+            child: buildView(
+              showHeader: false,
+              renderer: GhosttyTerminalRendererMode.renderState,
+              backgroundColor: const Color(0xFF000000),
+              padding: EdgeInsets.zero,
+            ),
+          ),
+        );
+
+        final (:charWidth, :linePixels, padding: _) = _measureTestMetrics();
+        controller.appendDebugOutput(
+          '\x1b_Ga=t,t=d,f=24,i=10,s=1,v=1;/wAA\x1b\\'
+          '\x1b_Ga=p,i=10,p=10,U=1,c=2,r=1\x1b\\'
+          '\x1b[38;5;10m'
+          '\x1b[${controller.cols}G'
+          '\u{10EEEE}\u0305\u0305'
+          '\u{10EEEE}\u0305\u030D'
+          '\x1b[39m\x1b[?25l',
+        );
+        await tester.pump();
+        expect(controller.renderSnapshot?.kittyPlacements, hasLength(2));
+
+        final image = await _captureDecodedKittyImage(
+          tester,
+          key,
+          expectedColor: imageColor,
+          x: ((controller.cols - 1) * charWidth) + (charWidth ~/ 2),
+          y: linePixels ~/ 2,
+          tolerance: 12,
+        );
+        expect(
+          _pixelMatchesColor(
+            image,
+            x: ((controller.cols - 1) * charWidth) + (charWidth ~/ 2),
+            y: linePixels ~/ 2,
+            color: imageColor,
+            tolerance: 12,
+          ),
+          isTrue,
+        );
+        expect(
+          _pixelMatchesColor(
+            image,
+            x: charWidth ~/ 2,
+            y: linePixels + (linePixels ~/ 2),
+            color: imageColor,
+            tolerance: 12,
+          ),
+          isTrue,
+        );
+      },
+    );
+
     testWidgets('formatter prefers the native cursor position when available', (
       tester,
     ) async {
